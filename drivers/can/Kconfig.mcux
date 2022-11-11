@@ -6,11 +6,27 @@
 config CAN_MCUX_FLEXCAN
 	bool "MCUX FlexCAN driver"
 	default y
-	depends on DT_HAS_NXP_KINETIS_FLEXCAN_ENABLED
+	depends on DT_HAS_NXP_KINETIS_FLEXCAN_ENABLED || DT_HAS_NXP_CANFD_FLEXCAN_ENABLED
 	depends on CLOCK_CONTROL
 	select CAN_HAS_RX_TIMESTAMP
+	select CAN_HAS_CANFD if DT_HAS_NXP_CANFD_FLEXCAN_ENABLED
 	help
 	  Enable support for mcux flexcan driver.
+
+config CAN_MCUX_CANFD_FLEXCAN_BYTES_PER_MESSAGE
+	int "Bytes per Message Buffer"
+	depends on DT_HAS_NXP_CANFD_FLEXCAN_ENABLED
+	range 0 3
+	default 3
+	help
+	  CAN FD FlexCAN Message Buffer payload size. The actual
+	  transmitted or received CAN FD frame data size needs
+	  to be less than or equal to this value.
+	  The following options are available:
+	  <0>: 8 bytes per message.
+	  <1>: 16 bytes per message.
+	  <2>: 32 bytes per message.
+	  <3>: 64 bytes per message.
 
 config CAN_MAX_FILTER
 	int "Maximum number of concurrent active RX filters"

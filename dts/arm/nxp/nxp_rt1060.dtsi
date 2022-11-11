@@ -17,7 +17,9 @@
 	reg = <0x20200000 DT_SIZE_K(768)>;
 };
 
-/* i.MX rt1060 has a second Ethernet controller. */
+/* i.MX rt1060 has a second Ethernet controller.
+ * The FlexCAN3 is capble of CAN FD.
+ */
 / {
 	soc {
 		enet2: ethernet@402d4000 {
@@ -32,6 +34,13 @@
 				interrupts = <153 0>;
 				interrupt-names = "IEEE1588_TMR";
 			};
+		};
+
+		flexcan3: can@401d8000 {
+			compatible = "nxp,canfd-flexcan";
+			bus-speed-data = <2000000>;
+			sjw-data = <1>;
+			sample-point-data = <875>;
 		};
 	};
 };
