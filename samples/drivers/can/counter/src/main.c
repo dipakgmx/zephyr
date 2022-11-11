@@ -200,12 +200,20 @@ void main(void)
 	};
 	struct can_frame change_led_frame = {
 		.id_type = CAN_STANDARD_IDENTIFIER,
+#ifdef CONFIG_CAN_FD_MODE
+		.fd = true,
+		.brs = true,
+#endif /* CONFIG_CAN_FD_MODE */
 		.rtr = CAN_DATAFRAME,
 		.id = LED_MSG_ID,
 		.dlc = 1
 	};
 	struct can_frame counter_frame = {
 		.id_type = CAN_EXTENDED_IDENTIFIER,
+#ifdef CONFIG_CAN_FD_MODE
+		.fd = true,
+		.brs = true,
+#endif /* CONFIG_CAN_FD_MODE */
 		.rtr = CAN_DATAFRAME,
 		.id = COUNTER_MSG_ID,
 		.dlc = 2
@@ -214,6 +222,10 @@ void main(void)
 	uint16_t counter = 0;
 	k_tid_t rx_tid, get_state_tid;
 	int ret;
+
+#ifdef CONFIG_CAN_FD_MODE
+	printk("CAN FD mode is selected.\n");
+#endif
 
 	if (!device_is_ready(can_dev)) {
 		printk("CAN: Device %s not ready.\n", can_dev->name);
