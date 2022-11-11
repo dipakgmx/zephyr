@@ -46,6 +46,19 @@ provides the MCP2515 CAN controller:
    :shield: dfrobot_can_bus_v2_0
    :goals: build flash
 
+CAN FD
+==========================
+
+For the MIMXRT1060-EVK board:
+
+.. zephyr-app-commands::
+   :zephyr-app: samples/drivers/can/counter
+   :board: mimxrt1060_evk
+   :goals: build flash
+
+An additional overlay file is provided in the sample which reconfigures the default CAN output from FlexCAN2 to
+CANFD/FlexCAN3. Also, the output pins are swapped from FlexCAN2 to the FlexCAN3.
+
 Sample output
 =============
 
