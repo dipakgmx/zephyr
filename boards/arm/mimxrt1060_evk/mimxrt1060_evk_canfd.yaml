@@ -1,0 +1,35 @@
+#
+# Copyright (c) 2018, NXP
+# Copyright (c) 2022 Carl Zeiss Meditec AG
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+
+identifier: mimxrt1060_evk_canfd
+name: NXP MIMXRT1060-EVK-CANFD
+type: mcu
+arch: arm
+toolchain:
+  - zephyr
+  - gnuarmemb
+  - xtools
+ram: 32768
+flash: 8192
+supported:
+  - arduino_gpio
+  - arduino_serial
+  - counter
+  - display
+  - dma
+  - gpio
+  - i2c
+  - netif:eth
+  - sdhc
+  - spi
+  - usb_device
+  - kscan:touch
+  - dma
+  - can
+  - canfd
+  - watchdog
+  - adc

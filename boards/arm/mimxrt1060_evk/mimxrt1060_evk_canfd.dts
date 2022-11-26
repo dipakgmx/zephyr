@@ -1,0 +1,39 @@
+/*
+ * Copyright (c) 2022 Carl Zeiss Meditec AG
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+#include "mimxrt1060_evk.dts"
+
+/delete-node/ &flexcan2;
+
+/ {
+	chosen {
+		zephyr,canbus = &flexcan3;
+	};
+};
+
+&flexcan3 {
+	status = "okay";
+	bus-speed = <125000>;
+	bus-speed-data = <5000000>;
+	pinctrl-0 = <&pinmux_flexcan3>;
+	clk-source = <1>;
+	pinctrl-names = "default";
+
+	can-transceiver {
+		max-bitrate = <5000000>;
+	};
+};
+
+
+/* Option 1 */
+&pinctrl {
+pinmux_flexcan3: pinmux_flexcan3 {
+	group0 {
+		pinmux = <&iomuxc_gpio_ad_b0_14_flexcan2_tx>,
+			<&iomuxc_gpio_ad_b0_15_flexcan2_rx>;
+			};
+	};
+};
