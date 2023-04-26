@@ -1,0 +1,13 @@
+//
+// Created by OGDSHETT on 25/04/2023.
+//
+
+#ifndef ZEPHYR_DRIVERS_TRINAMIC_TMC5041_MAP_H
+#define ZEPHYR_DRIVERS_TRINAMIC_TMC5041_MAP_H
+
+#include "../tmc.h"
+#include "tmc5041.h"
+
+
+
+#endif // ZEPHYR_DRIVERS_TRINAMIC_TMC5041_MAP_H
