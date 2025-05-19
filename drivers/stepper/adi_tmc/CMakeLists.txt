@@ -6,6 +6,8 @@ zephyr_library_property(ALLOW_EMPTY TRUE)
 
 zephyr_library_sources_ifdef(CONFIG_STEPPER_ADI_TMC2209 tmc22xx.c)
 zephyr_library_sources_ifdef(CONFIG_STEPPER_ADI_TMC50XX tmc50xx.c)
-add_subdirectory_ifdef(CONFIG_STEPPER_ADI_TMC51XX tmc51xx)
+
+add_subdirectory_ifdef(CONFIG_STEPPER_ADI_TMC51XX tmc5xxx)
+add_subdirectory_ifdef(CONFIG_STEPPER_ADI_TMC50XX tmc5xxx)
 
 add_subdirectory_ifdef(CONFIG_STEPPER_ADI_TMC bus)
