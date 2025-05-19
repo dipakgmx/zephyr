@@ -12,7 +12,7 @@
 #ifndef ZEPHYR_DRIVERS_STEPPER_ADI_TMC_ADI_TMC5XXX_COMMON_H_
 #define ZEPHYR_DRIVERS_STEPPER_ADI_TMC_ADI_TMC5XXX_COMMON_H_
 
-#include "adi_tmc_reg.h"
+#include "tmc5xxx/adi_tmc_reg.h"
 
 #ifdef __cplusplus
 extern "C" {
