@@ -31,7 +31,6 @@ int tmc5xxx_init_core_context(struct tmc5xxx_core_context *ctx, const struct dev
 	ctx->dev = dev;
 	ctx->controller_dev = controller_dev;
 	ctx->motor_index = motor_index;
-	ctx->reg_map = reg_map;
 
 	/* Get the semaphore from the controller */
 	struct tmc5xxx_controller_data *controller_data = controller_dev->data;

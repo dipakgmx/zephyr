@@ -29,7 +29,6 @@ struct tmc5xxx_core_context {
 	const struct device *dev;              /* Stepper device */
 	const struct device *controller_dev;   /* Parent controller device */
 	uint8_t motor_index;                   /* Motor index (0 or 1) */
-	const struct tmc5xxx_reg_map *reg_map; /* Register map for this motor */
 	struct k_sem *controller_sem;          /* Reference to controller's semaphore */
 };
 
