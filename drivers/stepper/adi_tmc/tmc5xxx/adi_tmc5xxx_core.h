@@ -26,10 +26,10 @@ extern "C" {
  * a stepper motor with a TMC5xxx controller.
  */
 struct tmc5xxx_core_context {
-	const struct device *dev;              /* Stepper device */
-	const struct device *controller_dev;   /* Parent controller device */
-	uint8_t motor_index;                   /* Motor index (0 or 1) */
-	struct k_sem *controller_sem;          /* Reference to controller's semaphore */
+	const struct device *dev;            /* Stepper device */
+	const struct device *controller_dev; /* Parent controller device */
+	uint8_t motor_index;                 /* Motor index (0 or 1) */
+	struct k_sem *controller_sem;        /* Reference to controller's semaphore */
 };
 
 /**
@@ -46,10 +46,17 @@ struct tmc5xxx_controller_data {
 struct tmc5xxx_controller_config {
 	union tmc_bus bus;               /* Bus connection (SPI/UART) */
 	const struct tmc_bus_io *bus_io; /* Bus I/O operations */
-	enum tmc_comm_type comm_type;    /* Communication type */
+	uint8_t comm_type;    /* Communication type */
 	uint32_t gconf;                  /* Global configuration register value */
 	uint32_t clock_frequency;        /* Clock frequency in Hz */
-	struct gpio_dt_spec *gpio_specs; /* GPIO specifications */
+	struct gpio_dt_spec *diag0_gpio; /* GPIO specifications (optional, primarily for SPI) */
+
+#if defined(CONFIG_STEPPER_ADI_TMC_UART)
+	/* UART specific configuration (for TMC51xx) */
+	struct gpio_dt_spec
+		*sw_sel_gpio;    /* Switch select GPIO for UART mode (could be NULL if not used) */
+	uint8_t uart_slave_addr; /* UART slave address */
+#endif
 };
 
 /**
@@ -77,18 +84,12 @@ struct tmc5xxx_stepper_config {
 };
 
 /**
- * @brief Initialize core context from device configuration
+ * @brief Check if the communication bus is ready
  *
- * @param ctx Core context to initialize
- * @param dev Device pointer for the stepper
- * @param controller_dev Parent controller device pointer
- * @param motor_index Index of the motor (0 or 1)
- * @param reg_map Register map for the specific TMC variant
+ * @param dev Device pointer
  * @return 0 on success, negative error code otherwise
  */
-int tmc5xxx_init_core_context(struct tmc5xxx_core_context *ctx, const struct device *dev,
-			      const struct device *controller_dev, uint8_t motor_index,
-			      const struct tmc5xxx_reg_map *reg_map);
+int tmc5xxx_bus_check(const struct device *dev);
 
 /**
  * @brief Common register I/O functions

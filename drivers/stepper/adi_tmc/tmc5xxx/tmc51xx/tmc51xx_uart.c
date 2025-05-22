@@ -7,6 +7,7 @@
 #include <zephyr/logging/log.h>
 
 #include "tmc51xx.h"
+#include "../adi_tmc5xxx_core.h"
 #include <adi_tmc_bus.h>
 #include <adi_tmc_uart.h>
 
@@ -24,7 +25,7 @@ static int tmc51xx_bus_check_uart(const union tmc_bus *bus, uint8_t comm_type)
 static int tmc51xx_reg_write_uart(const struct device *dev, const uint8_t reg_addr,
 				  const uint32_t reg_val)
 {
-	const struct tmc51xx_config *config = dev->config;
+	const struct tmc5xxx_controller_config *config = dev->config;
 	int err;
 
 	/* Route to the adi_tmc_uart.h implementation */
@@ -41,7 +42,7 @@ static int tmc51xx_reg_write_uart(const struct device *dev, const uint8_t reg_ad
 static int tmc51xx_reg_read_uart(const struct device *dev, const uint8_t reg_addr,
 				 uint32_t *reg_val)
 {
-	const struct tmc51xx_config *config = dev->config;
+	const struct tmc5xxx_controller_config *config = dev->config;
 	int err;
 
 	/* Route to the adi_tmc_uart.h implementation */

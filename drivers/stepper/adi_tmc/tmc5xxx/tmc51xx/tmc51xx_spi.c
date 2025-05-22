@@ -10,7 +10,7 @@
 #include <adi_tmc_spi.h>
 
 #include "tmc51xx.h"
-#include "../tmc5xxx/adi_tmc_reg.h"
+#include "../adi_tmc_reg.h"
 
 #if TMC51XX_BUS_SPI
 LOG_MODULE_DECLARE(tmc51xx, CONFIG_STEPPER_LOG_LEVEL);

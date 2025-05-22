@@ -14,86 +14,45 @@
 #include "../adi_tmc5xxx_core.h"
 
 #include <zephyr/logging/log.h>
+
 LOG_MODULE_REGISTER(tmc51xx, CONFIG_STEPPER_LOG_LEVEL);
 
-static inline int tmc51xx_bus_check(const struct device *dev)
-{
-	const struct tmc51xx_config *config = dev->config;
-
-	return config->bus_io->check(&config->bus, config->comm_type);
-}
 
 static int read_actual_position(const struct device *dev, int32_t *position);
 static void rampstat_work_handler(struct k_work *work);
 static void tmc51xx_diag0_gpio_callback_handler(const struct device *port, struct gpio_callback *cb,
 						gpio_port_pins_t pins);
 
-static int tmc51xx_write(const struct device *dev, const uint8_t reg_addr, const uint32_t reg_val)
-{
-	const struct tmc51xx_config *config = dev->config;
-	struct tmc51xx_data *data = dev->data;
-	int err;
-
-	k_sem_take(&data->sem, K_FOREVER);
-
-	err = config->bus_io->write(dev, reg_addr, reg_val);
-
-	k_sem_give(&data->sem);
-
-	if (err < 0) {
-		LOG_ERR("Failed to write register 0x%x with value 0x%x", reg_addr, reg_val);
-		return err;
-	}
-	return 0;
-}
-
-static int tmc51xx_read(const struct device *dev, const uint8_t reg_addr, uint32_t *reg_val)
-{
-	const struct tmc51xx_config *config = dev->config;
-	struct tmc51xx_data *data = dev->data;
-	int err;
-
-	k_sem_take(&data->sem, K_FOREVER);
-
-	err = config->bus_io->read(dev, reg_addr, reg_val);
-
-	k_sem_give(&data->sem);
-
-	if (err < 0) {
-		LOG_ERR("Failed to read register 0x%x", reg_addr);
-		return err;
-	}
-	return 0;
-}
 
 static int tmc51xx_stepper_set_event_callback(const struct device *dev,
 					      stepper_event_callback_t callback, void *user_data)
 {
-	struct tmc51xx_data *data = dev->data;
-	__maybe_unused const struct tmc51xx_config *config = dev->config;
+	struct tmc5xxx_stepper_data *data = dev->data;
+	const struct tmc5xxx_core_context *ctx = &data->core;
+	__maybe_unused const struct tmc5xxx_controller_config *config = ctx->controller_dev->config;
 
 	__maybe_unused int err;
 
 	data->callback = callback;
-	data->event_cb_user_data = user_data;
+	data->callback_user_data = user_data;
 
 	/* Configure DIAG0 GPIO interrupt pin */
 	IF_ENABLED(TMC51XX_BUS_SPI, ({
-	if ((config->comm_type == TMC_COMM_SPI) && config->diag0_gpio.port) {
+	if ((config->comm_type == TMC_COMM_SPI) && config->diag0_gpio->port) {
 		LOG_INF("Configuring DIAG0 GPIO interrupt pin");
-		if (!gpio_is_ready_dt(&config->diag0_gpio)) {
+		if (!gpio_is_ready_dt(config->diag0_gpio)) {
 			LOG_ERR("DIAG0 interrupt GPIO not ready");
 			return -ENODEV;
 		}
 
-		err = gpio_pin_configure_dt(&config->diag0_gpio, GPIO_INPUT);
+		err = gpio_pin_configure_dt(config->diag0_gpio, GPIO_INPUT);
 		if (err < 0) {
 			LOG_ERR("Could not configure DIAG0 GPIO (%d)", err);
 			return err;
 		}
 		k_work_init_delayable(&data->rampstat_callback_dwork, rampstat_work_handler);
 
-		err = gpio_pin_interrupt_configure_dt(&config->diag0_gpio, GPIO_INT_EDGE_RISING);
+		err = gpio_pin_interrupt_configure_dt(config->diag0_gpio, GPIO_INT_EDGE_RISING);
 		if (err) {
 			LOG_ERR("failed to configure DIAG0 interrupt (err %d)", err);
 			return -EIO;
@@ -101,9 +60,9 @@ static int tmc51xx_stepper_set_event_callback(const struct device *dev,
 
 		/* Initialize and add GPIO callback */
 		gpio_init_callback(&data->diag0_cb, tmc51xx_diag0_gpio_callback_handler,
-				   BIT(config->diag0_gpio.pin));
+				   BIT(config->diag0_gpio->pin));
 
-		err = gpio_add_callback(config->diag0_gpio.port, &data->diag0_cb);
+		err = gpio_add_callback(config->diag0_gpio->port, &data->diag0_cb);
 		if (err < 0) {
 			LOG_ERR("Could not add DIAG0 pin GPIO callback (%d)", err);
 			return -EIO;
@@ -112,7 +71,7 @@ static int tmc51xx_stepper_set_event_callback(const struct device *dev,
 		/* Clear any pending interrupts */
 		uint32_t rampstat_value;
 
-		err = rampstat_read_clear(dev, &rampstat_value);
+		err = tmc5xxx_rampstat_read_clear(dev, &rampstat_value);
 		if (err != 0) {
 			return -EIO;
 		}
@@ -148,38 +107,37 @@ static void rampstat_work_handler(struct k_work *work)
 {
 	struct k_work_delayable *dwork = k_work_delayable_from_work(work);
 
-	struct tmc51xx_data *stepper_data =
-		CONTAINER_OF(dwork, struct tmc51xx_data, rampstat_callback_dwork);
-	const struct device *dev = stepper_data->stepper;
-	__maybe_unused const struct tmc51xx_config *config = dev->config;
+	struct tmc5xxx_stepper_data *stepper_data =
+		CONTAINER_OF(dwork, struct tmc5xxx_stepper_data, rampstat_callback_dwork);
+	const struct tmc5xxx_core_context *ctx = &stepper_data->core;
+	__maybe_unused const struct tmc5xxx_stepper_config *config = stepper_data->core.dev->config;
+	int err;
+	uint32_t drv_status;
 
 	__ASSERT_NO_MSG(dev);
 
-	uint32_t drv_status;
-	int err;
-
-	err = tmc51xx_read(dev, TMC51XX_DRVSTATUS, &drv_status);
+	err = tmc5xxx_read_reg(ctx->dev, TMC5XXX_DRVSTATUS(ctx->motor_index), &drv_status);
 	if (err != 0) {
-		LOG_ERR("%s: Failed to read DRVSTATUS register", dev->name);
+		LOG_ERR("%s: Failed to read DRVSTATUS register", ctx->dev->name);
 		return;
 	}
 #ifdef CONFIG_STEPPER_ADI_TMC51XX_RAMPSTAT_POLL_STALLGUARD_LOG
 	log_stallguard(dev, drv_status);
 #endif
 	if (FIELD_GET(TMC5XXX_DRV_STATUS_SG_STATUS_MASK, drv_status) == 1U) {
-		LOG_INF("%s: Stall detected", dev->name);
-		err = tmc51xx_write(dev, TMC51XX_RAMPMODE, TMC5XXX_RAMPMODE_HOLD_MODE);
+		LOG_INF("%s: Stall detected", ctx->dev->name);
+		err = tmc5xxx_write_reg(ctx->dev, TMC5XXX_RAMPMODE(ctx->motor_index), TMC5XXX_RAMPMODE_HOLD_MODE);
 		if (err != 0) {
-			LOG_ERR("%s: Failed to stop motor", dev->name);
+			LOG_ERR("%s: Failed to stop motor", ctx->dev->name);
 			return;
 		}
 	}
 
 	uint32_t rampstat_value;
 
-	err = tmc5xxx_rampstat_read_clear(dev, &rampstat_value);
+	err = tmc5xxx_rampstat_read_clear(ctx->dev, &rampstat_value);
 	if (err != 0) {
-		LOG_ERR("%s: Failed to read RAMPSTAT register", dev->name);
+		LOG_ERR("%s: Failed to read RAMPSTAT register", ctx->dev->name);
 		return;
 	}
 
@@ -189,25 +147,25 @@ static void rampstat_work_handler(struct k_work *work)
 		switch (ramp_stat_values) {
 		case TMC5XXX_STOP_LEFT_EVENT:
 			LOG_DBG("RAMPSTAT %s:Left end-stop detected", dev->name);
-			tmc5xxx_trigger_callback(dev, STEPPER_EVENT_LEFT_END_STOP_DETECTED);
+			tmc5xxx_trigger_callback(ctx->dev, STEPPER_EVENT_LEFT_END_STOP_DETECTED);
 			break;
 
 		case TMC5XXX_STOP_RIGHT_EVENT:
 			LOG_DBG("RAMPSTAT %s:Right end-stop detected", dev->name);
-			tmc5xxx_trigger_callback(dev, STEPPER_EVENT_RIGHT_END_STOP_DETECTED);
+			tmc5xxx_trigger_callback(ctx->dev, STEPPER_EVENT_RIGHT_END_STOP_DETECTED);
 			break;
 
 		case TMC5XXX_POS_REACHED_EVENT:
 		case TMC5XXX_POS_REACHED:
 		case TMC5XXX_POS_REACHED_AND_EVENT:
 			LOG_DBG("RAMPSTAT %s:Position reached", dev->name);
-			tmc5xxx_trigger_callback(dev, STEPPER_EVENT_STEPS_COMPLETED);
+			tmc5xxx_trigger_callback(ctx->dev, STEPPER_EVENT_STEPS_COMPLETED);
 			break;
 
 		case TMC5XXX_STOP_SG_EVENT:
 			LOG_DBG("RAMPSTAT %s:Stall detected", dev->name);
-			tmc5xxx_stallguard_enable(dev, false);
-			tmc5xxx_trigger_callback(dev, STEPPER_EVENT_STALL_DETECTED);
+			tmc5xxx_stallguard_enable(ctx->dev, false);
+			tmc5xxx_trigger_callback(ctx->dev, STEPPER_EVENT_STALL_DETECTED);
 			break;
 		default:
 			LOG_ERR("Illegal ramp stat bit field 0x%x", ramp_stat_values);
@@ -238,7 +196,7 @@ static void __maybe_unused tmc51xx_diag0_gpio_callback_handler(const struct devi
 	ARG_UNUSED(port);
 	ARG_UNUSED(pins);
 
-	struct tmc51xx_data *stepper_data = CONTAINER_OF(cb, struct tmc51xx_data, diag0_cb);
+	struct tmc5xxx_stepper_data *stepper_data = CONTAINER_OF(cb, struct tmc5xxx_stepper_data, diag0_cb);
 
 	k_work_reschedule(&stepper_data->rampstat_callback_dwork, K_NO_WAIT);
 }
@@ -255,59 +213,59 @@ static int tmc51xx_stepper_set_ramp(const struct device *dev,
 	LOG_DBG("Stepper motor controller %s set ramp", dev->name);
 	int err;
 
-	err = tmc51xx_write(dev, TMC5XXX_VSTART(ctx->motor_index), ramp_data->vstart);
+	err = tmc5xxx_write_reg(dev, TMC5XXX_VSTART(ctx->motor_index), ramp_data->vstart);
 	if (err != 0) {
 		return -EIO;
 	}
-	err = tmc51xx_write(dev, TMC5XXX_A1(ctx->motor_index), ramp_data->a1);
+	err = tmc5xxx_write_reg(dev, TMC5XXX_A1(ctx->motor_index), ramp_data->a1);
 	if (err != 0) {
 		return -EIO;
 	}
-	err = tmc51xx_write(dev, TMC5XXX_AMAX(ctx->motor_index), ramp_data->amax);
+	err = tmc5xxx_write_reg(dev, TMC5XXX_AMAX(ctx->motor_index), ramp_data->amax);
 	if (err != 0) {
 		return -EIO;
 	}
-	err = tmc51xx_write(dev, TMC5XXX_D1(ctx->motor_index), ramp_data->d1);
+	err = tmc5xxx_write_reg(dev, TMC5XXX_D1(ctx->motor_index), ramp_data->d1);
 	if (err != 0) {
 		return -EIO;
 	}
-	err = tmc51xx_write(dev, TMC5XXX_DMAX(ctx->motor_index), ramp_data->dmax);
+	err = tmc5xxx_write_reg(dev, TMC5XXX_DMAX(ctx->motor_index), ramp_data->dmax);
 	if (err != 0) {
 		return -EIO;
 	}
-	err = tmc51xx_write(dev, TMC5XXX_V1(ctx->motor_index), ramp_data->v1);
+	err = tmc5xxx_write_reg(dev, TMC5XXX_V1(ctx->motor_index), ramp_data->v1);
 	if (err != 0) {
 		return -EIO;
 	}
-	err = tmc51xx_write(dev, TMC5XXX_VMAX(ctx->motor_index), ramp_data->vmax);
+	err = tmc5xxx_write_reg(dev, TMC5XXX_VMAX(ctx->motor_index), ramp_data->vmax);
 	if (err != 0) {
 		return -EIO;
 	}
-	err = tmc51xx_write(dev, TMC5XXX_VSTOP(ctx->motor_index), ramp_data->vstop);
+	err = tmc5xxx_write_reg(dev, TMC5XXX_VSTOP(ctx->motor_index), ramp_data->vstop);
 	if (err != 0) {
 		return -EIO;
 	}
-	err = tmc51xx_write(dev, TMC5XXX_TZEROWAIT(ctx->motor_index), ramp_data->tzerowait);
+	err = tmc5xxx_write_reg(dev, TMC5XXX_TZEROWAIT(ctx->motor_index), ramp_data->tzerowait);
 	if (err != 0) {
 		return -EIO;
 	}
-	err = tmc51xx_write(dev, TMC51XX_THIGH, ramp_data->thigh);
+	err = tmc5xxx_write_reg(dev, TMC51XX_THIGH, ramp_data->thigh);
 	if (err != 0) {
 		return -EIO;
 	}
-	err = tmc51xx_write(dev, TMC51XX_TCOOLTHRS, ramp_data->tcoolthrs);
+	err = tmc5xxx_write_reg(dev, TMC51XX_TCOOLTHRS, ramp_data->tcoolthrs);
 	if (err != 0) {
 		return -EIO;
 	}
-	err = tmc51xx_write(dev, TMC51XX_TPWMTHRS, ramp_data->tpwmthrs);
+	err = tmc5xxx_write_reg(dev, TMC51XX_TPWMTHRS, ramp_data->tpwmthrs);
 	if (err != 0) {
 		return -EIO;
 	}
-	err = tmc51xx_write(dev, TMC51XX_TPOWER_DOWN, ramp_data->tpowerdown);
+	err = tmc5xxx_write_reg(dev, TMC51XX_TPOWER_DOWN, ramp_data->tpowerdown);
 	if (err != 0) {
 		return -EIO;
 	}
-	err = tmc51xx_write(dev, TMC51XX_IHOLD_IRUN, ramp_data->iholdrun);
+	err = tmc5xxx_write_reg(dev, TMC51XX_IHOLD_IRUN, ramp_data->iholdrun);
 
 	if (err != 0) {
 		return -EIO;
@@ -321,13 +279,13 @@ static int tmc51xx_stepper_set_ramp(const struct device *dev,
 static int tmc51xx_init(const struct device *dev)
 {
 	LOG_DBG("TMC51XX stepper motor controller %s initialized", dev->name);
-	struct tmc51xx_data *data = dev->data;
-	const struct tmc51xx_config *config = dev->config;
+	struct tmc5xxx_core_context *ctx = dev->data;
+	const struct tmc5xxx_controller_config *config = ctx->controller_dev->config;
 	int err;
 
-	k_sem_init(&data->sem, 1, 1);
+	k_sem_init(ctx->controller_sem, 1, 1);
 
-	err = tmc51xx_bus_check(dev);
+	err = tmc5xxx_bus_check(dev);
 	if (err < 0) {
 		LOG_ERR("Bus not ready for '%s'", dev->name);
 		return err;
@@ -335,13 +293,13 @@ static int tmc51xx_init(const struct device *dev)
 
 #if TMC51XX_BUS_UART
 	/* Initialize SW_SEL GPIO if using UART and GPIO is specified */
-	if (config->comm_type == TMC_COMM_UART && config->sw_sel_gpio.port) {
-		if (!gpio_is_ready_dt(&config->sw_sel_gpio)) {
+	if (config->comm_type == TMC_COMM_UART && config->sw_sel_gpio->port) {
+		if (!gpio_is_ready_dt(config->sw_sel_gpio)) {
 			LOG_ERR("SW_SEL GPIO not ready");
 			return -ENODEV;
 		}
 
-		err = gpio_pin_configure_dt(&config->sw_sel_gpio, GPIO_OUTPUT_ACTIVE);
+		err = gpio_pin_configure_dt(config->sw_sel_gpio, GPIO_OUTPUT_ACTIVE);
 		if (err < 0) {
 			LOG_ERR("Failed to configure SW_SEL GPIO");
 			return err;
@@ -350,7 +308,7 @@ static int tmc51xx_init(const struct device *dev)
 #endif
 
 	LOG_DBG("GCONF: %d", config->gconf);
-	err = tmc51xx_write(dev, TMC5XXX_GCONF, config->gconf);
+	err = tmc5xxx_write_reg(dev, TMC5XXX_GCONF, config->gconf);
 	if (err != 0) {
 		return -EIO;
 	}
@@ -358,12 +316,12 @@ static int tmc51xx_init(const struct device *dev)
 	/* Read and write GSTAT register to clear any SPI Datagram errors. */
 	uint32_t gstat_value;
 
-	err = tmc51xx_read(dev, TMC5XXX_GSTAT, &gstat_value);
+	err = tmc5xxx_read_reg(dev, TMC5XXX_GSTAT, &gstat_value);
 	if (err != 0) {
 		return -EIO;
 	}
 
-	err = tmc51xx_write(dev, TMC5XXX_GSTAT, gstat_value);
+	err = tmc5xxx_write_reg(dev, TMC5XXX_GSTAT, gstat_value);
 	if (err != 0) {
 		return -EIO;
 	}
@@ -383,7 +341,7 @@ static int tmc51xx_stepper_init(const struct device *dev) {
 	if (stepper_config->is_sg_enabled) {
 		k_work_init_delayable(&data->stallguard_dwork, tmc5xxx_stallguard_work_handler);
 
-		err = tmc51xx_write(dev, TMC5XXX_SWMODE(ctx->motor_index), BIT(10));
+		err = tmc5xxx_write_reg(dev, TMC5XXX_SWMODE(ctx->motor_index), BIT(10));
 		if (err != 0) {
 			return -EIO;
 		}
@@ -397,7 +355,7 @@ static int tmc51xx_stepper_init(const struct device *dev) {
 
 		int32_t stall_guard_threshold = (int32_t)stepper_config->sg_threshold;
 
-		err = tmc51xx_write(dev, TMC5XXX_COOLCONF(ctx->motor_index),
+		err = tmc5xxx_write_reg(dev, TMC5XXX_COOLCONF(ctx->motor_index),
 				    stall_guard_threshold
 					    << TMC5XXX_COOLCONF_SG2_THRESHOLD_VALUE_SHIFT);
 		if (err != 0) {
