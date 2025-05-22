@@ -18,28 +18,13 @@
 
 LOG_MODULE_REGISTER(tmc5xxx_core, CONFIG_STEPPER_LOG_LEVEL);
 
-int tmc5xxx_init_core_context(struct tmc5xxx_core_context *ctx, const struct device *dev,
-			      const struct device *controller_dev, uint8_t motor_index,
-			      const struct tmc5xxx_reg_map *reg_map)
+int tmc5xxx_bus_check(const struct device *dev)
 {
-	if (!dev || !controller_dev || !reg_map) {
-		LOG_ERR("Invalid parameters for core context initialization");
-		return -EINVAL;
-	}
+	const struct tmc5xxx_controller_config *config = dev->config;
 
-	/* Initialize the context */
-	ctx->dev = dev;
-	ctx->controller_dev = controller_dev;
-	ctx->motor_index = motor_index;
-
-	/* Get the semaphore from the controller */
-	struct tmc5xxx_controller_data *controller_data = controller_dev->data;
-	ctx->controller_sem = &controller_data->bus_sem;
-
-	LOG_DBG("Core context initialized for %s, motor_index: %d", dev->name, motor_index);
-
-	return 0;
+	return config->bus_io->check(&config->bus, config->comm_type);
 }
+
 
 /**
  * @brief Calculate the velocity in full clock cycles from the velocity in Hz
@@ -231,7 +216,7 @@ int tmc5xxx_move_to(const struct device *dev, int32_t position)
 
 	/* Clear any pending events in RAMPSTAT */
 	uint32_t rampstat;
-	err = tmc5xxx_rampstat_read_clear(ctx, &rampstat);
+	err = tmc5xxx_rampstat_read_clear(dev, &rampstat);
 	if (err != 0) {
 		return err;
 	}
@@ -243,6 +228,7 @@ int tmc5xxx_move_to(const struct device *dev, int32_t position)
 int tmc5xxx_move_by(const struct device *dev, int32_t steps)
 {
 	struct tmc5xxx_stepper_data const *data = dev->data;
+	const struct tmc5xxx_core_context *ctx = &data->core;
 	int32_t current_pos;
 	int err;
 
@@ -269,7 +255,7 @@ int tmc5xxx_run(const struct device *dev, const enum stepper_direction direction
 	}
 
 	LOG_DBG("%s: Running in %s direction", ctx->dev->name,
-		(direction == STEPPER_DIRECTION_FORWARD) ? "forward" : "reverse");
+		(direction == STEPPER_DIRECTION_POSITIVE) ? "positive" : "negative");
 	return tmc5xxx_write_reg(ctx, TMC5XXX_RAMPMODE(ctx->motor_index), ramp_mode);
 }
 
@@ -425,7 +411,7 @@ void tmc5xxx_rampstat_work_handler(struct k_work *work)
 	uint32_t rampstat;
 	int err;
 
-	err = tmc5xxx_rampstat_read_clear(ctx, &rampstat);
+	err = tmc5xxx_rampstat_read_clear(ctx->dev, &rampstat);
 	if (err != 0) {
 		LOG_ERR("%s: Failed to read/clear RAMPSTAT", ctx->dev->name);
 		return;
@@ -437,7 +423,7 @@ void tmc5xxx_rampstat_work_handler(struct k_work *work)
 	/* Check for position reached event */
 	if (int_flags & TMC5XXX_POS_REACHED_EVENT) {
 		LOG_DBG("%s: Position reached event", ctx->dev->name);
-		tmc5xxx_trigger_callback(data, STEPPER_EVENT_STEPS_COMPLETED);
+		tmc5xxx_trigger_callback(ctx->dev, STEPPER_EVENT_STEPS_COMPLETED);
 	}
 
 	/* Check other possible events here */
@@ -555,8 +541,5 @@ void tmc5xxx_stallguard_work_handler(struct k_work *work)
 	if (err == -EAGAIN) {
 		/* Velocity too low, reschedule check */
 		k_work_reschedule(dwork, K_MSEC(config->sg_velocity_check_interval_ms));
-	}
-	if (err == -EIO) {
-		LOG_DBG("%s: StallGuard enabled, velocity: %d", ctx->dev->name, actual_velocity);
 	}
 }
