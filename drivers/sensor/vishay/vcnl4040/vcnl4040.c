@@ -13,6 +13,7 @@
 #include <zephyr/sys/util.h>
 #include <zephyr/logging/log.h>
 #include <stdlib.h>
+#include <zephyr/rtio/rtio.h>
 
 LOG_MODULE_REGISTER(vcnl4040, CONFIG_SENSOR_LOG_LEVEL);
 
@@ -50,9 +51,10 @@ int vcnl4040_write(const struct device *dev, uint8_t reg, uint16_t value)
 	return 0;
 }
 
-static int vcnl4040_sample_fetch(const struct device *dev,
+int vcnl4040_sample_fetch(const struct device *dev,
 				 enum sensor_channel chan)
 {
+	const struct vcnl4040_config *config = dev->config;
 	struct vcnl4040_data *data = dev->data;
 	int ret = 0;
 
@@ -66,6 +68,30 @@ static int vcnl4040_sample_fetch(const struct device *dev,
 	k_mutex_lock(&data->mutex, K_FOREVER);
 
 	if (chan == SENSOR_CHAN_ALL || chan == SENSOR_CHAN_PROX) {
+		if (config->operation_mode == VCNL4040_OPERATION_MODE_FORCE) {
+			uint16_t ps_ms;
+			ret = vcnl4040_read(dev, VCNL4040_REG_PS_MS, &ps_ms);
+			if (ret < 0) {
+				LOG_ERR("Could not read PS_MS register");
+				goto exit;
+			}
+
+			/* Set PS_TRIG bit in low byte (PS_CONF3) */
+			ps_ms |= VCNL4040_PS_TRIG_MASK;
+			ret = vcnl4040_write(dev, VCNL4040_REG_PS_MS, ps_ms);
+			if (ret < 0) {
+				LOG_ERR("Could not trigger proximity measurement");
+				goto exit;
+			}
+
+			k_usleep(data->meas_timeout_us);
+
+#ifdef CONFIG_PM_DEVICE
+			/* Reset to normal timeout after first measurement */
+			data->meas_timeout_us = data->meas_timeout_running_us;
+#endif
+		}
+
 		ret = vcnl4040_read(dev, VCNL4040_REG_PS_DATA,
 				    &data->proximity);
 		if (ret < 0) {
@@ -122,13 +148,13 @@ static int vcnl4040_channel_get(const struct device *dev,
 static int vcnl4040_reg_setup(const struct device *dev)
 {
 	const struct vcnl4040_config *config = dev->config;
+	struct vcnl4040_data *data = dev->data;
 	uint16_t value[VCNL4040_RW_REG_COUNT] = { 0 };
 	uint8_t reg;
 	int ret = 0;
+	unsigned int integration_time_us = 50;
 
 #ifdef CONFIG_VCNL4040_ENABLE_ALS
-	struct vcnl4040_data *data = dev->data;
-
 	/* Set ALS integration time */
 	value[VCNL4040_REG_ALS_CONF] = config->als_it << VCNL4040_ALS_IT_POS;
 	/* Clear ALS shutdown */
@@ -136,21 +162,21 @@ static int vcnl4040_reg_setup(const struct device *dev)
 
 	/*
 	 * scale the lux depending on the value of the integration time
-	 * see page 8 of the VCNL4040 application note:
-	 * https://www.vishay.com/docs/84307/designingvcnl4040.pdf
+	 * see page 12 of the VCNL4040 application note:
+	 * https://www.vishay.com/docs/84274/vcnl4040.pdf
 	 */
 	switch (config->als_it) {
 	case VCNL4040_AMBIENT_INTEGRATION_TIME_80MS:
-		data->sensitivity = 0.12;
+		data->sensitivity = 0.1;
 		break;
 	case VCNL4040_AMBIENT_INTEGRATION_TIME_160MS:
-		data->sensitivity = 0.06;
+		data->sensitivity = 0.05;
 		break;
 	case VCNL4040_AMBIENT_INTEGRATION_TIME_320MS:
-		data->sensitivity = 0.03;
+		data->sensitivity = 0.025;
 		break;
 	case VCNL4040_AMBIENT_INTEGRATION_TIME_640MS:
-		data->sensitivity = 0.015;
+		data->sensitivity = 0.0125;
 		break;
 	default:
 		data->sensitivity = 1.0;
@@ -168,15 +194,71 @@ static int vcnl4040_reg_setup(const struct device *dev)
 	value[VCNL4040_REG_PS_CONF] |= config->led_dc << VCNL4040_PS_DUTY_POS;
 	/* Set integration time */
 	value[VCNL4040_REG_PS_CONF] |= config->proxy_it << VCNL4040_PS_IT_POS;
+	/* Set operation mode */
+	if (config->operation_mode == VCNL4040_OPERATION_MODE_FORCE) {
+		value[VCNL4040_REG_PS_CONF] |= VCNL4040_PS_AF_MASK;
+	}
 	/* Clear proximity shutdown */
 	value[VCNL4040_REG_PS_CONF] &= ~VCNL4040_PS_SD_MASK;
 
-	/* Set LED current */
+	/* Calculate measurement timeout based on integration time */
+switch (config->proxy_it) {
+    case VCNL4040_PROXIMITY_INTEGRATION_TIME_1T:
+        integration_time_us = 100;
+        break;
+    case VCNL4040_PROXIMITY_INTEGRATION_TIME_1_5T:
+        integration_time_us = 150;
+        break;
+    case VCNL4040_PROXIMITY_INTEGRATION_TIME_2T:
+        integration_time_us = 200;
+        break;
+    case VCNL4040_PROXIMITY_INTEGRATION_TIME_2_5T:
+        integration_time_us = 250;
+        break;
+    case VCNL4040_PROXIMITY_INTEGRATION_TIME_3T: // Fixed typo: removed F
+        integration_time_us = 300;
+        break;
+    case VCNL4040_PROXIMITY_INTEGRATION_TIME_3_5T:
+        integration_time_us = 350;
+        break;
+    case VCNL4040_PROXIMITY_INTEGRATION_TIME_4T:
+        integration_time_us = 400;
+        break;
+    case VCNL4040_PROXIMITY_INTEGRATION_TIME_8T:
+        integration_time_us = 800;
+        break;
+    default:
+        integration_time_us = 100;
+        break;
+}
+
+	/* Calculate measurement timeouts */
+	unsigned int overhead_us = (config->proxy_mps == 4) ? 2500 : 500;
+	data->meas_timeout_us = ((5.5 * integration_time_us) + overhead_us) * (config->proxy_mps + 1);
+
+#ifdef CONFIG_PM_DEVICE
+	data->meas_timeout_running_us = data->meas_timeout_us;
+	data->meas_timeout_wakeup_us = data->meas_timeout_us + VCNL4040_POWER_UP_US;
+#endif
+
+	/* Set LED current (high byte of PS_MS) */
 	value[VCNL4040_REG_PS_MS] = config->led_i << VCNL4040_LED_I_POS;
+	
+	/* Configure PS_CONF3 (low byte of PS_MS register) for operation mode */
+	if (config->operation_mode == VCNL4040_OPERATION_MODE_FORCE) {
+		value[VCNL4040_REG_PS_MS] |= VCNL4040_PS_AF_MASK;
+	}
+
+	/* Set proximity multi pulse (PS_MPS) */
+	value[VCNL4040_REG_PS_MS] |= config->proxy_mps << VCNL4040_PS_MPS_POS;
 
 	for (reg = 0; reg < ARRAY_SIZE(value); reg++) {
 		ret |= vcnl4040_write(dev, reg, value[reg]);
 	}
+
+	LOG_DBG("Operation mode: %s, Measurement timeout: %u us",
+		config->operation_mode == VCNL4040_OPERATION_MODE_FORCE ? "force" : "auto",
+		data->meas_timeout_us);
 
 	return ret;
 }
@@ -189,14 +271,16 @@ static int vcnl4040_pm_action(const struct device *dev,
 	uint16_t ps_conf;
 
 	ret = vcnl4040_read(dev, VCNL4040_REG_PS_CONF, &ps_conf);
-	if (ret < 0)
+	if (ret < 0) {
 		return ret;
+	}
 #ifdef CONFIG_VCNL4040_ENABLE_ALS
 	uint16_t als_conf;
 
 	ret = vcnl4040_read(dev, VCNL4040_REG_ALS_CONF, &als_conf);
-	if (ret < 0)
+	if (ret < 0) {
 		return ret;
+	}
 #endif
 	switch (action) {
 	case PM_DEVICE_ACTION_RESUME:
@@ -205,16 +289,26 @@ static int vcnl4040_pm_action(const struct device *dev,
 
 		ret = vcnl4040_write(dev, VCNL4040_REG_PS_CONF,
 					ps_conf);
-		if (ret < 0)
+		if (ret < 0) {
 			return ret;
+		}
 #ifdef CONFIG_VCNL4040_ENABLE_ALS
 		/* Clear als shutdown */
 		als_conf &= ~VCNL4040_ALS_SD_MASK;
 
 		ret = vcnl4040_write(dev, VCNL4040_REG_ALS_CONF,
 					als_conf);
-		if (ret < 0)
+		if (ret < 0) {
 			return ret;
+		}
+#endif
+		/* Wait for power-up stabilization */
+		k_usleep(VCNL4040_POWER_UP_US);
+
+#ifdef CONFIG_PM_DEVICE
+		/* Use longer timeout for first measurement after wakeup */
+		struct vcnl4040_data *data = dev->data;
+		data->meas_timeout_us = data->meas_timeout_wakeup_us;
 #endif
 		break;
 	case PM_DEVICE_ACTION_SUSPEND:
@@ -223,16 +317,18 @@ static int vcnl4040_pm_action(const struct device *dev,
 
 		ret = vcnl4040_write(dev, VCNL4040_REG_PS_CONF,
 					ps_conf);
-		if (ret < 0)
+		if (ret < 0) {
 			return ret;
+		}
 #ifdef CONFIG_VCNL4040_ENABLE_ALS
 		/* Clear als shutdown bit 0 */
 		als_conf |= VCNL4040_ALS_SD_MASK;
 
 		ret = vcnl4040_write(dev, VCNL4040_REG_ALS_CONF,
 					als_conf);
-		if (ret < 0)
+		if (ret < 0) {
 			return ret;
+		}
 #endif
 		break;
 	default:
@@ -292,6 +388,10 @@ static const struct sensor_driver_api vcnl4040_driver_api = {
 	.attr_set = vcnl4040_attr_set,
 	.trigger_set = vcnl4040_trigger_set,
 #endif
+#ifdef CONFIG_SENSOR_ASYNC_API
+	.submit = vcnl4040_submit,
+	.get_decoder = vcnl4040_get_decoder,
+#endif /* CONFIG_SENSOR_ASYNC_API */
 };
 
 #define VCNL4040_DEFINE(inst)									\
@@ -306,6 +406,8 @@ static const struct sensor_driver_api vcnl4040_driver_api = {
 		.als_it = DT_INST_ENUM_IDX(inst, als_it),					\
 		.proxy_it = DT_INST_ENUM_IDX(inst, proximity_it),				\
 		.proxy_type = DT_INST_ENUM_IDX(inst, proximity_trigger),			\
+		.proxy_mps = DT_INST_ENUM_IDX(inst, proximity_multi_pulse),			\
+		.operation_mode = DT_INST_ENUM_IDX(inst, operation_mode),			\
 	};											\
 												\
 	PM_DEVICE_DT_INST_DEFINE(inst, vcnl4040_pm_action);					\

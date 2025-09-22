@@ -31,6 +31,11 @@
 
 #define VCNL4040_DEFAULT_ID		0x0186
 
+/* Power-up and measurement timing constants */
+#define VCNL4040_POWER_UP_US		2500
+/* Force mode timing per application note: 5.5×PS_IT + 1000μs total cycle time */
+#define VCNL4040_FORCE_MEASUREMENT_OVERHEAD_US 500
+
 #define VCNL4040_LED_I_POS		8
 #define VCNL4040_PS_HD_POS		11
 #define VCNL4040_PS_HD_MASK		BIT(VCNL4040_PS_HD_POS)
@@ -38,6 +43,16 @@
 #define VCNL4040_PS_IT_POS		1
 #define VCNL4040_PS_SD_POS		0
 #define VCNL4040_PS_SD_MASK		BIT(VCNL4040_PS_SD_POS)
+#define VCNL4040_PS_AF_POS		3
+#define VCNL4040_PS_AF_MASK		BIT(VCNL4040_PS_AF_POS)
+#define VCNL4040_PS_TRIG_POS		2
+#define VCNL4040_PS_TRIG_MASK		BIT(VCNL4040_PS_TRIG_POS)
+#define VCNL4040_PS_SC_EN_POS		0
+#define VCNL4040_PS_SC_EN_MASK		BIT(VCNL4040_PS_SC_EN_POS)
+#define VCNL4040_PS_MPS_POS		5
+#define VCNL4040_PS_MPS_MASK		GENMASK(6, 5)
+#define VCNL4040_PS_SMART_PERS_POS	4
+#define VCNL4040_PS_SMART_PERS_MASK	BIT(VCNL4040_PS_SMART_PERS_POS)
 #define VCNL4040_ALS_IT_POS		6
 #define VCNL4040_ALS_INT_EN_POS		1
 #define VCNL4040_ALS_INT_EN_MASK	BIT(VCNL4040_ALS_INT_EN_POS)
@@ -87,6 +102,18 @@ enum proximity_type {
 	VCNL4040_PROXIMITY_INT_CLOSE_AWAY,
 };
 
+enum proximity_multi_pulse {
+	VCNL4040_PROXIMITY_MULTI_PULSE_1,
+	VCNL4040_PROXIMITY_MULTI_PULSE_2,
+	VCNL4040_PROXIMITY_MULTI_PULSE_4,
+	VCNL4040_PROXIMITY_MULTI_PULSE_8,
+};
+
+enum vcnl4040_operation_mode {
+	VCNL4040_OPERATION_MODE_AUTO,
+	VCNL4040_OPERATION_MODE_FORCE,
+};
+
 enum interrupt_type {
 	VCNL4040_PROXIMITY_AWAY = 1,
 	VCNL4040_PROXIMITY_CLOSE,
@@ -104,6 +131,8 @@ struct vcnl4040_config {
 	enum ambient_integration_time als_it;
 	enum proximity_integration_time proxy_it;
 	enum proximity_type proxy_type;
+	enum proximity_multi_pulse proxy_mps;
+	enum vcnl4040_operation_mode operation_mode;
 };
 
 struct vcnl4040_data {
@@ -125,13 +154,53 @@ struct vcnl4040_data {
 #ifdef CONFIG_VCNL4040_TRIGGER_GLOBAL_THREAD
 	struct k_work work;
 #endif
+#ifdef CONFIG_VCNL4040_SENSOR_ASYNC
+	/* Replace normal work with rtio_work_req */
+	struct rtio_work_req work_req;
+	const struct device *dev;
+#endif
 	uint16_t proximity;
 	uint16_t light;
 	float sensitivity;
+	unsigned int meas_timeout_us;
+#ifdef CONFIG_PM_DEVICE
+	unsigned int meas_timeout_running_us;
+	unsigned int meas_timeout_wakeup_us;
+#endif
 };
 
 int vcnl4040_read(const struct device *dev, uint8_t reg, uint16_t *out);
 int vcnl4040_write(const struct device *dev, uint8_t reg, uint16_t value);
+
+int vcnl4040_sample_fetch(const struct device *dev, enum sensor_channel chan);
+
+/*
+ * RTIO
+ */
+
+struct vcnl4040_decoder_header {
+	uint64_t timestamp;
+} __attribute__((__packed__));
+
+struct vcnl4040_reading {
+	uint16_t proximity;
+	uint16_t light;
+};
+
+struct vcnl4040_encoded_data {
+	struct vcnl4040_decoder_header header;
+	struct {
+		/** Set if `proximity` has data */
+		uint8_t has_prox: 1;
+		/** Set if `light` has data */
+		uint8_t has_light: 1;
+	} __attribute__((__packed__));
+	struct vcnl4040_reading reading;
+};
+
+int vcnl4040_get_decoder(const struct device *dev, const struct sensor_decoder_api **decoder);
+
+void vcnl4040_submit(const struct device *dev, struct rtio_iodev_sqe *iodev_sqe);
 
 #ifdef CONFIG_VCNL4040_TRIGGER
 int vcnl4040_trigger_init(const struct device *dev);

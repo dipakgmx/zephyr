@@ -59,6 +59,17 @@ properties:
       - "4"
       - "8"
 
+  operation-mode:
+    type: string
+    default: "auto"
+    enum: ["auto", "force"]
+    description: |
+      Mode of operation.
+      - "auto": the sensor performs sampling continuously,
+      - "force": the sampling is performed on every fetch command.
+
+      Defaults to auto mode for backward compatibility.
+
   proximity-trigger:
     type: string
     default: "disabled"
@@ -80,3 +91,14 @@ properties:
       - 160
       - 320
       - 640
+
+  proximity-multi-pulse:
+    type: int
+    default: 1
+    # default of 1 is POR (0b00) for PS_CONF3[PS_MPS] register
+    description: Proximity multi pulse numbers
+    enum:
+      - 1
+      - 2
+      - 4
+      - 8
