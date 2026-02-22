@@ -1,0 +1,77 @@
+sample:
+  name: Bluetooth Peripheral ACS
+  description: >
+    Demonstrates ACS protecting the Current Time Service (CTS) and Heart
+    Rate Service (HRS).  See Testing.md for PTS execution order.
+    prj.conf is the base configuration: GCM confidentiality with ECDH and
+    the standalone KDF key-exchange method. Cipher overlays select the
+    data-protection algorithm governing the protected resources.
+
+tests:
+
+  # AES-128-GCM, the prj.conf default
+  sample.bluetooth.peripheral_acs.cipher.gcm:
+    harness: bluetooth
+    platform_allow:
+      - frdm_rw612
+      - rd_rw612_bga
+      - nrf52840dk/nrf52840
+    tags: bluetooth acs cipher
+    build_only: true
+    integration_platforms:
+      - frdm_rw612
+
+  sample.bluetooth.peripheral_acs.cipher.ccm:
+    harness: bluetooth
+    platform_allow:
+      - frdm_rw612
+      - rd_rw612_bga
+      - nrf52840dk/nrf52840
+    tags: bluetooth acs cipher
+    build_only: true
+    extra_args: >-
+      EXTRA_CONF_FILE="overlay-cipher-ccm.conf"
+    integration_platforms:
+      - frdm_rw612
+
+  # Authentication only, no integrity or confidentiality
+  sample.bluetooth.peripheral_acs.cipher.cmac:
+    harness: bluetooth
+    platform_allow:
+      - frdm_rw612
+      - rd_rw612_bga
+      - nrf52840dk/nrf52840
+    tags: bluetooth acs cipher
+    build_only: true
+    extra_args: >-
+      EXTRA_CONF_FILE="overlay-cipher-cmac.conf"
+    integration_platforms:
+      - frdm_rw612
+
+  # Every ECDH confirmation method and action
+  sample.bluetooth.peripheral_acs.confirm_oob:
+    harness: bluetooth
+    platform_allow:
+      - frdm_rw612
+      - rd_rw612_bga
+      - nrf52840dk/nrf52840
+    tags: bluetooth acs
+    build_only: true
+    extra_args: >-
+      EXTRA_CONF_FILE="overlay-confirm-oob.conf"
+    integration_platforms:
+      - frdm_rw612
+
+  # Integrity and authentication, no confidentiality
+  sample.bluetooth.peripheral_acs.cipher.gmac:
+    harness: bluetooth
+    platform_allow:
+      - frdm_rw612
+      - rd_rw612_bga
+      - nrf52840dk/nrf52840
+    tags: bluetooth acs cipher
+    build_only: true
+    extra_args: >-
+      EXTRA_CONF_FILE="overlay-cipher-gmac.conf"
+    integration_platforms:
+      - frdm_rw612
