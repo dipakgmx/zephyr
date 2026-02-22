@@ -24,6 +24,7 @@ extern enum bst_result_t bst_result;
 DEFINE_FLAG_STATIC(flag_is_chrc_ctx_validated);
 
 static struct bt_conn *g_conn;
+static uint16_t cp_write_data_authorize_cnt;
 
 static void connected(struct bt_conn *conn, uint8_t err)
 {
@@ -71,20 +72,17 @@ struct test_chrc_ctx {
 	uint8_t data[CHRC_SIZE];
 };
 
-static ssize_t read_test_chrc(struct test_chrc_ctx *chrc_ctx,
-			      struct bt_conn *conn,
-			      const struct bt_gatt_attr *attr,
-			      void *buf, uint16_t len, uint16_t offset)
+static ssize_t read_test_chrc(struct test_chrc_ctx *chrc_ctx, struct bt_conn *conn,
+			      const struct bt_gatt_attr *attr, void *buf, uint16_t len,
+			      uint16_t offset)
 {
 	chrc_ctx->read_cnt++;
 
-	return bt_gatt_attr_read(conn, attr, buf, len, offset,
-				 (void *)chrc_ctx->data,
+	return bt_gatt_attr_read(conn, attr, buf, len, offset, (void *)chrc_ctx->data,
 				 sizeof(chrc_ctx->data));
 }
 
-static ssize_t write_test_chrc(struct test_chrc_ctx *chrc_ctx,
-			       const void *buf, uint16_t len,
+static ssize_t write_test_chrc(struct test_chrc_ctx *chrc_ctx, const void *buf, uint16_t len,
 			       uint16_t offset, uint8_t flags)
 {
 	chrc_ctx->write_cnt++;
@@ -111,17 +109,15 @@ static ssize_t write_test_chrc(struct test_chrc_ctx *chrc_ctx,
 
 static struct test_chrc_ctx unhandled_chrc_ctx;
 
-static ssize_t read_test_unhandled_chrc(struct bt_conn *conn,
-					 const struct bt_gatt_attr *attr,
-					 void *buf, uint16_t len, uint16_t offset)
+static ssize_t read_test_unhandled_chrc(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+					void *buf, uint16_t len, uint16_t offset)
 {
 	return read_test_chrc(&unhandled_chrc_ctx, conn, attr, buf, len, offset);
 }
 
-static ssize_t write_test_unhandled_chrc(struct bt_conn *conn,
-					  const struct bt_gatt_attr *attr,
-					  const void *buf, uint16_t len,
-					  uint16_t offset, uint8_t flags)
+static ssize_t write_test_unhandled_chrc(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+					 const void *buf, uint16_t len, uint16_t offset,
+					 uint8_t flags)
 {
 	printk("unhandled chrc len %u offset %u\n", len, offset);
 
@@ -130,17 +126,15 @@ static ssize_t write_test_unhandled_chrc(struct bt_conn *conn,
 
 static struct test_chrc_ctx unauthorized_chrc_ctx;
 
-static ssize_t read_test_unauthorized_chrc(struct bt_conn *conn,
-					   const struct bt_gatt_attr *attr,
+static ssize_t read_test_unauthorized_chrc(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 					   void *buf, uint16_t len, uint16_t offset)
 {
 	return read_test_chrc(&unauthorized_chrc_ctx, conn, attr, buf, len, offset);
 }
 
-static ssize_t write_test_unauthorized_chrc(struct bt_conn *conn,
-					    const struct bt_gatt_attr *attr,
-					    const void *buf, uint16_t len,
-					    uint16_t offset, uint8_t flags)
+static ssize_t write_test_unauthorized_chrc(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+					    const void *buf, uint16_t len, uint16_t offset,
+					    uint8_t flags)
 {
 	printk("unauthorized chrc len %u offset %u\n", len, offset);
 
@@ -149,17 +143,15 @@ static ssize_t write_test_unauthorized_chrc(struct bt_conn *conn,
 
 static struct test_chrc_ctx authorized_chrc_ctx;
 
-static ssize_t read_test_authorized_chrc(struct bt_conn *conn,
-					 const struct bt_gatt_attr *attr,
+static ssize_t read_test_authorized_chrc(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 					 void *buf, uint16_t len, uint16_t offset)
 {
 	return read_test_chrc(&authorized_chrc_ctx, conn, attr, buf, len, offset);
 }
 
-static ssize_t write_test_authorized_chrc(struct bt_conn *conn,
-					  const struct bt_gatt_attr *attr,
-					  const void *buf, uint16_t len,
-					  uint16_t offset, uint8_t flags)
+static ssize_t write_test_authorized_chrc(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+					  const void *buf, uint16_t len, uint16_t offset,
+					  uint8_t flags)
 {
 	printk("authorized chrc len %u offset %u\n", len, offset);
 
@@ -182,8 +174,7 @@ static bool unhandled_chrc_operation_validate(void)
 		return false;
 	}
 
-	if ((unhandled_chrc_ctx.auth_read_cnt != 0) &&
-	    (unhandled_chrc_ctx.auth_write_cnt != 0)) {
+	if ((unhandled_chrc_ctx.auth_read_cnt != 0) && (unhandled_chrc_ctx.auth_write_cnt != 0)) {
 		return false;
 	}
 
@@ -226,22 +217,24 @@ static bool authorized_chrc_operation_validate(void)
 		return false;
 	}
 
-	if ((authorized_chrc_ctx.auth_read_cnt != 1) &&
-	    (authorized_chrc_ctx.auth_write_cnt != 1)) {
+	if ((authorized_chrc_ctx.auth_read_cnt != 1) && (authorized_chrc_ctx.auth_write_cnt != 1)) {
 		return false;
 	}
 
 	return true;
 }
 
-static ssize_t write_cp_chrc(struct bt_conn *conn,
-			     const struct bt_gatt_attr *attr,
-			     const void *buf, uint16_t len,
-			     uint16_t offset, uint8_t flags)
+static ssize_t write_cp_chrc(struct bt_conn *conn, const struct bt_gatt_attr *attr, const void *buf,
+			     uint16_t len, uint16_t offset, uint8_t flags)
 {
 	static uint16_t cp_write_cnt;
 	bool pass;
 	char *log_str;
+
+	if (cp_write_data_authorize_cnt != cp_write_cnt + 1U) {
+		TEST_FAIL("Write-data authorization was not called before CP write");
+		return BT_GATT_ERR(BT_ATT_ERR_UNLIKELY);
+	}
 
 	if (cp_write_cnt == 0) {
 		pass = unhandled_chrc_operation_validate();
@@ -277,28 +270,19 @@ static ssize_t write_cp_chrc(struct bt_conn *conn,
 	return len;
 }
 
-BT_GATT_SERVICE_DEFINE(test_svc,
-	BT_GATT_PRIMARY_SERVICE(TEST_SERVICE_UUID),
-	BT_GATT_CHARACTERISTIC(TEST_UNHANDLED_CHRC_UUID,
-			       BT_GATT_CHRC_WRITE | BT_GATT_CHRC_READ,
-			       BT_GATT_PERM_WRITE | BT_GATT_PERM_READ,
-			       read_test_unhandled_chrc,
+BT_GATT_SERVICE_DEFINE(
+	test_svc, BT_GATT_PRIMARY_SERVICE(TEST_SERVICE_UUID),
+	BT_GATT_CHARACTERISTIC(TEST_UNHANDLED_CHRC_UUID, BT_GATT_CHRC_WRITE | BT_GATT_CHRC_READ,
+			       BT_GATT_PERM_WRITE | BT_GATT_PERM_READ, read_test_unhandled_chrc,
 			       write_test_unhandled_chrc, NULL),
-	BT_GATT_CHARACTERISTIC(TEST_UNAUTHORIZED_CHRC_UUID,
-			       BT_GATT_CHRC_WRITE | BT_GATT_CHRC_READ,
-			       BT_GATT_PERM_WRITE | BT_GATT_PERM_READ,
-			       read_test_unauthorized_chrc,
+	BT_GATT_CHARACTERISTIC(TEST_UNAUTHORIZED_CHRC_UUID, BT_GATT_CHRC_WRITE | BT_GATT_CHRC_READ,
+			       BT_GATT_PERM_WRITE | BT_GATT_PERM_READ, read_test_unauthorized_chrc,
 			       write_test_unauthorized_chrc, NULL),
-	BT_GATT_CHARACTERISTIC(TEST_AUTHORIZED_CHRC_UUID,
-			       BT_GATT_CHRC_WRITE | BT_GATT_CHRC_READ,
-			       BT_GATT_PERM_WRITE | BT_GATT_PERM_READ,
-			       read_test_authorized_chrc,
+	BT_GATT_CHARACTERISTIC(TEST_AUTHORIZED_CHRC_UUID, BT_GATT_CHRC_WRITE | BT_GATT_CHRC_READ,
+			       BT_GATT_PERM_WRITE | BT_GATT_PERM_READ, read_test_authorized_chrc,
 			       write_test_authorized_chrc, NULL),
-	BT_GATT_CHARACTERISTIC(TEST_CP_CHRC_UUID,
-			       BT_GATT_CHRC_WRITE,
-			       BT_GATT_PERM_WRITE,
-			       NULL, write_cp_chrc, NULL),
-);
+	BT_GATT_CHARACTERISTIC(TEST_CP_CHRC_UUID, BT_GATT_CHRC_WRITE, BT_GATT_PERM_WRITE, NULL,
+			       write_cp_chrc, NULL), );
 
 static bool gatt_read_authorize(struct bt_conn *conn, const struct bt_gatt_attr *attr)
 {
@@ -326,17 +310,34 @@ static bool gatt_write_authorize(struct bt_conn *conn, const struct bt_gatt_attr
 	}
 }
 
+static bool gatt_write_data_authorize(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+				      const void *buf, uint16_t len, uint16_t offset, uint8_t flags)
+{
+	if (bt_uuid_cmp(attr->uuid, TEST_CP_CHRC_UUID) != 0) {
+		return true;
+	}
+
+	if (buf == NULL || len != 1U || ((const uint8_t *)buf)[0] != 0x00U || offset != 0U ||
+	    flags != 0U) {
+		TEST_FAIL("Invalid CP write-data authorization parameters");
+		return false;
+	}
+
+	cp_write_data_authorize_cnt++;
+	return true;
+}
+
 static const struct bt_gatt_authorization_cb gatt_authorization_callbacks = {
 	.read_authorize = gatt_read_authorize,
 	.write_authorize = gatt_write_authorize,
+	.write_data_authorize = gatt_write_data_authorize,
 };
 
 static void test_main(void)
 {
 	int err;
 	const struct bt_data ad[] = {
-		BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR))
-	};
+		BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR))};
 
 	err = bt_gatt_authorization_cb_register(&gatt_authorization_callbacks);
 	if (err) {
@@ -368,12 +369,7 @@ static void test_main(void)
 }
 
 static const struct bst_test_instance test_gatt_server[] = {
-	{
-		.test_id = "gatt_server",
-		.test_main_f = test_main
-	},
-	BSTEST_END_MARKER
-};
+	{.test_id = "gatt_server", .test_main_f = test_main}, BSTEST_END_MARKER};
 
 struct bst_test_list *test_gatt_server_install(struct bst_test_list *tests)
 {
