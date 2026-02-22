@@ -452,6 +452,75 @@ struct bt_gatt_authorization_cb {
 	 */
 	bool (*write_authorize)(struct bt_conn *conn,
 				const struct bt_gatt_attr *attr);
+
+	/** @brief Authorize the GATT notification.
+	 *
+	 *  This callback allows the application to authorize the delivery of a
+	 *  notification for the attribute that is being notified. It is invoked
+	 *  for every peer the notification would be sent to, immediately before
+	 *  the PDU is built.
+	 *
+	 *  @a attr is the attribute supplied by the notifying application and
+	 *  may be either the characteristic declaration or its value attribute.
+	 *  Use @ref bt_gatt_attr_value_handle to resolve the value handle.
+	 *
+	 *  Rejecting a notification sent on a specific connection fails the
+	 *  originating call with @c -EACCES. Rejecting one addressed to all
+	 *  subscribers (@c conn set to NULL) skips that peer and leaves
+	 *  delivery to the remaining subscribers unaffected.
+	 *
+	 *  @param conn Connection object.
+	 *  @param attr The attribute that is being notified.
+	 *
+	 *  @retval true  Authorize the operation and allow it to execute.
+	 *  @retval false Reject the operation and prevent it from executing.
+	 */
+	bool (*notify_authorize)(struct bt_conn *conn, const struct bt_gatt_attr *attr);
+
+	/** @brief Authorize the GATT indication.
+	 *
+	 *  This callback allows the application to authorize the delivery of an
+	 *  indication for the attribute that is being indicated. It is invoked
+	 *  for every peer the indication would be sent to, immediately before
+	 *  the PDU is built.
+	 *
+	 *  @a attr is the attribute supplied by the indicating application and
+	 *  may be either the characteristic declaration or its value attribute.
+	 *  Use @ref bt_gatt_attr_value_handle to resolve the value handle.
+	 *
+	 *  Rejecting an indication sent on a specific connection fails the
+	 *  originating call with @c -EACCES. Rejecting one addressed to all
+	 *  subscribers (@c conn set to NULL) skips that peer and leaves
+	 *  delivery to the remaining subscribers unaffected.
+	 *
+	 *  @param conn Connection object.
+	 *  @param attr The attribute that is being indicated.
+	 *
+	 *  @retval true  Authorize the operation and allow it to execute.
+	 *  @retval false Reject the operation and prevent it from executing.
+	 */
+	bool (*indicate_authorize)(struct bt_conn *conn, const struct bt_gatt_attr *attr);
+
+	/** @brief Authorize a GATT write using its value.
+	 *
+	 *  This callback supplements @ref write_authorize for authorization
+	 *  decisions that depend on the value being written. It is invoked after
+	 *  @ref write_authorize has accepted the attribute-level operation.
+	 *  @p buf remains valid only for the duration of the callback and may be
+	 *  NULL when @p len is zero.
+	 *
+	 *  @param conn Connection object.
+	 *  @param attr The attribute that is being written.
+	 *  @param buf  Write value or fragment.
+	 *  @param len  Length of @p buf.
+	 *  @param offset Offset of @p buf in the attribute value.
+	 *  @param flags Write flags, composed of BT_GATT_WRITE_FLAG_* values.
+	 *
+	 *  @retval true  Authorize the operation and allow it to execute.
+	 *  @retval false Reject the operation and prevent it from executing.
+	 */
+	bool (*write_data_authorize)(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+				     const void *buf, uint16_t len, uint16_t offset, uint8_t flags);
 };
 
 /** Characteristic Properties Bit field values */

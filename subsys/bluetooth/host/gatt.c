@@ -2486,6 +2486,11 @@ static int gatt_notify(struct bt_conn *conn, uint16_t handle,
 		return -EPERM;
 	}
 
+	if (!bt_gatt_attr_notify_authorize(conn, params->attr)) {
+		LOG_DBG("Notification not authorized");
+		return -EACCES;
+	}
+
 	if (IS_ENABLED(CONFIG_BT_GATT_ENFORCE_SUBSCRIPTION)) {
 		/* Check if client has subscribed before sending notifications.
 		 * This is not really required in the Bluetooth specification,
@@ -2648,6 +2653,11 @@ static int gatt_indicate(struct bt_conn *conn, uint16_t handle,
 	if (bt_gatt_check_perm(conn, params->attr, BT_GATT_PERM_READ_ENCRYPT_MASK)) {
 		LOG_DBG("Link is not encrypted");
 		return -EPERM;
+	}
+
+	if (!bt_gatt_attr_indicate_authorize(conn, params->attr)) {
+		LOG_DBG("Indication not authorized");
+		return -EACCES;
 	}
 
 	if (IS_ENABLED(CONFIG_BT_GATT_ENFORCE_SUBSCRIPTION)) {
@@ -3008,6 +3018,11 @@ static int gatt_notify_multiple_verify_params(struct bt_conn *conn,
 		if (bt_gatt_check_perm(conn, attr, BT_GATT_PERM_READ_ENCRYPT_MASK)) {
 			LOG_DBG("Link %p is not encrypted", (void *)conn);
 			return -EPERM;
+		}
+
+		if (!bt_gatt_attr_notify_authorize(conn, params[i].attr)) {
+			LOG_DBG("Notification not authorized");
+			return -EACCES;
 		}
 
 		/* The current implementation requires the same callbacks and
@@ -6745,17 +6760,53 @@ bool bt_gatt_attr_read_authorize(struct bt_conn *conn, const struct bt_gatt_attr
 	return authorization_cb->read_authorize(conn, attr);
 }
 
-bool bt_gatt_attr_write_authorize(struct bt_conn *conn, const struct bt_gatt_attr *attr)
+bool bt_gatt_attr_write_authorize(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+				  const void *buf, uint16_t len, uint16_t offset, uint8_t flags)
 {
 	if (!IS_ENABLED(CONFIG_BT_GATT_AUTHORIZATION_CUSTOM)) {
 		return true;
 	}
 
-	if (!authorization_cb || !authorization_cb->write_authorize) {
+	if (!authorization_cb) {
 		return true;
 	}
 
-	return authorization_cb->write_authorize(conn, attr);
+	if (authorization_cb->write_authorize && !authorization_cb->write_authorize(conn, attr)) {
+		return false;
+	}
+
+	if (authorization_cb->write_data_authorize &&
+	    !authorization_cb->write_data_authorize(conn, attr, buf, len, offset, flags)) {
+		return false;
+	}
+
+	return true;
+}
+
+bool bt_gatt_attr_notify_authorize(struct bt_conn *conn, const struct bt_gatt_attr *attr)
+{
+	if (!IS_ENABLED(CONFIG_BT_GATT_AUTHORIZATION_CUSTOM)) {
+		return true;
+	}
+
+	if (!authorization_cb || !authorization_cb->notify_authorize) {
+		return true;
+	}
+
+	return authorization_cb->notify_authorize(conn, attr);
+}
+
+bool bt_gatt_attr_indicate_authorize(struct bt_conn *conn, const struct bt_gatt_attr *attr)
+{
+	if (!IS_ENABLED(CONFIG_BT_GATT_AUTHORIZATION_CUSTOM)) {
+		return true;
+	}
+
+	if (!authorization_cb || !authorization_cb->indicate_authorize) {
+		return true;
+	}
+
+	return authorization_cb->indicate_authorize(conn, attr);
 }
 
 int bt_gatt_authorization_cb_register(const struct bt_gatt_authorization_cb *cb)

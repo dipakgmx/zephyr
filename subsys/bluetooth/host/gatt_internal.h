@@ -67,7 +67,10 @@ uint8_t bt_gatt_check_perm(struct bt_conn *conn, const struct bt_gatt_attr *attr
 			uint16_t mask);
 
 bool bt_gatt_attr_read_authorize(struct bt_conn *conn, const struct bt_gatt_attr *attr);
-bool bt_gatt_attr_write_authorize(struct bt_conn *conn, const struct bt_gatt_attr *attr);
+bool bt_gatt_attr_write_authorize(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+				  const void *buf, uint16_t len, uint16_t offset, uint8_t flags);
+bool bt_gatt_attr_notify_authorize(struct bt_conn *conn, const struct bt_gatt_attr *attr);
+bool bt_gatt_attr_indicate_authorize(struct bt_conn *conn, const struct bt_gatt_attr *attr);
 
 /**
  * @brief Whether the GATT database hash is currently valid.

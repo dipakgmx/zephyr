@@ -2131,12 +2131,6 @@ static uint8_t write_cb(const struct bt_gatt_attr *attr, uint16_t handle,
 		return BT_GATT_ITER_STOP;
 	}
 
-	/* Check the attribute authorization logic */
-	if (!bt_gatt_attr_write_authorize(data->conn, attr)) {
-		data->err = BT_ATT_ERR_AUTHORIZATION;
-		return BT_GATT_ITER_STOP;
-	}
-
 	/* Set command flag if not a request */
 	if (data->op == BT_ATT_OP_WRITE_CMD || data->op == BT_ATT_OP_SIGNED_WRITE_CMD) {
 		flags |= BT_GATT_WRITE_FLAG_CMD;
@@ -2144,6 +2138,13 @@ static uint8_t write_cb(const struct bt_gatt_attr *attr, uint16_t handle,
 		flags |= BT_GATT_WRITE_FLAG_EXECUTE;
 	} else {
 		__ASSERT(data->op == BT_ATT_OP_WRITE_REQ, "Invalid data->op: %u", data->op);
+	}
+
+	/* Check the attribute authorization logic */
+	if (!bt_gatt_attr_write_authorize(data->conn, attr, data->value, data->len, data->offset,
+					  flags)) {
+		data->err = BT_ATT_ERR_AUTHORIZATION;
+		return BT_GATT_ITER_STOP;
 	}
 
 	/* Write attribute value */
@@ -2252,7 +2253,8 @@ static uint8_t prep_write_cb(const struct bt_gatt_attr *attr, uint16_t handle,
 	}
 
 	/* Check the attribute authorization logic */
-	if (!bt_gatt_attr_write_authorize(data->conn, attr)) {
+	if (!bt_gatt_attr_write_authorize(data->conn, attr, data->value, data->len, data->offset,
+					  BT_GATT_WRITE_FLAG_PREPARE)) {
 		data->err = BT_ATT_ERR_AUTHORIZATION;
 		return BT_GATT_ITER_STOP;
 	}
