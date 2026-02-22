@@ -1,0 +1,298 @@
+/*
+ * Copyright (c) 2025 Dipak Shetty
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/**
+ * @file acs_types.h
+ * @brief ACS internal data structures, enumerations, and forward declarations.
+ *
+ * All core ACS types live here to keep the circular bt_acs_prot_resource_req <-> bt_acs_conn
+ * dependency resolved in one place. Included transitively via acs_internal.h.
+ */
+
+#ifndef BT_GATT_ACS_TYPES_H_
+#define BT_GATT_ACS_TYPES_H_
+
+#include <zephyr/types.h>
+#include <zephyr/kernel.h>
+#include <zephyr/sys/atomic.h>
+#include <zephyr/sys/slist.h>
+#include <zephyr/net_buf.h>
+#include <zephyr/bluetooth/gatt.h>
+#include <zephyr/bluetooth/services/acs.h>
+#include <psa/crypto.h>
+
+#include "acs_wire_constants.h"
+#include "acs_seg.h"
+#include "acs_cp.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+struct bt_acs_prot_resource_req; /**< Defined below; forward-declared for bt_acs_conn */
+struct bt_acs_conn;  /**< Defined below; forward-declared for bt_acs_prot_resource_req */
+struct acs_cp_ctx;   /**< Defined below; forward-declared for callback typedefs */
+struct acs_seq_desc; /**< Defined below; forward-declared for acs_reply_seq_state */
+
+/**
+ * @brief Signature for one step in a multi-indication reply sequence.
+ *
+ * Return 0 on success (framework waits for confirm, then calls next step).
+ * Return negative errno to abort the sequence.
+ */
+typedef int (*acs_seq_step_fn)(struct acs_cp_ctx *ctx);
+
+/**
+ * @brief Internal request-aware ACS handler callback type.
+ */
+typedef void (*bt_acs_prot_resource_handler_t)(struct bt_acs_prot_resource_req *req);
+
+/**
+ * @brief ACS key exchange states.
+ *
+ * Tracks progress through the ECDH or KDF handshake on a per-connection basis.
+ */
+enum bt_acs_key_exchange_state {
+	BT_ACS_KEY_EXCHANGE_IDLE,    /**< No key exchange in progress */
+	BT_ACS_KEY_EXCHANGE_STARTED, /**< START_KEY_EXCHANGE received; awaiting public key */
+	BT_ACS_KEY_EXCHANGE_PUBKEY_EXCHANGED, /**< Public key received; awaiting KDF or confirm */
+	BT_ACS_KEY_EXCHANGE_KDF_DONE,         /**< KDF step completed; awaiting confirmation */
+	BT_ACS_KEY_EXCHANGE_CONFIRM_CODE,     /**< Confirmation code exchanged; awaiting random */
+	BT_ACS_KEY_EXCHANGE_CONFIRM_RAND,     /**< Confirmation random exchanged; verifying */
+	BT_ACS_KEY_EXCHANGE_PENDING_RESPONSE, /**< Exchange done, KEX_RESPONSE not yet sent */
+	BT_ACS_KEY_EXCHANGE_PENDING_STATUS,   /**< KEX_RESPONSE sent, Status not yet indicated */
+	BT_ACS_KEY_EXCHANGE_COMPLETE,         /**< Session key derived and ready for use */
+};
+
+/**
+ * @brief Response transport path for a protected resource request.
+ */
+enum acs_prot_resource_send_method {
+	ACS_PROT_RESOURCE_SEND_NONE = 0, /**< No response path selected */
+	ACS_PROT_RESOURCE_SEND_NOTIFY,   /**< Response via Data Out Notify */
+	ACS_PROT_RESOURCE_SEND_INDICATE, /**< Response via Data Out Indicate */
+};
+
+/**
+ * @brief Discriminator for which caller holds a reference on a request context.
+ */
+enum acs_prot_resource_ref_who {
+	PROT_RESOURCE_REF_ALLOC = 0,       /**< Initial allocation reference */
+	PROT_RESOURCE_REF_TX = 1,          /**< TX path reference (queued/in-flight) */
+	PROT_RESOURCE_REF_REPLY_CHAIN = 2, /**< Multi-step reply sequence reference */
+};
+
+/**
+ * @brief Descriptor for a multi-indication reply sequence.
+ */
+struct acs_seq_desc {
+	const acs_seq_step_fn *steps;
+	uint8_t step_count;
+	/** Optional hook invoked by acs_seq_abort before the sequence state is cleared. */
+	void (*on_abort)(struct acs_cp_ctx *ctx);
+};
+
+/**
+ * @brief Bookkeeping state for a multi-step CP indication reply sequence.
+ */
+struct acs_reply_seq_state {
+	const struct acs_seq_desc *desc; /**< NULL = no active sequence */
+	uint8_t step;                    /**< Next index into desc->steps[] */
+};
+
+/**
+ * @brief Persistent per-connection crypto session (survives key exchange).
+ */
+struct bt_acs_crypto_session {
+	uint8_t session_key[CONFIG_BT_ACS_SESSION_KEY_SIZE]; /**< AES session key */
+#if IS_ENABLED(CONFIG_BT_ACS_HAS_NONCE_FIXED)
+	uint8_t server_nonce_fixed[CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE]; /**< Server fixed nonce */
+	uint8_t client_nonce_fixed[CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE]; /**< Client fixed nonce */
+#endif
+	uint32_t tx_nonce_counter; /**< TX nonce counter */
+	uint32_t rx_nonce_counter; /**< RX nonce counter */
+	psa_key_id_t psa_key_id;   /**< Persistent PSA key handle (0 when not imported) */
+};
+
+/**
+ * @brief NVS-serialised snapshot of an ACS crypto session.
+ */
+struct bt_acs_session_store {
+	uint8_t session_key[CONFIG_BT_ACS_SESSION_KEY_SIZE]; /**< AES session key */
+#if IS_ENABLED(CONFIG_BT_ACS_HAS_NONCE_FIXED)
+	uint8_t server_nonce_fixed[CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE]; /**< Server fixed nonce */
+	uint8_t client_nonce_fixed[CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE]; /**< Client fixed nonce */
+#endif
+	uint32_t tx_nonce_counter;   /**< TX nonce counter */
+	uint32_t rx_nonce_counter;   /**< RX nonce counter */
+	uint16_t restriction_map_id; /**< Active restriction map ID */
+};
+
+/**
+ * @brief Wire format of an ACS ECDH public key (Tables 4.68-4.69).
+ */
+struct acs_ecdh_pubkey {
+	uint16_t key_id;                          /**< Key identifier */
+	uint8_t x_size;                           /**< Size of X coordinate */
+	uint8_t x[CONFIG_BT_ACS_ECDH_COORD_SIZE]; /**< X coordinate */
+	uint8_t y_size;                           /**< Size of Y coordinate (0 for Curve25519) */
+#if CONFIG_BT_ACS_ECDH_HAS_Y
+	uint8_t y[CONFIG_BT_ACS_ECDH_COORD_SIZE]; /**< Y coordinate (if present) */
+#endif
+} __packed;
+
+/**
+ * @brief KDF parameters (Table 4.76 - Key Exchange KDF Response operand).
+ */
+struct bt_acs_kdf_params {
+	uint8_t salt_size;                             /**< KDF_Salt_Size */
+	uint8_t salt[CONFIG_BT_ACS_KDF_SALT_MAX_SIZE]; /**< KDF_Salt */
+	uint8_t info_size;                             /**< KDF_Info_Size */
+	uint8_t info[CONFIG_BT_ACS_KDF_INFO_MAX_SIZE]; /**< KDF_Info */
+};
+
+/**
+ * @brief Transient key-exchange context.
+ */
+struct bt_acs_kex_ctx {
+	bool in_use; /**< Pool-allocation flag */
+	/**
+	 * Key material buffer - holds either the raw ECDH shared secret
+	 * (before KDF) or the HKDF-derived ECDH key (after KDF).  Without
+	 * KDF, shared_secret is used directly for confirmation; with KDF,
+	 * ecdh_key replaces it.  The two are mutually exclusive at any
+	 * given point in the key exchange state machine.
+	 */
+	union {
+		uint8_t shared_secret[CONFIG_BT_ACS_SHARED_SECRET_MAX_SIZE];
+		uint8_t ecdh_key[CONFIG_BT_ACS_SHARED_SECRET_MAX_SIZE];
+	};
+	uint16_t key_mat_len; /**< Length of the active key material (shared_secret or ecdh_key) */
+	bool kdf_applied;     /**< True after KDF overwrites shared_secret with ecdh_key */
+#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_ECDH) || IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
+	struct bt_acs_kdf_params kdf; /**< KDF parameters (Table 4.76) */
+#endif
+	struct acs_ecdh_pubkey server_pubkey; /**< Server ephemeral public key */
+	struct acs_ecdh_pubkey client_pubkey; /**< Client public key */
+	psa_key_id_t ecdh_key_id; /**< PSA key identifier for the server ephemeral private key */
+	struct acs_cp_start_key_exchange_req start_kex; /**< Cached START_KEY_EXCHANGE operand */
+	uint8_t auth_value[ACS_HMAC_SHA256_SIZE];       /**< AuthValue (OOB number / static key) */
+	uint8_t server_random[ACS_HMAC_SHA256_SIZE];    /**< Server random nonce */
+	uint8_t client_random[ACS_HMAC_SHA256_SIZE];    /**< Client random nonce */
+	uint8_t server_confirm[ACS_HMAC_SHA256_SIZE];   /**< Server confirmation code */
+	uint8_t client_confirm[ACS_HMAC_SHA256_SIZE];   /**< Client confirmation code */
+};
+
+/**
+ * @brief Transient state for one plain ACS Control Point procedure.
+ */
+struct acs_cp_proc_ctx {
+	atomic_t locked; /**< Set while a plain CP procedure is active on the connection */
+	struct acs_reply_seq_state reply_seq; /**< Explicit reply-sequence state for plain CP */
+	struct net_buf *response; /**< Plain CP response staging buffer owned by the procedure */
+};
+
+/**
+ * @brief Per-connection ACS state.
+ */
+struct bt_acs_conn {
+	struct bt_conn *conn; /**< Connection pointer */
+	/* Cached GATT attrs — populated once in acs_conn_alloc */
+	const struct bt_gatt_attr *attr_cp;
+	const struct bt_gatt_attr *attr_status;
+#if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_NOTIFICATION)
+	const struct bt_gatt_attr *attr_don;
+#endif
+#if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION)
+	const struct bt_gatt_attr *attr_doi;
+#endif
+	enum bt_acs_key_exchange_state key_state; /**< Key exchange state */
+	uint8_t status_flags;                     /**< Status flags */
+	uint16_t restriction_map_id;              /**< Restriction map ID */
+	struct bt_acs_crypto_session crypto;      /**< Persistent crypto session */
+	struct bt_acs_kex_ctx *kex;               /**< Transient key exchange context */
+	uint8_t status_data[3];                   /**< Embedded status indication payload */
+	struct bt_gatt_indicate_params status_indicate_params; /**< Status indication params */
+	struct acs_cp_proc_ctx cp_proc; /**< Plain CP procedure lifetime and chaining state */
+	struct acs_seg_tx_ctx cp_tx;    /**< Plain CP indication transport context */
+#if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION)
+	struct acs_seg_tx_ctx indicate_tx; /**< DOI indication segmentation context */
+#endif
+	struct acs_seg_rx_ctx cp_rx;   /**< CP path RX reassembly context */
+	struct acs_seg_rx_ctx data_rx; /**< Data In path RX reassembly context */
+	/** In-flight request slots, one per concurrent protected request. */
+	atomic_ptr_t pending_reqs[CONFIG_BT_ACS_MAX_INFLIGHT_REQ_PER_CONN];
+#if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION)
+	struct k_fifo indicate_fifo;    /**< Pending Data Out Indicate response FIFO */
+	atomic_ptr_t active_indication; /**< Currently in-flight DOI response slot */
+#endif
+};
+
+/**
+ * @brief Internal per-resource request-aware handler registration entry.
+ */
+struct bt_acs_prot_resource_handler_entry {
+	const struct bt_uuid *char_uuid;        /**< Characteristic UUID to match */
+	bt_acs_prot_resource_handler_t handler; /**< Handler invoked on match */
+};
+
+/**
+ * @brief Register a protected resource handler at compile time.
+ *
+ * Only available when at least one data protection algorithm is enabled.
+ * The handler is dispatched when an encrypted request arrives via Data In
+ * for the characteristic identified by @p _char_uuid.
+ */
+#if IS_ENABLED(CONFIG_BT_ACS_ANY_DATA_PROTECTION)
+#define ACS_PROT_RESOURCE_HANDLER_DEFINE(_name, _char_uuid, _handler)                           \
+	STRUCT_SECTION_ITERABLE(bt_acs_prot_resource_handler_entry, _name) = {                     \
+		.char_uuid = (_char_uuid),                                                         \
+		.handler = (_handler),                                                             \
+	}
+#else
+#define ACS_PROT_RESOURCE_HANDLER_DEFINE(_name, _char_uuid, _handler)                           \
+	BUILD_ASSERT(0, "ACS_PROT_RESOURCE_HANDLER_DEFINE requires data protection to be enabled")
+#endif
+
+/**
+ * @brief Per-request ACS context for bounded same-connection concurrency.
+ *
+ * Owns the plaintext request input and plaintext response buffer for one
+ * protected request. Protected Control Point requests use the same context.
+ */
+struct bt_acs_prot_resource_req {
+	sys_snode_t node;                  /**< k_fifo linkage for send queue (DOI) */
+	struct bt_acs_conn *acs_conn;      /**< Owning ACS connection; NULL after disconnect */
+	struct net_buf *response;          /**< Pool buffer for plaintext response staging */
+	struct net_buf *decrypted_request; /**< Reference-counted buffer from pool (request data) */
+	atomic_t ref_count;                /**< Request lifetime refcount */
+	ATOMIC_DEFINE(ref_flags, 3);       /**< Per-caller bitmask (debug: catch double-release) */
+	struct k_work work;                /**< Deferred dispatch work item */
+	struct acs_reply_seq_state reply_seq; /**< Explicit reply-sequence state for protected CP */
+	enum acs_prot_resource_send_method send_method; /**< Selected response transport */
+	uint16_t resource_handle; /**< Protected resource handle from the request */
+	uint16_t isc_id;          /**< ISC_ID associated with this request */
+	uint16_t data_offset;     /**< Offset within decrypted_request->data where payload starts */
+	uint16_t data_length;     /**< Plaintext request payload length */
+	uint8_t req_slot;         /**< Index in acs_conn->pending_reqs[] */
+	bool input_owned;         /**< True when decrypted_request ownership was transferred */
+};
+
+/**
+ * @brief Unified Control Point dispatch context.
+ */
+struct acs_cp_ctx {
+	struct bt_acs_prot_resource_req *prot_req; /**< NULL = plain CP, non-NULL = protected CP */
+	struct bt_conn *conn;                      /**< Underlying BT connection */
+	const struct bt_gatt_attr *attr; /**< CP GATT attribute (plain indication routing) */
+	struct bt_acs_conn *acs_conn;    /**< Pre-looked-up per-connection ACS state */
+};
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* BT_GATT_ACS_TYPES_H_ */

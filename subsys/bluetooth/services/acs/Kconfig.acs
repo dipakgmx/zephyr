@@ -1,0 +1,618 @@
+# Bluetooth GATT Authorization Control Service
+
+config BT_ACS
+	bool "GATT Authorization Control Service"
+	depends on BT_CONN
+	depends on MBEDTLS_PSA_CRYPTO_C
+	select EXPERIMENTAL
+	help
+	  Enable GATT Authorization Control Service (UUID 0x183D).
+	  This service provides rigorous application-level security for BLE resources,
+	  requiring an Authorization Control (AC) Client to successfully authenticate
+	  to access specific, protected GATT resources of an AC Server.
+
+if BT_ACS
+
+module = BT_ACS
+module-str = BT_ACS
+source "subsys/logging/Kconfig.template.log_config"
+
+menu "ACS Protection Methods"
+
+menuconfig BT_ACS_FEAT_AUTHORIZATION
+	bool "Authorization support (Restriction Maps)"
+	default y
+	help
+	  Enable per-resource access control via Restriction Maps (Bit 3).
+	  Provides Get Restriction Map Descriptor (0x02) and Get Restriction
+	  Map ID List (0x04) procedures.  Without this, clients have no
+	  discovery path for protected resources; the server's protection
+	  model must be known out-of-band.
+
+if BT_ACS_FEAT_AUTHORIZATION
+
+config BT_ACS_ACTIVE_RMAP_ID
+	int "Protected Restriction Map ID"
+	default 1
+	range 1 65535
+	help
+	  Identifier for the protected restriction map (the map whose entries
+	  require ACS key exchange before access).  Clients cache the RMAP by
+	  this ID and re-fetch when it changes.
+	  ID 0 is reserved by the spec (§3.5.3) for the native-service access
+	  map: resources accessible directly via their own GATT service without
+	  ACS mediation.
+
+endif # BT_ACS_FEAT_AUTHORIZATION
+
+config BT_ACS_FEAT_AUTHENTICATION
+	bool "Authentication support"
+	default y
+	help
+	  Enable authentication information security controls (Bit 2) [2].
+
+config BT_ACS_FEAT_INTEGRITY
+	bool "Integrity support"
+	depends on BT_ACS_FEAT_AUTHENTICATION
+	default y
+	help
+  	  Enable integrity information security controls (Bit 1) [2].
+
+
+config BT_ACS_FEAT_CONFIDENTIALITY
+	bool "Confidentiality support"
+	depends on BT_ACS_FEAT_INTEGRITY
+	default y
+	help
+	  Enable confidentiality using encryption controls (Bit 0) [2].
+
+endmenu # ACS Protection Methods
+
+menuconfig BT_ACS_KEY_EXCHANGE_ECDH
+	bool "ECDH key exchange"
+	depends on PSA_WANT_ALG_ECDH
+	depends on BT_SETTINGS
+	help
+	  Enable Elliptic Curve Diffie-Hellman key exchange method.
+	  Requires PSA Crypto ECDH support and BT_SETTINGS for session key persistence.
+
+if BT_ACS_KEY_EXCHANGE_ECDH
+
+choice BT_ACS_ECDH_CURVE
+	prompt "ECDH curve"
+	default BT_ACS_ECDH_CURVE_P256
+	help
+	  Select the elliptic curve for ECDH key exchange operations.
+
+config BT_ACS_ECDH_CURVE_P256
+	bool "Curve P-256 (secp256r1)"
+	depends on PSA_WANT_ECC_SECP_R1_256
+
+config BT_ACS_ECDH_CURVE_P384
+	bool "Curve P-384 (secp384r1)"
+	depends on PSA_WANT_ECC_SECP_R1_384
+
+config BT_ACS_ECDH_CURVE_P521
+	bool "Curve P-521 (secp521r1)"
+	depends on PSA_WANT_ECC_SECP_R1_521
+
+config BT_ACS_ECDH_CURVE_CURVE25519
+	bool "Curve25519"
+	depends on PSA_WANT_ECC_MONTGOMERY_255
+
+endchoice
+
+endif # BT_ACS_KEY_EXCHANGE_ECDH
+
+# Hidden symbol for coordinate size — always present so C code compiles when ECDH is off.
+config BT_ACS_ECDH_COORD_SIZE
+	int
+	default 66 if BT_ACS_ECDH_CURVE_P521
+	default 48 if BT_ACS_ECDH_CURVE_P384
+	default 32
+
+# Hidden symbol for Y-axis presence (1 = yes, 0 = no) — always present.
+config BT_ACS_ECDH_HAS_Y
+	int
+	default 0 if BT_ACS_ECDH_CURVE_CURVE25519
+	default 1
+
+# Shared secret buffer size — used by ECDH and OOB key exchange.
+# Sized to the ECDH curve when ECDH is enabled; 32 bytes otherwise.
+config BT_ACS_SHARED_SECRET_MAX_SIZE
+	int
+	default 66 if BT_ACS_ECDH_CURVE_P521
+	default 48 if BT_ACS_ECDH_CURVE_P384
+	default 32
+
+menuconfig BT_ACS_KEY_EXCHANGE_KDF
+	bool "Key Derivation Function key exchange"
+	depends on PSA_WANT_ALG_HKDF
+	depends on BT_SETTINGS
+	help
+	  Enable Key Derivation Function based key exchange method.
+	  Requires BT_SETTINGS for session key persistence.
+
+if BT_ACS_KEY_EXCHANGE_KDF
+
+choice BT_ACS_KDF_ALGORITHM
+	prompt "Key Derivation Function algorithm"
+	default BT_ACS_KDF_HKDF_SHA256
+	help
+	  Select the Key Derivation Function algorithm for session key derivation.
+
+config BT_ACS_KDF_HKDF_SHA256
+	bool "HKDF SHA-256 128-bit"
+	depends on PSA_WANT_ALG_SHA_256
+
+config BT_ACS_KDF_HKDF_SHA256_WITH_INFO
+	bool "HKDF SHA-256 128-bit With Additional KDF Info Concatenation"
+	depends on PSA_WANT_ALG_SHA_256
+
+config BT_ACS_KDF_HKDF_SHA384
+	bool "HKDF SHA-384 128-bit"
+	depends on PSA_WANT_ALG_SHA_384
+
+config BT_ACS_KDF_HKDF_SHA384_WITH_INFO
+	bool "HKDF SHA-384 128-bit With Additional KDF Info Concatenation"
+	depends on PSA_WANT_ALG_SHA_384
+
+config BT_ACS_KDF_HKDF_SHA512
+	bool "HKDF SHA-512 128-bit"
+	depends on PSA_WANT_ALG_SHA_512
+
+config BT_ACS_KDF_HKDF_SHA512_WITH_INFO
+	bool "HKDF SHA-512 128-bit With Additional KDF Info Concatenation"
+	depends on PSA_WANT_ALG_SHA_512
+
+endchoice
+
+config BT_ACS_HAS_INFO_FOR_HKDF
+	bool
+	default y if BT_ACS_KDF_HKDF_SHA256_WITH_INFO || \
+	             BT_ACS_KDF_HKDF_SHA384_WITH_INFO || \
+	             BT_ACS_KDF_HKDF_SHA512_WITH_INFO
+	default n
+
+endif # BT_ACS_KEY_EXCHANGE_KDF
+
+# KDF buffer sizes — always present so C code compiles when KDF is off.
+config BT_ACS_KDF_SALT_MAX_SIZE
+	int
+	default 64 if BT_ACS_KDF_HKDF_SHA512 || BT_ACS_KDF_HKDF_SHA512_WITH_INFO
+	default 48 if BT_ACS_KDF_HKDF_SHA384 || BT_ACS_KDF_HKDF_SHA384_WITH_INFO
+	default 32
+
+config BT_ACS_KDF_INFO_MAX_SIZE
+	int
+	default 64 if BT_ACS_KDF_HKDF_SHA512_WITH_INFO
+	default 48 if BT_ACS_KDF_HKDF_SHA384_WITH_INFO
+	default 32 if BT_ACS_KDF_HKDF_SHA256_WITH_INFO
+	default 0
+
+menuconfig BT_ACS_KEY_EXCHANGE_OOB
+	bool "Out-of-Band key exchange"
+	depends on BT_SETTINGS
+	help
+	  Enable Out-of-Band key exchange. Requires BT_SETTINGS for session key persistence.
+
+if BT_ACS_KEY_EXCHANGE_OOB
+
+config BT_ACS_OOB_TRANSPORT_ON_DEVICE
+	bool "On device"
+	default y
+	help
+	  OOB key is provided directly on the device (e.g., a label) (BIT(15) of
+	  OOB_Key_Exchange_Capabilities).
+
+config BT_ACS_OOB_STATIC_NUM_NUMBER
+	bool "Static OOB confirmation number — numeric"
+	default y
+	help
+	  Static OOB confirmation number is delivered in plain numeric format
+	  (BIT(5) of Confirmation_Static_OOB_Number_Capabilities).
+
+config BT_ACS_OOB_STATIC_NUM_ON_DEVICE
+	bool "Static OOB confirmation number — on device"
+	default y
+	help
+	  Static OOB confirmation number is provided directly on the device
+	  (BIT(15) of Confirmation_Static_OOB_Number_Capabilities).
+
+endif # BT_ACS_KEY_EXCHANGE_OOB
+
+menu "Confirmation Capabilities"
+
+config BT_ACS_CONFIRMATION_OUTPUT_NUMERIC
+	bool "Numeric output display"
+	help
+	  AC Server can display a numeric value for the user to confirm.
+	  Sets BIT(3) of Confirmation_Output_OOB_Number_Capabilities in the
+	  Feature Response.
+
+config BT_ACS_CONFIRMATION_OUTPUT_MAX_VALUE
+	int
+	prompt "Maximum output numeric value" if BT_ACS_CONFIRMATION_OUTPUT_NUMERIC
+	default 999999 if BT_ACS_CONFIRMATION_OUTPUT_NUMERIC
+	default 0
+	range 1 999999999 if BT_ACS_CONFIRMATION_OUTPUT_NUMERIC
+	help
+	  Maximum numeric value the AC Server can display for confirmation.
+	  Populates Confirmation_Output_OOB_Number_Max_Value in the Feature
+	  Response. Defaults to 0 when numeric output is disabled so the
+	  symbol is always defined.
+
+config BT_ACS_CONFIRMATION_OUTPUT_BEEP
+	bool "Output beep"
+	help
+	  AC Server can emit beeps for the user to count.
+	  Sets BIT(1) of Confirmation_Output_OOB_Number_Capabilities in the
+	  Feature Response.
+
+config BT_ACS_CONFIRMATION_INPUT_NUMERIC
+	bool "Numeric input"
+	help
+	  AC Server can accept typed numeric input from the user for
+	  confirmation.  Sets BIT(2) of
+	  Confirmation_Input_OOB_Number_Capabilities in the Feature Response.
+
+config BT_ACS_CONFIRMATION_INPUT_MAX_VALUE
+	int
+	prompt "Maximum input numeric value" if BT_ACS_CONFIRMATION_INPUT_NUMERIC
+	default 999999 if BT_ACS_CONFIRMATION_INPUT_NUMERIC
+	default 0
+	range 1 999999999 if BT_ACS_CONFIRMATION_INPUT_NUMERIC
+	help
+	  Maximum numeric value the AC Server can accept as confirmation input.
+	  Populates Confirmation_Input_OOB_Number_Max_Value in the Feature
+	  Response. Defaults to 0 when numeric input is disabled so the
+	  symbol is always defined.
+
+config BT_ACS_CONFIRMATION_INPUT_PUSH
+	bool "Push input"
+	help
+	  AC Server can accept push input — user presses a button a specific
+	  number of times — for confirmation.  Sets BIT(0) of
+	  Confirmation_Input_OOB_Number_Capabilities in the Feature Response.
+
+endmenu # Confirmation Capabilities
+
+menu "Security Management Procedures"
+
+config BT_ACS_INVALIDATE_ESTABLISHED_SECURITY
+	bool
+	default y if BT_ACS_ANY_KEY_EXCHANGE
+	help
+	  Enables opcode 0x13 (Invalidate All Established Security) and opcode
+	  0x14 (Invalidate Key). Per ACS spec Table 4.13 conditions C.5/C.6,
+	  these are mandatory when any key exchange method is supported.
+	  Not user-selectable — automatically enabled with key exchange.
+
+config BT_ACS_ABORT
+	bool
+	default y if BT_ACS_DESCRIPTORS || BT_ACS_ANY_KEY_EXCHANGE
+	help
+	  Enables opcode 0x15 (Abort in-progress key exchange).
+	  Per ACS spec Table 4.13 condition C.7, Abort is mandatory when
+	  descriptors or any key exchange method is supported.
+	  Not user-selectable — automatically enabled when required.
+
+config BT_ACS_SET_SECURITY_CONTROLS_SWITCH
+	bool "Set Security Controls Switch procedure"
+	default n
+	help
+	  Enables opcode 0x16. Allows an AC Client to toggle the security
+	  controls switch on/off. Disabled by default — if left unprotected,
+	  any client can bypass security controls.
+
+config BT_ACS_INITIATE_PAIRING
+	bool "Initiate Pairing procedure"
+	depends on BT_SMP
+	default n
+	help
+	  Enables opcode 0xDF (Initiate Pairing). When enabled, the AC Client
+	  can request the AC Server to initiate BLE pairing via
+	  bt_conn_set_security(). Sets BIT(4) (Initiation of Pairing Supported)
+	  in the Feature Response.
+
+config BT_ACS_KEY_URI
+	bool "Get Key URI procedure"
+	default n
+	depends on BT_ACS_KEY_EXCHANGE_OOB
+	help
+	  Enables opcodes 0x17 (Get Key URI) and 0x18 (Key URI Response).
+	  Requires BT_ACS_KEY_EXCHANGE_OOB and a registered key_uri_get
+	  callback in bt_acs_cb.
+
+config BT_ACS_KEY_URI_MAX_LEN
+	int "Maximum key URI length in bytes"
+	default 128
+	range 1 512
+	depends on BT_ACS_KEY_URI
+	help
+	  Upper bound on the URI string returned in the Key URI Response.
+	  Allocated from the CP indication TX buffer; reduce to save RAM
+	  on platforms with short URIs (e.g. embedded IP addresses).
+
+endmenu # Security Management Procedures
+
+# Hidden: AES session key length in bytes. Fixed at 16 because every currently
+# supported data-protection algorithm (AES-CCM, AES-GCM, AES-GMAC, AES-CMAC)
+# uses AES-128. A future AES-256 variant would flip this to 32.
+config BT_ACS_SESSION_KEY_SIZE
+	int
+	default 16
+
+menu "Data Protection Algorithms (§3.6)"
+	depends on BT_ACS_FEAT_AUTHENTICATION
+
+comment "AEAD — Authenticated Encryption with Associated Data (§3.6)"
+
+config BT_ACS_DATA_PROTECTION_AES_GCM
+	bool "AES-128-GCM"
+	default y if BT_ACS_FEAT_CONFIDENTIALITY
+	depends on BT_ACS_FEAT_CONFIDENTIALITY
+	help
+	  Galois/Counter Mode — AEAD algorithm (§3.6). §4.1.1.2 mandates
+	  GCM as the baseline when the AC Server advertises confidentiality,
+	  integrity, and authentication. Uses a 12-byte IV (4-byte fixed +
+	  8-byte invocation) with Sequence Number Different Fixed Parts.
+	  May coexist with GMAC for mixed-ISC configurations where some
+	  resources need confidentiality and others need integrity only.
+
+config BT_ACS_DATA_PROTECTION_AES_CCM
+	bool "AES-128-CCM"
+	depends on BT_ACS_FEAT_CONFIDENTIALITY
+	depends on !BT_ACS_DATA_PROTECTION_AES_GCM
+	depends on !BT_ACS_DATA_PROTECTION_AES_GMAC
+	help
+	  Counter with CBC-MAC — AEAD algorithm (§3.6, Table 4.36).
+	  Alternative to GCM with configurable MAC size (4–16 bytes)
+	  and nonce scheme (SEQ_EVEN_ODD or SEQ_DIFF_FIXED, Table 4.47).
+	  Uses a 13-byte nonce incompatible with GCM/GMAC; cannot coexist
+	  with either in the same build.
+
+comment "Integrity — authentication without confidentiality"
+
+config BT_ACS_DATA_PROTECTION_AES_GMAC
+	bool "AES-128-GMAC"
+	default y if BT_ACS_FEAT_INTEGRITY && !BT_ACS_FEAT_CONFIDENTIALITY
+	depends on BT_ACS_FEAT_INTEGRITY
+	help
+	  GMAC variant of GCM (§3.6, §4.1.1.2). Mandatory when the AC
+	  Server advertises integrity and authentication but NOT
+	  confidentiality. Provides authenticated messaging without
+	  encryption. Shares the same 12-byte IV layout as GCM and may
+	  coexist with it for mixed-ISC configurations.
+
+comment "Authentication only (§3.6)"
+
+config BT_ACS_DATA_PROTECTION_AES_CMAC
+	bool "AES-128-CMAC"
+	depends on BT_ACS_FEAT_AUTHENTICATION
+	depends on !BT_ACS_FEAT_INTEGRITY
+	depends on !BT_ACS_DATA_PROTECTION_AES_GCM
+	depends on !BT_ACS_DATA_PROTECTION_AES_GMAC
+	depends on !BT_ACS_DATA_PROTECTION_AES_CCM
+	help
+	  Cipher-based Message Authentication Code — authentication
+	  algorithm (§3.6, Table 4.36). Used when the AC Server advertises
+	  authentication only (no integrity or confidentiality). Cannot
+	  coexist with AEAD algorithms in the same build.
+
+endmenu
+
+config BT_ACS_CCM_MAC_SIZE
+	int "AES-CCM MAC tag size in bytes"
+	default 8
+	range 4 16
+	depends on BT_ACS_DATA_PROTECTION_AES_CCM
+	help
+	  Size of the MAC/authentication tag appended by AES-128-CCM. Must be
+	  an even value between 4 and 16 (per RFC 3610). Advertised in the
+	  Key Descriptor Response (Table 4.45, MAC_Size field).
+
+
+choice BT_ACS_CCM_NONCE_TYPE
+	prompt "AES-CCM nonce type (Table 4.47)"
+	default BT_ACS_CCM_NONCE_SEQ_DIFF_FIXED
+	depends on BT_ACS_DATA_PROTECTION_AES_CCM
+	help
+	  Selects the nonce scheme advertised in the AES-128-CCM key descriptor.
+
+config BT_ACS_CCM_NONCE_SEQ_DIFF_FIXED
+	bool "Sequence Number Different Fixed Parts (0x02)"
+	help
+	  Nonce = server/client fixed part || variable counter.
+	  Requires Set Client Nonce Fixed exchange before first message.
+
+config BT_ACS_CCM_NONCE_FIXED_SIZE
+	int "Fixed nonce part size in bytes (AES-CCM, SEQ_DIFF_FIXED)"
+	default 8
+	range 1 12
+	depends on BT_ACS_CCM_NONCE_SEQ_DIFF_FIXED
+	help
+	  Size of the server/client fixed nonce part advertised in the AES-128-CCM
+	  key descriptor (Nonce_Fixed_Size field, §4.4.4.15.1.4.4.6).
+	  The variable part is (13 - this value). The spec requires each part to be
+	  at least 1 octet and the total to be 13 octets (ACS recommendation).
+	  The default of 8 gives a 5-octet variable part compatible with the ACS
+	  reference implementation. Use 11 for a 2-octet (16-bit) counter.
+
+config BT_ACS_CCM_NONCE_SEQ_EVEN_ODD
+	bool "Sequence Number Even-Odd (0x01)"
+	help
+	  Nonce = variable counter only (no fixed part, Nonce_Fixed_Size = 0).
+	  Server uses even sequence numbers (0, 2, 4 ...).
+	  Client uses odd sequence numbers (1, 3, 5 ...).
+	  Set Client Nonce Fixed opcode is not applicable in this mode.
+endchoice
+
+# Hidden helpers — derived from active selections, used for CMakeLists gating.
+config BT_ACS_ANY_KEY_EXCHANGE
+	bool
+	default y if BT_ACS_KEY_EXCHANGE_ECDH || BT_ACS_KEY_EXCHANGE_KDF || BT_ACS_KEY_EXCHANGE_OOB
+
+config BT_ACS_ANY_DATA_PROTECTION
+	bool
+	default y if BT_ACS_DATA_PROTECTION_AES_GCM || BT_ACS_DATA_PROTECTION_AES_CCM || \
+		     BT_ACS_DATA_PROTECTION_AES_GMAC || BT_ACS_DATA_PROTECTION_AES_CMAC
+
+config BT_ACS_ISC_MAX_CONTROLS
+	int
+	default 3 if BT_ACS_FEAT_INTEGRITY
+	default 2 if BT_ACS_KEY_EXCHANGE_ECDH
+	default 1
+	help
+	  Maximum number of Information_Security_Controls entries in a single ISC record
+	  (§4.4.4.13.1.3.1.2 / Table 4.33). Sized to the active protection level
+	  (Table 4.61 Protection_Methods bits):
+	    Integrity or Confidentiality (Bit 1 or Bit 0) → 3  (Nonce + MAC + AuthEnc/Authenticated)
+	    Authentication + ECDH only   (Bit 2 + ECDH)   → 2  (Nonce + MAC, no encryption)
+	    Authentication alone         (Bit 2)           → 1  (MAC only)
+
+config BT_ACS_HAS_NONCE_FIXED
+	bool
+	default n if BT_ACS_CCM_NONCE_SEQ_EVEN_ODD
+	default n if BT_ACS_DATA_PROTECTION_AES_CMAC
+	default y
+
+config BT_ACS_NONCE_FIXED_BUF_SIZE
+	int
+	default BT_ACS_CCM_NONCE_FIXED_SIZE if BT_ACS_CCM_NONCE_SEQ_DIFF_FIXED
+	default 4 if BT_ACS_DATA_PROTECTION_AES_GCM || BT_ACS_DATA_PROTECTION_AES_GMAC
+	default 0 if BT_ACS_CCM_NONCE_SEQ_EVEN_ODD
+	default 0 if BT_ACS_DATA_PROTECTION_AES_CMAC
+	default 8
+
+choice BT_ACS_KEY_FORMAT
+	prompt "Public key format"
+	default BT_ACS_KEY_FORMAT_UNCOMPRESSED
+	help
+	  Select the strictly defined format utilized for public key representation.
+
+config BT_ACS_KEY_FORMAT_UNCOMPRESSED
+	bool "Uncompressed plain"
+
+config BT_ACS_KEY_FORMAT_X509
+	bool "X.509"
+
+config BT_ACS_KEY_FORMAT_MANUFACTURER
+	bool "Manufacturer-specific"
+
+endchoice
+
+config BT_ACS_MULTIPLE_RESTRICTION_MAPS
+	bool "Multiple restriction maps"
+	help
+	  Enable support for processing multiple distinct restriction maps.
+
+config BT_ACS_DESCRIPTORS
+	bool "ACS descriptors"
+	help
+	  Enable exhaustive ACS descriptor support.
+
+config BT_ACS_RESOURCE_HANDLE_UUID_MAP
+	bool "Resource handle to UUID mapping"
+	help
+	  Enable complex resource handle to Universally Unique Identifier mapping support.
+
+config BT_ACS_ATT_MTU
+	bool "ATT MTU negotiation"
+	help
+	  Enable Attribute Protocol Maximum Transmission Unit negotiation support
+	  routed via the specific Control Point mechanism.
+
+config BT_ACS_PROTECTED_RESOURCE_WRITE
+	bool "Protected resource write"
+	default y
+	help
+	  Enable strict write protection logic for specific resources.
+
+config BT_ACS_PROTECTED_RESOURCE_READ
+	bool "Protected resource read"
+	default y
+	help
+	  Enable strict read protection logic for specific resources.
+
+config BT_ACS_PROTECTED_RESOURCE_NOTIFICATION
+	bool "Protected resource notification"
+	help
+	  Enable complex notification protection mechanisms for dynamic resources.
+
+config BT_ACS_PROTECTED_RESOURCE_INDICATION
+	bool "Protected resource indication"
+	help
+	  Enable complex indication protection mechanisms requiring explicit acknowledgments.
+
+config BT_ACS_MAX_SEGMENT_SIZE
+	int "Maximum segment size"
+	default 512
+	range 64 2048
+	help
+	  Defines the absolute maximum size of a single logical data segment in bytes.
+	  If required due to MTU limitations, the Authorization Control Server shall
+	  conduct rapid payload segmentation precisely as defined in the ACS Spec 1.0.
+
+# Hidden: scratch PDU payload size embedded in every acs_seg_tx_ctx.
+# Sized to the largest outbound segment the server will place on the wire in
+# one ATT indication. Kept hidden because raising it grows every per-connection
+# TX context; lower only on RAM-tight targets with short MTUs.
+config BT_ACS_SEG_TX_SCRATCH_PAYLOAD
+	int
+	default 64
+
+config BT_ACS_CP_BUF_SIZE
+	int "Control Point buffer size"
+	default 256
+	range 64 1024
+	help
+	  Defines the memory pool size of the Control Point response buffer allocated in bytes.
+
+config BT_ACS_MAX_CONCURRENT_CONN
+	int "Maximum simultaneous ACS transient contexts"
+	default BT_MAX_CONN
+	range 1 BT_MAX_CONN
+	help
+	  Number of connections that may simultaneously hold ACS transient working
+	  state. This single limit sizes both the key-exchange context pool and the
+	  large ACS I/O working-set pool (segmentation buffers, CP/DOI TX state, and
+	  crypto scratch storage).
+
+config BT_ACS_MAX_INFLIGHT_REQ_PER_CONN
+	int "Maximum in-flight ACS requests per connection"
+	default 4
+	range 1 8
+	help
+	  Upper bound on the number of protected ACS Data requests that may be kept
+	  alive at the same time on a single connection. Completed requests are copied
+	  into request contexts from a slab so new requests can still be admitted while
+	  earlier responses are waiting to be sent.
+
+
+config BT_ACS_GATT_AUTHORIZATION
+	bool "Auto-register GATT authorization callback"
+	default y
+	depends on BT_GATT_AUTHORIZATION_CUSTOM
+	help
+	  When enabled, ACS registers a bt_gatt_authorization_cb at init time
+	  that automatically blocks reads/writes to protected characteristics
+	  when ACS security has not been established. Services only need to
+	  declare protection via BT_ACS_RMAP_PROTECT_CHAR_IN_MAP() and use
+	  BT_ACS_GATT_PERM_READ / BT_ACS_GATT_PERM_WRITE on their
+	  characteristic attributes. Disable this if the application already
+	  registers its own GATT authorization callback, and chain
+	  bt_acs_is_operation_permitted() manually.
+
+config BT_ACS_MAX_PROTECTED_CCCD_GATES
+	int "Maximum protected CCCD gate entries"
+	default 8
+	range 1 64
+	depends on BT_ACS_GATT_AUTHORIZATION
+	help
+	  Maximum number of protected Client Characteristic Configuration
+	  Descriptor entries cached by ACS for automatic GATT authorization.
+	  Size this to at least the number of distinct characteristics in your
+	  restriction maps that use notify or indicate protection.
+
+endif # BT_ACS
