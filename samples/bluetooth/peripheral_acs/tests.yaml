@@ -1,0 +1,50 @@
+sample:
+  name: Bluetooth Peripheral ACS
+  description: >
+    Demonstrates ACS protecting the Current Time Service (CTS) and Heart
+    Rate Service (HRS).  See Testing.md for PTS execution order.
+    prj.conf is the base configuration: GCM confidentiality with ECDH and
+    the standalone KDF key-exchange method. Cipher overlays select the
+    data-protection algorithm governing the protected resources.
+common:
+  harness: bluetooth
+  build_only: true
+  tags:
+    - bluetooth
+    - acs
+  platform_allow:
+    - frdm_rw612
+    - rd_rw612_bga
+    - nrf52840dk/nrf52840
+  integration_platforms:
+    - frdm_rw612
+tests:
+  # AES-128-GCM, the prj.conf default
+  sample.bluetooth.peripheral_acs.cipher.gcm:
+    tags:
+      - cipher
+  sample.bluetooth.peripheral_acs.cipher.ccm:
+    tags:
+      - cipher
+    extra_args:
+      - EXTRA_CONF_FILE=overlay-cipher-ccm.conf
+  # Authentication only, no integrity or confidentiality
+  sample.bluetooth.peripheral_acs.cipher.cmac:
+    tags:
+      - cipher
+    extra_args:
+      - EXTRA_CONF_FILE=overlay-cipher-cmac.conf
+  # Every ECDH confirmation method and action
+  sample.bluetooth.peripheral_acs.confirm_oob:
+    extra_args:
+      - EXTRA_CONF_FILE=overlay-confirm-oob.conf
+  # Integrity and authentication, no confidentiality
+  sample.bluetooth.peripheral_acs.cipher.gmac:
+    tags:
+      - cipher
+    extra_args:
+      - EXTRA_CONF_FILE=overlay-cipher-gmac.conf
+  # Security procedures protected in the public map as well
+  sample.bluetooth.peripheral_acs.security_ops_protected:
+    extra_args:
+      - EXTRA_CONF_FILE=overlay-security-ops-protected.conf
