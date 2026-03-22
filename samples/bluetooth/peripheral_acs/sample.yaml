@@ -1,0 +1,339 @@
+sample:
+  name: Bluetooth Peripheral ACS
+  description: >
+    Demonstrates ACS protecting the Current Time Service (CTS) and Heart
+    Rate Service (HRS).  See Testing.md for PTS execution order.
+    prj.conf is the full-blown base (GCM + ECDH + KDF + OOB).
+    Cipher overlays replace the data protection algorithm.
+    kex overlays restrict key exchange to a single method.
+
+# GROUP 1 — Cipher algorithm verification (build_only)
+tests:
+
+  # AES-128-GCM (default) + all KEX methods — no overlay needed
+  sample.bluetooth.peripheral_acs.cipher.gcm:
+    harness: bluetooth
+    platform_allow:
+      - frdm_rw612
+      - rd_rw612_bga
+      - nrf52840dk/nrf52840
+    tags: bluetooth acs cipher
+    build_only: true
+    integration_platforms:
+      - frdm_rw612
+
+  # AES-128-CCM (SEQ_DIFF_FIXED nonce) + all KEX methods
+  sample.bluetooth.peripheral_acs.cipher.ccm:
+    harness: bluetooth
+    platform_allow:
+      - frdm_rw612
+      - rd_rw612_bga
+      - nrf52840dk/nrf52840
+    tags: bluetooth acs cipher
+    build_only: true
+    extra_args: >-
+      EXTRA_CONF_FILE="overlay-cipher-ccm-diff-fixed.conf"
+    integration_platforms:
+      - frdm_rw612
+
+  # AES-128-CMAC (authentication only, no confidentiality) + all KEX methods
+  sample.bluetooth.peripheral_acs.cipher.cmac:
+    harness: bluetooth
+    platform_allow:
+      - frdm_rw612
+      - rd_rw612_bga
+      - nrf52840dk/nrf52840
+    tags: bluetooth acs cipher
+    build_only: true
+    extra_args: >-
+      EXTRA_CONF_FILE="overlay-cipher-cmac.conf"
+    integration_platforms:
+      - frdm_rw612
+
+  # AES-128-GMAC (integrity + authentication, no confidentiality) + all KEX methods
+  sample.bluetooth.peripheral_acs.cipher.gmac:
+    harness: bluetooth
+    platform_allow:
+      - frdm_rw612
+      - rd_rw612_bga
+      - nrf52840dk/nrf52840
+    tags: bluetooth acs cipher
+    build_only: true
+    extra_args: >-
+      EXTRA_CONF_FILE="overlay-cipher-gmac.conf"
+    integration_platforms:
+      - frdm_rw612
+
+# GROUP 2 — PTS compliance configurations (see Testing.md for execution order)
+
+  # GCM + ECDH + KDF + OOB — primary PTS configuration (full-blown base + bonding)
+  sample.bluetooth.peripheral_acs.pts.default:
+    harness: bluetooth
+    platform_allow:
+      - frdm_rw612
+      - rd_rw612_bga
+      - nrf52840dk/nrf52840
+    tags: bluetooth acs pts
+    build_only: true
+    extra_args: >-
+      EXTRA_CONF_FILE="overlay-bonding.conf"
+    integration_platforms:
+      - frdm_rw612
+
+  # GCM + ECDH only (BV-31-C, BI-07/08/13)
+  sample.bluetooth.peripheral_acs.pts.gcm_ecdh:
+    harness: bluetooth
+    platform_allow:
+      - frdm_rw612
+      - rd_rw612_bga
+      - nrf52840dk/nrf52840
+    tags: bluetooth acs pts
+    build_only: true
+    extra_args: >-
+      EXTRA_CONF_FILE="overlay-kex-ecdh.conf;overlay-bonding.conf"
+    integration_platforms:
+      - frdm_rw612
+
+  # GCM + OOB only (BV-30)
+  sample.bluetooth.peripheral_acs.pts.gcm_oob:
+    harness: bluetooth
+    platform_allow:
+      - frdm_rw612
+      - rd_rw612_bga
+      - nrf52840dk/nrf52840
+    tags: bluetooth acs pts
+    build_only: true
+    extra_args: >-
+      EXTRA_CONF_FILE="overlay-kex-oob.conf;overlay-bonding.conf"
+    integration_platforms:
+      - frdm_rw612
+
+  # GCM + KDF only (BV-32, BI-12)
+  sample.bluetooth.peripheral_acs.pts.gcm_kdf:
+    harness: bluetooth
+    platform_allow:
+      - frdm_rw612
+      - rd_rw612_bga
+      - nrf52840dk/nrf52840
+    tags: bluetooth acs pts
+    build_only: true
+    extra_args: >-
+      EXTRA_CONF_FILE="overlay-kex-kdf.conf;overlay-bonding.conf"
+    integration_platforms:
+      - frdm_rw612
+
+  # CCM + SEQ_EVEN_ODD + ECDH only (GEH/BI-07). Erase NVS before running.
+  sample.bluetooth.peripheral_acs.pts.ccm_evenodd:
+    harness: bluetooth
+    platform_allow:
+      - frdm_rw612
+      - rd_rw612_bga
+      - nrf52840dk/nrf52840
+    tags: bluetooth acs pts
+    build_only: true
+    extra_args: >-
+      EXTRA_CONF_FILE="overlay-cipher-ccm-evenodd.conf;overlay-kex-ecdh.conf"
+    integration_platforms:
+      - frdm_rw612
+
+  # CCM + SEQ_DIFF_FIXED + ECDH only (BV-33, BI-09/10/11, GEH/BI-08). Erase NVS before running.
+  sample.bluetooth.peripheral_acs.pts.ccm_difff_fixed:
+    harness: bluetooth
+    platform_allow:
+      - frdm_rw612
+      - rd_rw612_bga
+      - nrf52840dk/nrf52840
+    tags: bluetooth acs pts
+    build_only: true
+    extra_args: >-
+      EXTRA_CONF_FILE="overlay-cipher-ccm-diff-fixed.conf;overlay-kex-ecdh.conf"
+    integration_platforms:
+      - frdm_rw612
+
+# GROUP 3 — Key/curve size variants (build_only)
+
+  # ECDH P-384
+  sample.bluetooth.peripheral_acs.kex.ecdh_p384:
+    harness: bluetooth
+    platform_allow:
+      - frdm_rw612
+      - rd_rw612_bga
+      - nrf52840dk/nrf52840
+    tags: bluetooth acs kex
+    build_only: true
+    extra_args: >-
+      EXTRA_CONF_FILE="overlay-curve-p384.conf"
+    integration_platforms:
+      - frdm_rw612
+
+  # ECDH P-521
+  sample.bluetooth.peripheral_acs.kex.ecdh_p521:
+    harness: bluetooth
+    platform_allow:
+      - frdm_rw612
+      - rd_rw612_bga
+      - nrf52840dk/nrf52840
+    tags: bluetooth acs kex
+    build_only: true
+    extra_args: >-
+      EXTRA_CONF_FILE="overlay-curve-p521.conf"
+    integration_platforms:
+      - frdm_rw612
+
+  # ECDH Curve25519 (x-coordinate only, BT_ACS_ECDH_HAS_Y=0)
+  sample.bluetooth.peripheral_acs.kex.ecdh_25519:
+    harness: bluetooth
+    platform_allow:
+      - frdm_rw612
+      - rd_rw612_bga
+      - nrf52840dk/nrf52840
+    tags: bluetooth acs kex
+    build_only: true
+    extra_args: >-
+      EXTRA_CONF_FILE="overlay-curve-25519.conf"
+    integration_platforms:
+      - frdm_rw612
+
+  # KDF HKDF-SHA-384
+  sample.bluetooth.peripheral_acs.kex.kdf_sha384:
+    harness: bluetooth
+    platform_allow:
+      - frdm_rw612
+      - rd_rw612_bga
+      - nrf52840dk/nrf52840
+    tags: bluetooth acs kex
+    build_only: true
+    extra_args: >-
+      EXTRA_CONF_FILE="overlay-kex-kdf.conf;overlay-kdf-sha384.conf"
+    integration_platforms:
+      - frdm_rw612
+
+  # KDF HKDF-SHA-512
+  sample.bluetooth.peripheral_acs.kex.kdf_sha512:
+    harness: bluetooth
+    platform_allow:
+      - frdm_rw612
+      - rd_rw612_bga
+      - nrf52840dk/nrf52840
+    tags: bluetooth acs kex
+    build_only: true
+    extra_args: >-
+      EXTRA_CONF_FILE="overlay-kex-kdf.conf;overlay-kdf-sha512.conf"
+    integration_platforms:
+      - frdm_rw612
+
+  # CCM MAC=4 (minimum tag size)
+  sample.bluetooth.peripheral_acs.cipher.ccm_mac4:
+    harness: bluetooth
+    platform_allow:
+      - frdm_rw612
+      - rd_rw612_bga
+      - nrf52840dk/nrf52840
+    tags: bluetooth acs cipher
+    build_only: true
+    extra_args: >-
+      EXTRA_CONF_FILE="overlay-cipher-ccm-diff-fixed.conf;overlay-kex-ecdh.conf;overlay-ccm-mac4.conf"
+    integration_platforms:
+      - frdm_rw612
+
+  # CCM MAC=16 (maximum tag size)
+  sample.bluetooth.peripheral_acs.cipher.ccm_mac16:
+    harness: bluetooth
+    platform_allow:
+      - frdm_rw612
+      - rd_rw612_bga
+      - nrf52840dk/nrf52840
+    tags: bluetooth acs cipher
+    build_only: true
+    extra_args: >-
+      EXTRA_CONF_FILE="overlay-cipher-ccm-diff-fixed.conf;overlay-kex-ecdh.conf;overlay-ccm-mac16.conf"
+    integration_platforms:
+      - frdm_rw612
+
+# GROUP 4 — Missing cipher + KEX combinations
+
+  # GMAC + ECDH only
+  sample.bluetooth.peripheral_acs.cipher.gmac_ecdh:
+    harness: bluetooth
+    platform_allow:
+      - frdm_rw612
+      - rd_rw612_bga
+      - nrf52840dk/nrf52840
+    tags: bluetooth acs cipher
+    build_only: true
+    extra_args: >-
+      EXTRA_CONF_FILE="overlay-cipher-gmac.conf;overlay-kex-ecdh.conf"
+    integration_platforms:
+      - frdm_rw612
+
+  # GMAC + OOB only
+  sample.bluetooth.peripheral_acs.cipher.gmac_oob:
+    harness: bluetooth
+    platform_allow:
+      - frdm_rw612
+      - rd_rw612_bga
+      - nrf52840dk/nrf52840
+    tags: bluetooth acs cipher
+    build_only: true
+    extra_args: >-
+      EXTRA_CONF_FILE="overlay-cipher-gmac.conf;overlay-kex-oob.conf"
+    integration_platforms:
+      - frdm_rw612
+
+  # CCM SEQ_DIFF_FIXED + KDF only
+  sample.bluetooth.peripheral_acs.pts.ccm_diff_fixed_kdf:
+    harness: bluetooth
+    platform_allow:
+      - frdm_rw612
+      - rd_rw612_bga
+      - nrf52840dk/nrf52840
+    tags: bluetooth acs pts
+    build_only: true
+    extra_args: >-
+      EXTRA_CONF_FILE="overlay-cipher-ccm-diff-fixed.conf;overlay-kex-kdf.conf"
+    integration_platforms:
+      - frdm_rw612
+
+  # CCM SEQ_EVEN_ODD + KDF only
+  sample.bluetooth.peripheral_acs.pts.ccm_evenodd_kdf:
+    harness: bluetooth
+    platform_allow:
+      - frdm_rw612
+      - rd_rw612_bga
+      - nrf52840dk/nrf52840
+    tags: bluetooth acs pts
+    build_only: true
+    extra_args: >-
+      EXTRA_CONF_FILE="overlay-cipher-ccm-evenodd.conf;overlay-kex-kdf.conf"
+    integration_platforms:
+      - frdm_rw612
+
+# GROUP 5 — Feature overlays (build_only)
+
+  # Security switch (optional; invalidate + abort are auto-enabled with KEX/descriptors)
+  sample.bluetooth.peripheral_acs.feature.security_switch:
+    harness: bluetooth
+    platform_allow:
+      - frdm_rw612
+      - rd_rw612_bga
+      - nrf52840dk/nrf52840
+    tags: bluetooth acs feature
+    build_only: true
+    extra_args: >-
+      EXTRA_CONF_FILE="overlay-security-switch.conf"
+    integration_platforms:
+      - frdm_rw612
+
+  # Minimal build (single cipher + single KEX, no optional features)
+  sample.bluetooth.peripheral_acs.minimal:
+    harness: bluetooth
+    platform_allow:
+      - frdm_rw612
+      - rd_rw612_bga
+      - nrf52840dk/nrf52840
+    tags: bluetooth acs minimal
+    build_only: true
+    extra_args: >-
+      EXTRA_CONF_FILE="overlay-minimal.conf"
+    integration_platforms:
+      - frdm_rw612
