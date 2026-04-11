@@ -206,25 +206,33 @@ void acs_cp_handle_set_client_nonce_fixed(struct acs_cp_ctx *ctx, struct net_buf
 	memcpy(&req_data, net_buf_simple_pull_mem(buf, sizeof(req_data)), sizeof(req_data));
 
 	key_id = sys_le16_to_cpu(req_data.key_id);
-	/* SEQ_DIFF_FIXED nonce scheme key IDs only. */
+
+	/* §4.4.4.36.1: Key_ID must reference an AES algorithm record whose
+	 * Nonce_Type is SEQ_DIFF_FIXED (Table 4.45). Only cipher key_ids
+	 * that use a fixed nonce part are valid here.
+	 */
 	key_id_valid =
-		(IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_CCM) && key_id == ACS_KEY_ID_CCM) ||
-		(IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_OOB) && key_id == ACS_KEY_ID_OOB) ||
 		(IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_GCM) && key_id == ACS_KEY_ID_GCM) ||
+		(IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_CCM) &&
+		 IS_ENABLED(CONFIG_BT_ACS_CCM_NONCE_SEQ_DIFF_FIXED) && key_id == ACS_KEY_ID_CCM) ||
 		(IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_GMAC) && key_id == ACS_KEY_ID_GMAC);
 
 	if (!key_id_valid) {
-		LOG_ERR("Set client nonce fixed with unsupported Key_ID: 0x%04X", key_id);
+		LOG_WRN("Set client nonce fixed: Key_ID 0x%04X is not a SEQ_DIFF_FIXED cipher",
+			key_id);
 		acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_SET_CLIENT_NONCE_FIXED,
 				  BT_ACS_CP_RESPONSE_PARAMETER_OUT_OF_RANGE);
 		return;
 	}
 
-	/* §4.4.3.18: Set AC Client Nonce Fixed is only valid in IDLE.
-	 * Once key exchange has started or completed, respond Procedure Not Applicable.
+	/* §4.4.3.18: reject while a key exchange is in progress (state between
+	 * STARTED and PENDING_STATUS).  Allow in IDLE (normal case) and in
+	 * COMPLETE (restored session — client wants to re-key with a fresh nonce).
+	 * TODO: The exchange complete flag needs to be pruned. It is incorrect!!!
 	 */
-	if (acs_conn->key_state != BT_ACS_KEY_EXCHANGE_IDLE) {
-		LOG_ERR("Set client nonce fixed rejected: key state is %d (must be IDLE)",
+	if (acs_conn->key_state != BT_ACS_KEY_EXCHANGE_IDLE &&
+	    acs_conn->key_state != BT_ACS_KEY_EXCHANGE_COMPLETE) {
+		LOG_WRN("Set client nonce fixed rejected: key exchange in progress (state %d)",
 			acs_conn->key_state);
 		acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_SET_CLIENT_NONCE_FIXED,
 				  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE);

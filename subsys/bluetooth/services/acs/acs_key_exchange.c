@@ -412,8 +412,10 @@ int acs_key_exchange_ecdh_start(struct bt_acs_conn *acs_conn, uint16_t key_id)
 	}
 
 #if IS_ENABLED(CONFIG_BT_ACS_HAS_NONCE_FIXED)
-	/* Spec §4.4.3.13: for SEQ_DIFF_FIXED nonce types the client must call
-	 * Set AC Client Nonce Fixed before Start Key Exchange.
+	/* Spec §4.4.3.13: SET_CLIENT_NONCE_FIXED must precede START_KEY_EXCHANGE
+	 * for SEQ_DIFF_FIXED nonce types. A non-zero value is present when:
+	 *   - The client called SET_CLIENT_NONCE_FIXED on this connection, or
+	 *   - A previous session was restored from NVS (nonces persisted).
 	 */
 	{
 		bool cnf_zero = true;

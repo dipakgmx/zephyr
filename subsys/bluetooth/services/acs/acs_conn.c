@@ -131,7 +131,24 @@ struct bt_acs_conn *acs_conn_alloc(struct bt_conn *conn)
 		return NULL;
 	}
 
+#if IS_ENABLED(CONFIG_BT_ACS_HAS_NONCE_FIXED)
+	{
+		uint8_t saved_snf[CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE];
+		uint8_t saved_cnf[CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE];
+
+		memcpy(saved_snf, acs_conn->crypto.server_nonce_fixed,
+		       CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE);
+		memcpy(saved_cnf, acs_conn->crypto.client_nonce_fixed,
+		       CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE);
+		memset(acs_conn, 0, sizeof(*acs_conn));
+		memcpy(acs_conn->crypto.server_nonce_fixed, saved_snf,
+		       CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE);
+		memcpy(acs_conn->crypto.client_nonce_fixed, saved_cnf,
+		       CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE);
+	}
+#else
 	memset(acs_conn, 0, sizeof(*acs_conn));
+#endif
 	acs_conn->conn = conn;
 	acs_conn->attr_cp = acs_attr_cp();
 	acs_conn->attr_status = acs_attr_status();
@@ -181,7 +198,28 @@ void acs_conn_cleanup(struct bt_acs_conn *acs_conn)
 	}
 
 	acs_crypto_destroy_session_key(acs_conn);
+	/* Preserve nonce fixed parts across disconnect — they are set once per
+	 * device pair and reused on reconnect (§3.6.4: "does not change for
+	 * the life of the key").  Session key and counters are wiped.
+	 */
+#if IS_ENABLED(CONFIG_BT_ACS_HAS_NONCE_FIXED)
+	{
+		uint8_t saved_snf[CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE];
+		uint8_t saved_cnf[CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE];
+
+		memcpy(saved_snf, acs_conn->crypto.server_nonce_fixed,
+		       CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE);
+		memcpy(saved_cnf, acs_conn->crypto.client_nonce_fixed,
+		       CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE);
+		memset(&acs_conn->crypto, 0, sizeof(acs_conn->crypto));
+		memcpy(acs_conn->crypto.server_nonce_fixed, saved_snf,
+		       CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE);
+		memcpy(acs_conn->crypto.client_nonce_fixed, saved_cnf,
+		       CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE);
+	}
+#else
 	memset(&acs_conn->crypto, 0, sizeof(acs_conn->crypto));
+#endif
 	/* Abort request contexts before freeing the shared I/O slot so queued/in-flight
 	 * ACS Data Out activity cannot outlive the buffers it references.
 	 */
