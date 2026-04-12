@@ -327,7 +327,14 @@ static int acs_data_in_route(struct acs_data_in_pipeline *pipe)
 		acs_conn->data_rx.buf = NULL;
 
 		acs_cp_dispatch(req_ctx, acs_conn, buf);
-		acs_prot_resource_req_release_owner(req_ctx);
+		/* If a multi-step reply sequence is active, the sequence now
+		 * owns the ALLOC ref and will release it in acs_seq_clear().
+		 * Otherwise, drop it here — the single response is already
+		 * queued or completed.
+		 */
+		if (!req_ctx->reply_seq.desc) {
+			acs_prot_resource_req_release_owner(req_ctx);
+		}
 		return 0;
 	}
 
@@ -405,7 +412,7 @@ static inline bool is_first_segment(const uint8_t *data)
 
 /* ATT Write Long not handled; ACS segmentation covers large payloads. */
 ssize_t acs_data_in_write(struct bt_conn *conn, const struct bt_gatt_attr *attr, const void *buf,
-			     uint16_t len, uint16_t offset, uint8_t flags)
+			  uint16_t len, uint16_t offset, uint8_t flags)
 {
 	struct bt_acs_conn *acs_conn;
 	enum acs_seg_rx_result res;

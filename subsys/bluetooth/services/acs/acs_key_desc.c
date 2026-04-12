@@ -39,7 +39,8 @@ LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
 /*
  * Default key descriptor records — compiled in when the corresponding Kconfig is enabled.
  * Applications may register additional records with BT_ACS_KEY_DESC_DEFINE() in their
- * own source files; the library discovers all records via the bt_acs_key_desc_record iterable section.
+ * own source files; the library discovers all records via the bt_acs_key_desc_record iterable
+ * section.
  */
 
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_ECDH)

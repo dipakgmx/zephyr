@@ -140,9 +140,10 @@ static void acs_data_out_on_indicate_done(struct bt_conn *conn, const struct bt_
 /**
  * @brief Drain the next queued indication if the DOI channel is idle.
  *
- * Called from two places:
- *   1. acs_prot_resource_rsp_indicate — after posting, try to send immediately.
- *   2. acs_data_out_on_indicate_done — after confirm, drain the next queued.
+ * Called after posting a new indication and after each indication completes.
+ * Only one indication may be in-flight per connection (BLE ATT constraint);
+ * the FIFO serialises the rest.  On send failure the failing request is
+ * released and the loop advances to the next queued entry.
  */
 static void try_send_next(struct bt_acs_conn *acs_conn)
 {
@@ -155,39 +156,86 @@ static void try_send_next(struct bt_acs_conn *acs_conn)
 		return;
 	}
 
-	/* Gate: single in-flight indication per connection. */
-	if (atomic_ptr_get(&acs_conn->active_indication) != NULL) {
-		return;
-	}
+	for (uint8_t attempts = 0; attempts < CONFIG_BT_ACS_MAX_INFLIGHT_REQ_PER_CONN; attempts++) {
+		if (atomic_ptr_get(&acs_conn->active_indication) != NULL) {
+			return;
+		}
 
-	snode = k_fifo_get(&acs_conn->indicate_fifo, K_NO_WAIT);
-	if (!snode) {
-		return;
-	}
+		snode = k_fifo_get(&acs_conn->indicate_fifo, K_NO_WAIT);
+		if (!snode) {
+			return;
+		}
 
-	req = acs_req_from_node(snode);
+		req = acs_req_from_node(snode);
 
-	if (!atomic_ptr_cas(&acs_conn->active_indication, NULL, req)) {
-		/* Lost the race — put the request back and bail. */
-		k_fifo_put(&acs_conn->indicate_fifo, req);
-		return;
-	}
+		if (!atomic_ptr_cas(&acs_conn->active_indication, NULL, req)) {
+			k_fifo_put(&acs_conn->indicate_fifo, req);
+			return;
+		}
 
-	/* Ownership of prot_req->response is handed to the seg-TX engine. */
-	err = acs_seg_tx_send(&acs_conn->indicate_tx, acs_conn->conn, acs_conn->attr_doi,
-			      req->response, acs_data_out_on_indicate_done, req);
-	if (err) {
+		/* The seg-TX engine borrows the buffer for segmented transfer
+		 * but does not own it.  req->response stays alive for the
+		 * lifetime of the request — multi-step sequences reuse it.
+		 */
+		err = acs_seg_tx_send(&acs_conn->indicate_tx, acs_conn->conn, acs_conn->attr_doi,
+				      req->response, acs_data_out_on_indicate_done, req);
+		if (!err) {
+			return;
+		}
 		atomic_ptr_cas(&acs_conn->active_indication, req, NULL);
 		LOG_WRN("DOI seg_tx_send failed: %d (handle 0x%04x)", err, req->resource_handle);
 		acs_prot_resource_req_tx_done(req);
-		try_send_next(acs_conn);
 	}
 #else
 	ARG_UNUSED(acs_conn);
 #endif /* CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION */
 }
 
-/* DOI indication completion: clear slot, fire chain callback, release refs, drain next. */
+/**
+ * @brief Deferred continuation handler for multi-step reply sequences.
+ *
+ * Each step in a protected CP reply sequence (e.g. Get All Active Descriptors)
+ * builds a response, runs PSA crypto, and queues a new indication.  Running
+ * this synchronously inside the ATT indication confirm callback would nest
+ * multiple crypto frames on the sysworkq stack.  Instead, the confirm callback
+ * schedules this work item so each step executes in its own stack frame.
+ *
+ * req->work is safe to reuse here: protected CP requests are dispatched
+ * synchronously via acs_cp_dispatch(), not through the work queue, so the
+ * work item is idle by the time the reply sequence runs.
+ */
+static void acs_seq_continue_work_handler(struct k_work *work)
+{
+	struct bt_acs_prot_resource_req *req =
+		CONTAINER_OF(work, struct bt_acs_prot_resource_req, work);
+	struct bt_acs_conn *acs_conn = req->acs_conn;
+	struct bt_conn *conn = acs_conn ? acs_conn->conn : NULL;
+	const struct bt_gatt_attr *attr = acs_conn ? acs_conn->attr_doi : NULL;
+
+	if (!conn || !req->reply_seq.desc) {
+		/* Sequence was aborted or connection lost — the ALLOC ref was
+		 * deferred from acs_data_in_route(), release it here.
+		 */
+		acs_prot_resource_req_release_owner(req);
+		goto drain;
+	}
+
+	acs_seq_on_req_confirm(req, conn, attr);
+
+drain:
+	if (acs_conn) {
+		try_send_next(acs_conn);
+	}
+}
+
+/**
+ * @brief DOI indication completion callback.
+ *
+ * Runs when the ATT layer confirms (or fails) a Data Out Indication segment
+ * batch.  Releases the TX reference from the completed indication, then either
+ * defers the next reply-sequence step to a work item or drains the next
+ * independent request from the FIFO.
+ */
 static void acs_data_out_on_indicate_done(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 					  int err, void *user_data)
 {
@@ -201,24 +249,26 @@ static void acs_data_out_on_indicate_done(struct bt_conn *conn, const struct bt_
 	}
 #endif /* CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION */
 
+	/* Drop the TX reference before the next step can acquire a new one. */
+	acs_prot_resource_req_tx_done(req);
+
 	if (continue_reply_seq) {
 		if (!err) {
-			acs_seq_on_req_confirm(req, conn, attr);
-		} else {
-			struct acs_cp_ctx ctx = {
-				.prot_req = req,
-				.conn = conn,
-				.attr = attr,
-				.acs_conn = acs_conn ? acs_conn
-						     : (conn ? acs_conn_lookup(conn) : NULL),
-			};
-
-			LOG_WRN("Protected CP indication failed: %d", err);
-			acs_seq_abort(&ctx);
+			k_work_init(&req->work, acs_seq_continue_work_handler);
+			k_work_submit(&req->work);
+			return;
 		}
-	}
 
-	acs_prot_resource_req_tx_done(req);
+		struct acs_cp_ctx ctx = {
+			.prot_req = req,
+			.conn = conn,
+			.attr = attr,
+			.acs_conn = acs_conn ? acs_conn : (conn ? acs_conn_lookup(conn) : NULL),
+		};
+
+		LOG_WRN("Protected CP indication failed: %d", err);
+		acs_seq_abort(&ctx);
+	}
 
 	if (acs_conn) {
 		try_send_next(acs_conn);

@@ -80,9 +80,8 @@ enum acs_prot_resource_send_method {
  * @brief Discriminator for which caller holds a reference on a request context.
  */
 enum acs_prot_resource_ref_who {
-	PROT_RESOURCE_REF_ALLOC = 0,       /**< Initial allocation reference */
-	PROT_RESOURCE_REF_TX = 1,          /**< TX path reference (queued/in-flight) */
-	PROT_RESOURCE_REF_REPLY_CHAIN = 2, /**< Multi-step reply sequence reference */
+	PROT_RESOURCE_REF_ALLOC = 0, /**< Owner reference (dispatch / work-handler / reply seq) */
+	PROT_RESOURCE_REF_TX = 1,    /**< TX path reference (queued/in-flight) */
 };
 
 /**
@@ -111,6 +110,7 @@ struct bt_acs_crypto_session {
 #if IS_ENABLED(CONFIG_BT_ACS_HAS_NONCE_FIXED)
 	uint8_t server_nonce_fixed[CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE]; /**< Server fixed nonce */
 	uint8_t client_nonce_fixed[CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE]; /**< Client fixed nonce */
+	bool client_nonce_set; /**< Set in this connection or restored from NVS */
 #endif
 	uint32_t tx_nonce_counter; /**< TX nonce counter */
 	uint32_t rx_nonce_counter; /**< RX nonce counter */
@@ -247,13 +247,13 @@ struct bt_acs_prot_resource_handler_entry {
  * for the characteristic identified by @p _char_uuid.
  */
 #if IS_ENABLED(CONFIG_BT_ACS_ANY_DATA_PROTECTION)
-#define ACS_PROT_RESOURCE_HANDLER_DEFINE(_name, _char_uuid, _handler)                           \
+#define ACS_PROT_RESOURCE_HANDLER_DEFINE(_name, _char_uuid, _handler)                              \
 	STRUCT_SECTION_ITERABLE(bt_acs_prot_resource_handler_entry, _name) = {                     \
 		.char_uuid = (_char_uuid),                                                         \
 		.handler = (_handler),                                                             \
 	}
 #else
-#define ACS_PROT_RESOURCE_HANDLER_DEFINE(_name, _char_uuid, _handler)                           \
+#define ACS_PROT_RESOURCE_HANDLER_DEFINE(_name, _char_uuid, _handler)                              \
 	BUILD_ASSERT(0, "ACS_PROT_RESOURCE_HANDLER_DEFINE requires data protection to be enabled")
 #endif
 
@@ -269,7 +269,7 @@ struct bt_acs_prot_resource_req {
 	struct net_buf *response;          /**< Pool buffer for plaintext response staging */
 	struct net_buf *decrypted_request; /**< Reference-counted buffer from pool (request data) */
 	atomic_t ref_count;                /**< Request lifetime refcount */
-	ATOMIC_DEFINE(ref_flags, 3);       /**< Per-caller bitmask (debug: catch double-release) */
+	ATOMIC_DEFINE(ref_flags, 2);       /**< Per-caller bitmask (debug: catch double-release) */
 	struct k_work work;                /**< Deferred dispatch work item */
 	struct acs_reply_seq_state reply_seq; /**< Explicit reply-sequence state for protected CP */
 	enum acs_prot_resource_send_method send_method; /**< Selected response transport */

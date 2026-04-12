@@ -54,7 +54,7 @@ void acs_cp_dispatch(struct bt_acs_prot_resource_req *prot_req, struct bt_acs_co
  * Reassembles segmented writes and dispatches to @ref acs_cp_dispatch.
  */
 ssize_t acs_cp_write(struct bt_conn *conn, const struct bt_gatt_attr *attr, const void *buf,
-			uint16_t len, uint16_t offset, uint8_t flags);
+		     uint16_t len, uint16_t offset, uint8_t flags);
 
 /**
  * @brief Lazy-initialise and copy the server fixed nonce for @p acs_conn.
@@ -161,7 +161,7 @@ struct bt_acs_conn *acs_conn_by_index(uint8_t index);
 
 /** @brief GATT write handler for the ACS Data In characteristic. */
 ssize_t acs_data_in_write(struct bt_conn *conn, const struct bt_gatt_attr *attr, const void *buf,
-			     uint16_t len, uint16_t offset, uint8_t flags);
+			  uint16_t len, uint16_t offset, uint8_t flags);
 
 /** @brief Increment @p req reference count for caller @p who. */
 void acs_prot_resource_req_ref(struct bt_acs_prot_resource_req *req,
@@ -247,7 +247,7 @@ void acs_crypto_destroy_session_key(struct bt_acs_conn *acs_conn);
  * @return 0 on success, negative errno on failure.
  */
 int acs_crypto_encrypt(struct bt_acs_conn *acs_conn, uint16_t isc_id, const uint8_t *plaintext,
-			  uint16_t plain_len, uint8_t *ciphertext, uint16_t *cipher_len);
+		       uint16_t plain_len, uint8_t *ciphertext, uint16_t *cipher_len);
 
 /**
  * @brief Decrypt @p ciphertext using the session key.

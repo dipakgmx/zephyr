@@ -23,8 +23,8 @@ LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
 
 #define ACS_REQ_CTX_COUNT (CONFIG_BT_MAX_CONN * CONFIG_BT_ACS_MAX_INFLIGHT_REQ_PER_CONN)
 
-K_MEM_SLAB_DEFINE_STATIC(acs_req_slab, sizeof(struct bt_acs_prot_resource_req), ACS_REQ_CTX_COUNT,
-			 __alignof__(struct bt_acs_prot_resource_req));
+K_MEM_SLAB_DEFINE_STATIC(acs_req_ctx_slab, sizeof(struct bt_acs_prot_resource_req),
+			 ACS_REQ_CTX_COUNT, __alignof__(struct bt_acs_prot_resource_req));
 
 STRUCT_SECTION_ITERABLE(bt_acs_prot_resource_handler_entry, acs_req_handler_sentinel) = {
 	.char_uuid = NULL,
@@ -84,7 +84,7 @@ static void acs_req_free(struct bt_acs_prot_resource_req *req)
 		acs_buf_free(req->response);
 	}
 
-	k_mem_slab_free(&acs_req_slab, req);
+	k_mem_slab_free(&acs_req_ctx_slab, req);
 }
 
 void acs_prot_resource_req_unref(struct bt_acs_prot_resource_req *req,
@@ -132,7 +132,7 @@ struct bt_acs_prot_resource_req *acs_prot_resource_req_alloc(struct bt_acs_conn 
 
 	__ASSERT_NO_MSG(acs_conn != NULL);
 
-	if (k_mem_slab_alloc(&acs_req_slab, (void **)&req, K_NO_WAIT) != 0) {
+	if (k_mem_slab_alloc(&acs_req_ctx_slab, (void **)&req, K_NO_WAIT) != 0) {
 		LOG_ERR("No free ACS request context for handle 0x%04x (isc_id=0x%04x)",
 			resource_handle, isc_id);
 		return NULL;
@@ -161,7 +161,7 @@ struct bt_acs_prot_resource_req *acs_prot_resource_req_alloc(struct bt_acs_conn 
 
 	/* No free slot */
 	LOG_WRN("No free ACS request slot for conn %p", (void *)acs_conn);
-	k_mem_slab_free(&acs_req_slab, req);
+	k_mem_slab_free(&acs_req_ctx_slab, req);
 	return NULL;
 }
 
@@ -322,9 +322,6 @@ void acs_prot_resource_req_abort_all(struct bt_acs_conn *acs_conn)
 		req->acs_conn = NULL;
 
 		/* Drop each held reference using the unified API */
-		if (atomic_test_bit(req->ref_flags, PROT_RESOURCE_REF_REPLY_CHAIN)) {
-			acs_prot_resource_req_unref(req, PROT_RESOURCE_REF_REPLY_CHAIN);
-		}
 		if (atomic_test_bit(req->ref_flags, PROT_RESOURCE_REF_ALLOC)) {
 			acs_prot_resource_req_unref(req, PROT_RESOURCE_REF_ALLOC);
 		}

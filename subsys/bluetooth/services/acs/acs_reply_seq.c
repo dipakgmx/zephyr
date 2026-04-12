@@ -77,11 +77,11 @@ void acs_seq_begin(struct acs_cp_ctx *ctx, const struct acs_seq_desc *desc)
 
 	__ASSERT_NO_MSG(seq != NULL);
 
-	if (ctx->prot_req &&
-	    !atomic_test_bit(ctx->prot_req->ref_flags, PROT_RESOURCE_REF_REPLY_CHAIN)) {
-		acs_prot_resource_req_ref(ctx->prot_req, PROT_RESOURCE_REF_REPLY_CHAIN);
-	}
-
+	/* The ALLOC (owner) ref keeps the request alive for the full duration
+	 * of the reply sequence.  acs_data_in_route() defers release_owner()
+	 * when it sees reply_seq.desc != NULL after dispatch, and acs_seq_clear()
+	 * calls release_owner() when the sequence completes or aborts.
+	 */
 	seq->desc = desc;
 	seq->step = 0;
 }
@@ -89,18 +89,20 @@ void acs_seq_begin(struct acs_cp_ctx *ctx, const struct acs_seq_desc *desc)
 void acs_seq_clear(struct acs_cp_ctx *ctx)
 {
 	struct acs_reply_seq_state *seq = acs_seq_state_from_ctx(ctx);
-	bool drop_ref;
+	bool was_active;
 
 	if (!seq) {
 		return;
 	}
 
-	drop_ref = ctx->prot_req &&
-		   atomic_test_bit(ctx->prot_req->ref_flags, PROT_RESOURCE_REF_REPLY_CHAIN);
+	was_active = seq->desc != NULL;
 	memset(seq, 0, sizeof(*seq));
 
-	if (drop_ref) {
-		acs_prot_resource_req_unref(ctx->prot_req, PROT_RESOURCE_REF_REPLY_CHAIN);
+	/* The sequence owned the ALLOC ref for its duration (deferred from
+	 * acs_data_in_route).  Release it now that the sequence is done.
+	 */
+	if (was_active && ctx->prot_req) {
+		acs_prot_resource_req_release_owner(ctx->prot_req);
 	}
 }
 

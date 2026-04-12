@@ -124,7 +124,7 @@ static bool acs_handle_is_protected(uint16_t restriction_map_id, uint16_t att_ha
 #endif /* CONFIG_BT_ACS_FEAT_AUTHORIZATION */
 
 bool bt_acs_policy_is_permitted(struct bt_conn *conn, uint16_t att_handle,
-				   enum bt_acs_direction direction)
+				enum bt_acs_direction direction)
 {
 	struct bt_acs_conn const *acs_conn;
 
@@ -261,15 +261,15 @@ static bool acs_gatt_write_authorize(struct bt_conn *conn, const struct bt_gatt_
 		for (uint8_t i = 0; i < acs_protected_cccd_count; i++) {
 			if (acs_protected_cccds[i].cccd_handle == handle) {
 				if (acs_protected_cccds[i].notify_protected &&
-				    !bt_acs_policy_is_permitted(
-					    conn, acs_protected_cccds[i].char_handle,
-					    BT_ACS_DIRECTION_NOTIFY)) {
+				    !bt_acs_policy_is_permitted(conn,
+								acs_protected_cccds[i].char_handle,
+								BT_ACS_DIRECTION_NOTIFY)) {
 					return false;
 				}
 				if (acs_protected_cccds[i].indicate_protected &&
-				    !bt_acs_policy_is_permitted(
-					    conn, acs_protected_cccds[i].char_handle,
-					    BT_ACS_DIRECTION_INDICATE)) {
+				    !bt_acs_policy_is_permitted(conn,
+								acs_protected_cccds[i].char_handle,
+								BT_ACS_DIRECTION_INDICATE)) {
 					return false;
 				}
 				return true;

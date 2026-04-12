@@ -189,12 +189,17 @@ enum acs_seg_rx_result acs_seg_rx_process(struct acs_seg_rx_ctx *ctx, const uint
 /* Forward declaration */
 static void acs_seg_tx_work_handler(struct k_work *work);
 
-static void seg_tx_release_buf(struct acs_seg_tx_ctx *ctx)
+/**
+ * @brief Detach the buffer from the seg-TX context.
+ *
+ * The seg-TX engine borrows the buffer for the duration of the segmented
+ * transfer but does not own it.  Callers are responsible for the buffer's
+ * lifetime — the plain-CP path frees it in its completion callback, and the
+ * protected-resource path lets the owning request context manage it.
+ */
+static void seg_tx_detach_buf(struct acs_seg_tx_ctx *ctx)
 {
-	if (ctx->buf) {
-		net_buf_unref(ctx->buf);
-		ctx->buf = NULL;
-	}
+	ctx->buf = NULL;
 }
 
 /* TX indication confirm callback. */
@@ -237,7 +242,7 @@ static void acs_seg_tx_confirm_cb(struct bt_conn *conn, struct bt_gatt_indicate_
 	ctx->tx_offset = 0;
 	ctx->tx_counter = 0;
 	ctx->tx_attr = NULL;
-	seg_tx_release_buf(ctx);
+	seg_tx_detach_buf(ctx);
 
 	if (cb) {
 		cb(conn, attr, 0, ud);
@@ -258,7 +263,7 @@ cleanup_err:
 	ctx->tx_attr = NULL;
 	ctx->tx_on_complete = NULL;
 	ctx->tx_on_complete_data = NULL;
-	seg_tx_release_buf(ctx);
+	seg_tx_detach_buf(ctx);
 	if (err_cb) {
 		err_cb(conn, err_attr, -EIO, err_ud);
 	}
@@ -347,7 +352,7 @@ cleanup:
 	ctx->tx_attr = NULL;
 	ctx->tx_on_complete = NULL;
 	ctx->tx_on_complete_data = NULL;
-	seg_tx_release_buf(ctx);
+	seg_tx_detach_buf(ctx);
 	if (cb) {
 		cb(conn, attr, err, ud);
 	}
@@ -394,7 +399,7 @@ void acs_seg_tx_reset(struct acs_seg_tx_ctx *ctx)
 	ctx->tx_attr = NULL;
 
 	/* Release buffer if present */
-	seg_tx_release_buf(ctx);
+	seg_tx_detach_buf(ctx);
 
 	ctx->tx_on_complete = NULL;
 	ctx->tx_on_complete_data = NULL;

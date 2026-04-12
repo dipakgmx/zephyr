@@ -515,7 +515,7 @@ static int acs_crypto_gmac_decrypt(struct bt_acs_conn *acs_conn, const uint8_t *
 #endif /* CONFIG_BT_ACS_DATA_PROTECTION_AES_GMAC */
 
 int acs_crypto_encrypt(struct bt_acs_conn *acs_conn, uint16_t isc_id, const uint8_t *plaintext,
-			  uint16_t plain_len, uint8_t *ciphertext, uint16_t *cipher_len)
+		       uint16_t plain_len, uint8_t *ciphertext, uint16_t *cipher_len)
 {
 	const struct bt_acs_isc_record *isc;
 	const struct bt_acs_key_desc_record *key;

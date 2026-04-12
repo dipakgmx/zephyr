@@ -244,6 +244,10 @@ void acs_cp_kex_exchange_kdf(struct acs_cp_ctx *ctx, struct net_buf_simple *buf)
 			return;
 		}
 
+		/* Reset nonce counters (§4.4.4.15.1.4.4.8) */
+		acs_conn->crypto.tx_nonce_counter = 0U;
+		acs_conn->crypto.rx_nonce_counter = 0U;
+
 		acs_conn->status_flags |= BT_ACS_STATUS_SECURITY_ESTABLISHED;
 		cb = acs_cb_get();
 		if (cb && cb->security_established) {
@@ -390,11 +394,16 @@ void acs_cp_kex_start(struct acs_cp_ctx *ctx, struct net_buf_simple *buf)
 		/* KDF standalone: requires parent key and method=None. */
 		if (method != BT_ACS_CONFIRM_METHOD_NONE ||
 		    action != BT_ACS_CONFIRM_ACTION_NOT_APPLICABLE) {
+			LOG_WRN("invalid confirmation method/action (method=0x%02x action=0x%02x)",
+				method, action);
 			acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_START_KEY_EXCHANGE,
 					  BT_ACS_CP_RESPONSE_INVALID_OPERAND);
 			return;
 		}
 		if (acs_conn->key_state != BT_ACS_KEY_EXCHANGE_COMPLETE) {
+			LOG_WRN("no parent key available (key_state=%d, prior ECDH exchange "
+				"required)",
+				acs_conn->key_state);
 			acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_START_KEY_EXCHANGE,
 					  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE);
 			return;

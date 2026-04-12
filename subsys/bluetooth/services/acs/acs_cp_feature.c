@@ -241,6 +241,7 @@ void acs_cp_handle_set_client_nonce_fixed(struct acs_cp_ctx *ctx, struct net_buf
 
 	nonce_value = req_data.nonce_fixed;
 
+	/* §4.4.3.18: reject if equal to any AC_Server_Nonce_Fixed_Value */
 	if (memcmp(nonce_value, acs_conn->crypto.server_nonce_fixed,
 		   CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE) == 0) {
 		LOG_WRN("Client nonce fixed equals server nonce fixed");
@@ -249,18 +250,30 @@ void acs_cp_handle_set_client_nonce_fixed(struct acs_cp_ctx *ctx, struct net_buf
 		return;
 	}
 
-	/* Reject nonce that duplicates another connection's value. */
+	/* §4.4.3.18: reject if equal to any AC_Client_Nonce_Fixed_Value
+	 * already stored on the AC Server.
+	 *
+	 * For the current connection's own slot: skip if client_nonce_set is
+	 * false — the value is inherited from a previous session (RAM
+	 * carry-over or NVS restore) and the client is re-establishing it.
+	 * For other connections: always check (active nonce regardless of how
+	 * it was set).
+	 */
 	this_idx = bt_conn_index(ctx->conn);
 
 	for (uint8_t idx = 0; idx < CONFIG_BT_MAX_CONN; idx++) {
 		struct bt_acs_conn const *other = acs_conn_by_index(idx);
 
-		if (idx == this_idx) {
+		if (!other || !other->conn) {
 			continue;
 		}
-		if (other && memcmp(nonce_value, other->crypto.client_nonce_fixed,
-				    CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE) == 0) {
-			LOG_ERR("Client nonce fixed conflicts with another connection");
+		if (idx == this_idx && !other->crypto.client_nonce_set) {
+			continue;
+		}
+		if (memcmp(nonce_value, other->crypto.client_nonce_fixed,
+			   CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE) == 0) {
+			LOG_WRN("Client nonce fixed conflicts with %s connection",
+				idx == this_idx ? "current" : "another");
 			acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_SET_CLIENT_NONCE_FIXED,
 					  BT_ACS_CP_RESPONSE_INVALID_OPERAND);
 			return;
@@ -269,6 +282,7 @@ void acs_cp_handle_set_client_nonce_fixed(struct acs_cp_ctx *ctx, struct net_buf
 
 	memcpy(acs_conn->crypto.client_nonce_fixed, nonce_value,
 	       CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE);
+	acs_conn->crypto.client_nonce_set = true;
 
 	LOG_DBG("Client nonce fixed part stored");
 
