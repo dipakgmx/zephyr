@@ -99,6 +99,17 @@ static int kex_step_status(struct acs_cp_ctx *ctx)
 	acs_kex_free(acs_conn->kex);
 	acs_conn->kex = NULL;
 	acs_conn->key_state = BT_ACS_KEY_EXCHANGE_COMPLETE;
+
+#if defined(CONFIG_BT_SETTINGS)
+	/* Persist only after KEY_EXCHANGE_RESPONSE has been confirmed.
+	 * Storing earlier (during KDF derivation or ECDH confirm-rand)
+	 * would leave NVS with the new key if the connection drops
+	 * before the response is delivered — the remote side would
+	 * discard the incomplete exchange and still expect the old key.
+	 */
+	acs_session_store(ctx->conn, acs_conn);
+#endif
+
 	acs_seq_clear(ctx);
 	acs_status_indicate(ctx->conn);
 	return 0;
@@ -254,10 +265,6 @@ void acs_cp_kex_exchange_kdf(struct acs_cp_ctx *ctx, struct net_buf_simple *buf)
 			cb->security_established(ctx->conn, acs_conn->crypto.session_key,
 						 CONFIG_BT_ACS_SESSION_KEY_SIZE);
 		}
-
-#if defined(CONFIG_BT_SETTINGS)
-		acs_session_store(ctx->conn, acs_conn);
-#endif
 
 		acs_conn->key_state = BT_ACS_KEY_EXCHANGE_PENDING_RESPONSE;
 
@@ -732,10 +739,6 @@ void acs_cp_kex_ecdh_confirm_rand(struct acs_cp_ctx *ctx, struct net_buf_simple 
 
 	acs_conn->status_flags |= BT_ACS_STATUS_SECURITY_ESTABLISHED;
 	LOG_INF("Security Established");
-
-#if defined(CONFIG_BT_SETTINGS)
-	acs_session_store(ctx->conn, acs_conn);
-#endif
 
 	cb = acs_cb_get();
 	if (cb && cb->security_established) {

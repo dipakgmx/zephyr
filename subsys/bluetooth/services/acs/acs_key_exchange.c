@@ -379,12 +379,17 @@ int acs_crypto_derive_session_key(struct bt_acs_conn *acs_conn)
 static int bt_acs_crypto_derive_kdf_child_key(struct bt_acs_conn *acs_conn)
 {
 	uint8_t child_key[CONFIG_BT_ACS_SESSION_KEY_SIZE];
+	uint8_t salt_be[CONFIG_BT_ACS_KDF_SALT_MAX_SIZE];
+	uint8_t info_be[CONFIG_BT_ACS_KDF_INFO_MAX_SIZE];
 	int ret;
 
-	ret = acs_hkdf(acs_get_psa_hkdf_alg(), acs_conn->kex->kdf.salt,
-		       acs_conn->kex->kdf.salt_size, acs_conn->crypto.session_key,
-		       CONFIG_BT_ACS_SESSION_KEY_SIZE, acs_conn->kex->kdf.info,
-		       acs_conn->kex->kdf.info_size, child_key, CONFIG_BT_ACS_SESSION_KEY_SIZE);
+	/* Salt and info are stored in wire order (LSO) but HKDF requires big-endian input. */
+	sys_memcpy_swap(salt_be, acs_conn->kex->kdf.salt, acs_conn->kex->kdf.salt_size);
+	sys_memcpy_swap(info_be, acs_conn->kex->kdf.info, acs_conn->kex->kdf.info_size);
+
+	ret = acs_hkdf(acs_get_psa_hkdf_alg(), salt_be, acs_conn->kex->kdf.salt_size,
+		acs_conn->crypto.session_key, CONFIG_BT_ACS_SESSION_KEY_SIZE, info_be,
+	acs_conn->kex->kdf.info_size, child_key, CONFIG_BT_ACS_SESSION_KEY_SIZE);
 
 	if (ret != 0) {
 		LOG_ERR("KDF child key derivation failed: %d", ret);
@@ -399,6 +404,10 @@ static int bt_acs_crypto_derive_kdf_child_key(struct bt_acs_conn *acs_conn)
 	acs_conn->crypto.rx_nonce_counter = 0;
 #endif
 
+	/* Destroy the parent key handle before importing the child key,
+	 * otherwise the old PSA key slot is leaked.
+	 */
+	acs_crypto_destroy_session_key(acs_conn);
 	return acs_crypto_import_session_key(acs_conn);
 }
 #endif /* CONFIG_BT_ACS_KEY_EXCHANGE_KDF */
