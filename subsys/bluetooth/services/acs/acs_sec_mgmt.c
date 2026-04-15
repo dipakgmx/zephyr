@@ -168,23 +168,40 @@ void acs_sec_mgmt_invalidate_key(struct acs_cp_ctx *ctx, struct net_buf_simple *
 
 #if IS_ENABLED(CONFIG_BT_ACS_ABORT)
 
+/**
+ * @brief Handle the ACS Abort Control Point procedure.
+ *
+ * ACS spec §4.4.4 (Abort) mandates a transactional model:
+ *   - Success: stop every in-progress procedure AND suppress its response.
+ *   - Error / Unsuccessful: leave the in-progress procedure running unchanged.
+ *
+ * The implementation therefore follows a three-phase pattern:
+ *   1. Probe   — read-only scan of what would need to be torn down.
+ *   2. Decide  — if nothing to abort, or if a response is already mid-flight
+ *                (cannot be unsent), return UNSUCCESSFUL without mutating state.
+ *   3. Commit  — only after both checks pass, tear down sequences, KEX, and
+ *                data-op state, then send the ABORT SUCCESS response.
+ *
+ * ABORT bypasses the cp_proc.locked gate in acs_cp_write() (ABORT must be
+ * able to preempt an in-progress procedure), so this handler also owns the
+ * lock bookkeeping for its own response.
+ */
 void acs_sec_mgmt_abort(struct acs_cp_ctx *ctx)
 {
 	struct bt_acs_conn *acs_conn = ctx->acs_conn;
+	struct k_work_sync sync;
+	bool plain_cp_active;
 	bool kex_in_progress;
 	bool data_ops_pending;
+	bool has_work;
+	bool can_commit;
 
-	if (!acs_conn) {
-		LOG_WRN("Abort requested for unknown ACS connection");
-		acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_ABORT,
-				  BT_ACS_CP_RESPONSE_ABORT_UNSUCCESSFUL);
-		return;
-	}
+	plain_cp_active = (atomic_get(&acs_conn->cp_proc.locked) == 1);
 
 	kex_in_progress = (acs_conn->key_state != BT_ACS_KEY_EXCHANGE_IDLE &&
 			   acs_conn->key_state != BT_ACS_KEY_EXCHANGE_COMPLETE);
-	data_ops_pending = false;
 
+	data_ops_pending = false;
 	for (uint8_t i = 0; i < CONFIG_BT_ACS_MAX_INFLIGHT_REQ_PER_CONN; i++) {
 		if (atomic_ptr_get(&acs_conn->pending_reqs[i]) != NULL) {
 			data_ops_pending = true;
@@ -192,17 +209,52 @@ void acs_sec_mgmt_abort(struct acs_cp_ctx *ctx)
 		}
 	}
 
-	if (!kex_in_progress && !data_ops_pending) {
-		LOG_WRN("Abort requested with no in-progress procedure (key_state=%u)",
-			(unsigned int)acs_conn->key_state);
+	has_work = plain_cp_active || kex_in_progress || data_ops_pending;
+
+	if (!has_work) {
+		LOG_WRN("Abort requested with no in-progress procedure");
+		/* Take the lock for our own response, since no proc holds it. */
+		atomic_set(&acs_conn->cp_proc.locked, 1);
 		acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_ABORT,
 				  BT_ACS_CP_RESPONSE_ABORT_UNSUCCESSFUL);
 		return;
 	}
 
-	if (kex_in_progress) {
-		enum bt_acs_key_exchange_state old_state = acs_conn->key_state;
+	/* If any CP-bound indication is already handed to the stack we
+	 * cannot un-send it — spec §4.4.4: reply UNSUCCESSFUL and leave
+	 * the aborted procedure running.
+	 */
+	can_commit = !acs_conn->cp_tx.tx_in_flight;
+#if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION)
+	can_commit = can_commit && !acs_conn->indicate_tx.tx_in_flight;
+#endif
 
+	if (!can_commit) {
+		LOG_WRN("response in flight — cannot abort");
+		/* Do NOT touch any state. The aborted procedure continues. */
+		acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_ABORT,
+				  BT_ACS_CP_RESPONSE_ABORT_UNSUCCESSFUL);
+		return;
+	}
+
+	/*
+	 * Plain CP: cancel any staged/pending response.  Sync-cancel the seg-TX work first so a
+	 * racing work handler cannot fire between our free and the new ABORT response allocation.
+	 */
+	if (plain_cp_active) {
+		k_work_cancel_sync(&acs_conn->cp_tx.tx_work, &sync);
+		acs_seq_clear(ctx);
+		if (acs_conn->cp_proc.response) {
+			acs_buf_free(acs_conn->cp_proc.response);
+			acs_conn->cp_proc.response = NULL;
+		}
+		/* lock stays held — ABORT now owns it for its own response */
+	} else {
+		atomic_set(&acs_conn->cp_proc.locked, 1);
+	}
+
+	/* Tear down KEX state (local only — always safe once probed). */
+	if (kex_in_progress) {
 		acs_conn->key_state = BT_ACS_KEY_EXCHANGE_IDLE;
 		if (acs_conn->kex) {
 			if (acs_conn->kex->ecdh_key_id != 0) {
@@ -211,11 +263,14 @@ void acs_sec_mgmt_abort(struct acs_cp_ctx *ctx)
 			acs_kex_free(acs_conn->kex);
 			acs_conn->kex = NULL;
 		}
-		LOG_DBG("Abort: cleared key_state from %u", (unsigned int)old_state);
 	}
 
-	acs_prot_resource_req_abort_all(acs_conn);
+	/* Drain any pending protected-resource requests. */
+	if (data_ops_pending) {
+		acs_prot_resource_req_abort_all(acs_conn);
+	}
 
+	/* Send success response — lock released on confirm as usual. */
 	acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_ABORT, BT_ACS_CP_RESPONSE_SUCCESS);
 }
 

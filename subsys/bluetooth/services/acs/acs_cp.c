@@ -241,7 +241,17 @@ ssize_t acs_cp_write(struct bt_conn *conn, const struct bt_gatt_attr *attr, cons
 	switch (seg_rx_result) {
 	case ACS_SEG_RX_COMPLETE: {
 		struct net_buf_simple simple;
-		if (!atomic_cas(&acs_conn->cp_proc.locked, 0, 1)) {
+		bool is_abort = false;
+
+#if IS_ENABLED(CONFIG_BT_ACS_ABORT)
+		/*
+		 * Abort command must preempt any in-progress procedure per §4.4.4: it bypasses the
+		 * cp_proc lock and the handler owns the lock semantics itself.
+		 */
+		is_abort = (acs_conn->cp_rx.buf->len > 0 &&
+			    acs_conn->cp_rx.buf->data[0] == BT_ACS_CP_OPCODE_ABORT);
+#endif
+		if (!is_abort && !atomic_cas(&acs_conn->cp_proc.locked, 0, 1)) {
 			acs_seg_rx_reset(&acs_conn->cp_rx);
 			LOG_WRN("procedure already in progress");
 			return BT_GATT_ERR(BT_ATT_ERR_PROCEDURE_IN_PROGRESS);

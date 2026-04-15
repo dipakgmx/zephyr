@@ -388,8 +388,8 @@ static int bt_acs_crypto_derive_kdf_child_key(struct bt_acs_conn *acs_conn)
 	sys_memcpy_swap(info_be, acs_conn->kex->kdf.info, acs_conn->kex->kdf.info_size);
 
 	ret = acs_hkdf(acs_get_psa_hkdf_alg(), salt_be, acs_conn->kex->kdf.salt_size,
-		acs_conn->crypto.session_key, CONFIG_BT_ACS_SESSION_KEY_SIZE, info_be,
-	acs_conn->kex->kdf.info_size, child_key, CONFIG_BT_ACS_SESSION_KEY_SIZE);
+		       acs_conn->crypto.session_key, CONFIG_BT_ACS_SESSION_KEY_SIZE, info_be,
+		       acs_conn->kex->kdf.info_size, child_key, CONFIG_BT_ACS_SESSION_KEY_SIZE);
 
 	if (ret != 0) {
 		LOG_ERR("KDF child key derivation failed: %d", ret);
