@@ -68,7 +68,8 @@ void acs_session_store(struct bt_conn const *conn, struct bt_acs_conn const *acs
 		 * dedicated kdf_child_* fields.  On restore this lets the peer resume AEAD
 		 * with the child key immediately, while the parent remains addressable by
 		 * the Get Current Key List and Invalidate Key procedures. */
-		memcpy(store.session_key, acs_conn->ecdh_parent_key, CONFIG_BT_ACS_SESSION_KEY_SIZE);
+		memcpy(store.session_key, acs_conn->ecdh_parent_key,
+		       CONFIG_BT_ACS_SESSION_KEY_SIZE);
 		store.tx_nonce_counter = 0;
 		store.rx_nonce_counter = 0;
 		store.kdf_child_valid = true;
@@ -222,11 +223,11 @@ void acs_session_restore(struct bt_conn *conn, struct bt_acs_conn *acs_conn)
 
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF) && !IS_ENABLED(CONFIG_BT_ACS_KDF_SESSION_KEY)
 			if (s->kdf_child_valid) {
-				/* Restore the two-key state: parent key goes into the ecdh_parent_key
-				 * snapshot, child key becomes the active AEAD key in session_key.
-				 * The PSA import below installs whichever key is in session_key, so
-				 * setting it to the child here is enough to resume protected ops
-				 * with the correct key and nonce state. */
+				/* Restore the two-key state: parent key goes into the
+				 * ecdh_parent_key snapshot, child key becomes the active AEAD key
+				 * in session_key. The PSA import below installs whichever key is in
+				 * session_key, so setting it to the child here is enough to resume
+				 * protected ops with the correct key and nonce state. */
 				memcpy(acs_conn->ecdh_parent_key, s->session_key,
 				       CONFIG_BT_ACS_SESSION_KEY_SIZE);
 				memcpy(acs_conn->crypto.session_key, s->kdf_child_key,

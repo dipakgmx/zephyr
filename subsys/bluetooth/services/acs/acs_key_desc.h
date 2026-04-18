@@ -21,8 +21,11 @@
 /** ECDH Data: ServerFmt(1) + ClientFmt(1) + Curve(1) + KDF(1) */
 #define ACS_KEY_DESC_ECDH_DATA_SIZE 4
 
-/** AES Mandatory: ParentID(2) + MsgType(1) + MAC(1) + NonceType(1) + VarSize(1) + FixSize(1) */
+/** AES with nonce: ParentID(2) + MsgType(1) + MAC(1) + NonceType(1) + VarSize(1) + FixSize(1) */
 #define ACS_KEY_DESC_AES_ALG_MANDATORY_SIZE 7
+
+/** AES-CMAC: ParentID(2) + MsgType(1) + MAC(1) — nonce fields excluded per Table 4.45 C.1 */
+#define ACS_KEY_DESC_AES_CMAC_DATA_SIZE 4
 
 /* Backwards-compatible alias for existing code */
 #define ACS_KEY_DESC_AES_CCM_MANDATORY_SIZE ACS_KEY_DESC_AES_ALG_MANDATORY_SIZE
@@ -132,11 +135,11 @@ struct acs_key_rec_kdf {
  *  ISC.key_id = 0x0001  →  ACS_KEY_ID_CCM  (algorithm record)
  *  CCM.Data.Key_ID      →  ACS_KEY_ID_ECDH (key-exchange record)
  */
-#define ACS_KEY_ID_CCM  0x0001 /**< AES-128-CCM algorithm record  */
-#define ACS_KEY_ID_ECDH 0x0002 /**< ECDH key-exchange record      */
-#define ACS_KEY_ID_OOB  0x0003 /**< OOB key-exchange record       */
-#define ACS_KEY_ID_KDF  0x0004 /**< KDF key-exchange record       */
-#define ACS_KEY_ID_GCM  0x0005 /**< AES-128-GCM algorithm record  */
+#define ACS_KEY_ID_ECDH 0x0001 /**< ECDH key-exchange record      */
+#define ACS_KEY_ID_KDF  0x0002 /**< KDF key-exchange record       */
+#define ACS_KEY_ID_GCM  0x0003 /**< AES-128-GCM algorithm record  */
+#define ACS_KEY_ID_CCM  0x0004 /**< AES-128-CCM algorithm record  */
+#define ACS_KEY_ID_OOB  0x0005 /**< OOB key-exchange record       */
 #define ACS_KEY_ID_CMAC 0x0006 /**< AES-128-CMAC algorithm record */
 #define ACS_KEY_ID_GMAC 0x0007 /**< AES-128-GMAC algorithm record */
 

@@ -211,6 +211,8 @@ struct acs_cp_proc_ctx {
 	atomic_t locked; /**< Set while a plain CP procedure is active on the connection */
 	struct acs_reply_seq_state reply_seq; /**< Explicit reply-sequence state for plain CP */
 	struct net_buf *response; /**< Plain CP response staging buffer owned by the procedure */
+	bool abort_pending; /**< Set when an Abort is requested during an active CP procedure with
+			       an indication in-flight */
 };
 
 /**
@@ -246,11 +248,11 @@ struct bt_acs_conn {
 	 */
 	uint8_t ecdh_parent_key[CONFIG_BT_ACS_SESSION_KEY_SIZE];
 #endif
-	uint8_t status_flags;                     /**< Status flags */
-	uint16_t restriction_map_id;              /**< Restriction map ID */
-	struct bt_acs_crypto_session crypto;      /**< Persistent crypto session */
-	struct bt_acs_kex_ctx *kex;               /**< Transient key exchange context */
-	uint8_t status_data[3];                   /**< Embedded status indication payload */
+	uint8_t status_flags;                /**< Status flags */
+	uint16_t restriction_map_id;         /**< Restriction map ID */
+	struct bt_acs_crypto_session crypto; /**< Persistent crypto session */
+	struct bt_acs_kex_ctx *kex;          /**< Transient key exchange context */
+	uint8_t status_data[3];              /**< Embedded status indication payload */
 	struct bt_gatt_indicate_params status_indicate_params; /**< Status indication params */
 	struct acs_cp_proc_ctx cp_proc; /**< Plain CP procedure lifetime and chaining state */
 	struct acs_seg_tx_ctx cp_tx;    /**< Plain CP indication transport context */

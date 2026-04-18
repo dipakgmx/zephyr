@@ -85,6 +85,7 @@ static void acs_cp_proc_init(struct bt_acs_conn *acs_conn)
 {
 	atomic_set(&acs_conn->cp_proc.locked, 0);
 	acs_conn->cp_proc.response = NULL;
+	acs_conn->cp_proc.abort_pending = false;
 	acs_seg_tx_init(&acs_conn->cp_tx);
 #if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION)
 	acs_seg_tx_init(&acs_conn->indicate_tx);
@@ -94,6 +95,7 @@ static void acs_cp_proc_init(struct bt_acs_conn *acs_conn)
 static void acs_cp_proc_cleanup(struct bt_acs_conn *acs_conn)
 {
 	atomic_set(&acs_conn->cp_proc.locked, 0);
+	acs_conn->cp_proc.abort_pending = false;
 	if (acs_conn->cp_proc.response) {
 		acs_buf_free(acs_conn->cp_proc.response);
 		acs_conn->cp_proc.response = NULL;

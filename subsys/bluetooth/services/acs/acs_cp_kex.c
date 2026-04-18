@@ -105,8 +105,7 @@ static int kex_step_status(struct acs_cp_ctx *ctx)
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
 	/* Mark the connection so key-list and AEAD gating know the child key is live.
 	 * Must be set before kex context is freed since we read start_kex.key_id. */
-	if (acs_conn->kex &&
-	    sys_le16_to_cpu(acs_conn->kex->start_kex.key_id) == ACS_KEY_ID_KDF) {
+	if (acs_conn->kex && sys_le16_to_cpu(acs_conn->kex->start_kex.key_id) == ACS_KEY_ID_KDF) {
 		acs_conn->kdf_child_active = true;
 	}
 #endif
@@ -114,6 +113,20 @@ static int kex_step_status(struct acs_cp_ctx *ctx)
 	acs_kex_free(acs_conn->kex);
 	acs_conn->kex = NULL;
 	acs_conn->key_state = BT_ACS_KEY_EXCHANGE_COMPLETE;
+
+	/* The KEY_EXCHANGE_RESPONSE indication has been confirmed by the peer, so
+	 * both sides agree the exchange succeeded.  Set the flag and notify the
+	 * application now — doing it earlier (in the handler that built the response)
+	 * would race against a connection drop before the peer acknowledged it. */
+	acs_conn->status_flags |= BT_ACS_STATUS_SECURITY_ESTABLISHED;
+	{
+		const struct bt_acs_cb *cb = acs_cb_get();
+
+		if (cb && cb->security_established) {
+			cb->security_established(ctx->conn, acs_conn->crypto.session_key,
+						 CONFIG_BT_ACS_SESSION_KEY_SIZE);
+		}
+	}
 
 #if defined(CONFIG_BT_SETTINGS)
 	/* Persist only after KEY_EXCHANGE_RESPONSE has been confirmed: storing
@@ -226,9 +239,6 @@ void acs_cp_kex_exchange_kdf(struct acs_cp_ctx *ctx, struct net_buf_simple *buf)
 	struct acs_kdf_req req_data;
 	uint16_t key_id;
 	struct net_buf *rsp_buf;
-#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
-	const struct bt_acs_cb *cb;
-#endif
 	int err;
 	int arm_err;
 
@@ -286,17 +296,13 @@ void acs_cp_kex_exchange_kdf(struct acs_cp_ctx *ctx, struct net_buf_simple *buf)
 			return;
 		}
 
-		/* Reset nonce counters (§4.4.4.15.1.4.4.8) */
-		acs_conn->crypto.tx_nonce_counter = 0U;
-		acs_conn->crypto.rx_nonce_counter = 0U;
-
-		acs_conn->status_flags |= BT_ACS_STATUS_SECURITY_ESTABLISHED;
-		cb = acs_cb_get();
-		if (cb && cb->security_established) {
-			cb->security_established(ctx->conn, acs_conn->crypto.session_key,
-						 CONFIG_BT_ACS_SESSION_KEY_SIZE);
-		}
-
+		/* Nonce counters are reset inside bt_acs_crypto_derive_kdf_child_key()
+		 * with the correct SEQ_EVEN_ODD logic — no separate reset needed here.
+		 *
+		 * SECURITY_ESTABLISHED flag and the security_established callback are
+		 * deferred to kex_step_status, which runs after the KEY_EXCHANGE_RESPONSE
+		 * indication is confirmed by the peer.  Setting them here would tell the
+		 * application the session is live before the peer has acknowledged it. */
 		acs_conn->key_state = BT_ACS_KEY_EXCHANGE_PENDING_RESPONSE;
 
 		/* KDF_RESPONSE must be delivered before KEY_EXCHANGE_RESPONSE (§4.4.3.10). */
@@ -702,7 +708,6 @@ void acs_cp_kex_ecdh_confirm_rand(struct acs_cp_ctx *ctx, struct net_buf_simple 
 	struct bt_acs_conn *acs_conn = ctx->acs_conn;
 	struct acs_cp_ecdh_confirm_rand_req req_data;
 	struct net_buf *rsp_buf;
-	const struct bt_acs_cb *cb;
 	int err;
 
 	if (acs_conn->key_state != BT_ACS_KEY_EXCHANGE_CONFIRM_CODE) {
@@ -776,15 +781,6 @@ void acs_cp_kex_ecdh_confirm_rand(struct acs_cp_ctx *ctx, struct net_buf_simple 
 					  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 			return;
 		}
-	}
-
-	acs_conn->status_flags |= BT_ACS_STATUS_SECURITY_ESTABLISHED;
-	LOG_INF("Security Established");
-
-	cb = acs_cb_get();
-	if (cb && cb->security_established) {
-		cb->security_established(ctx->conn, acs_conn->crypto.session_key,
-					 CONFIG_BT_ACS_SESSION_KEY_SIZE);
 	}
 
 	acs_conn->key_state = BT_ACS_KEY_EXCHANGE_PENDING_RESPONSE;

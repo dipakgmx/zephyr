@@ -154,12 +154,43 @@ const struct bt_acs_key_desc_record *acs_key_desc_lookup(uint16_t key_id)
 /**
  * @brief Serialize an AES algorithm record into the response buffer.
  *
- * Handles CCM, GCM, CMAC, and GMAC — all share the same wire layout
- * (Table 4.45) with an optional nonce_fixed suffix.
+ * Table 4.45 condition C.1: Nonce_Type, Nonce_Variable_Size, Nonce_Fixed_Size,
+ * and AC_Server_Nonce_Fixed_Value are Mandatory for CCM, EAX, GCM, and GMAC
+ * but Excluded for CMAC.  CMAC's data field is only Key_ID + Message_Type +
+ * MAC_Size (4 bytes).
  */
 static int append_aes_record(const struct bt_acs_key_desc_record *rec, struct net_buf_simple *buf,
 			     const uint8_t *server_fixed_nonce)
 {
+	if (rec->type_id == ACS_KEY_REC_AES_128_CMAC) {
+		/* CMAC: nonce fields excluded (Table 4.45 C.1) */
+		const uint8_t total =
+			sizeof(struct acs_key_rec_hdr) + ACS_KEY_DESC_AES_CMAC_DATA_SIZE;
+
+		if (net_buf_simple_tailroom(buf) < total) {
+			return -ENOMEM;
+		}
+
+		struct acs_key_rec_hdr hdr = {
+			.type_id = rec->type_id,
+			.type_value = sys_cpu_to_le16(rec->key_id),
+			.data_size = ACS_KEY_DESC_AES_CMAC_DATA_SIZE,
+		};
+		uint8_t data[ACS_KEY_DESC_AES_CMAC_DATA_SIZE];
+
+		sys_put_le16(rec->aes.parent_key_id, &data[0]);
+		data[2] = rec->aes.msg_type;
+		data[3] = rec->aes.mac_size;
+
+		net_buf_simple_add_mem(buf, &hdr, sizeof(hdr));
+		net_buf_simple_add_mem(buf, data, sizeof(data));
+
+		LOG_DBG("Key rec: type=0x%02x key_id=0x%04x parent=0x%04x mac=%u (CMAC, no nonce)",
+			rec->type_id, rec->key_id, rec->aes.parent_key_id, rec->aes.mac_size);
+		return 0;
+	}
+
+	/* CCM, GCM, EAX, GMAC: full wire layout with nonce fields */
 	const uint8_t total_size =
 		sizeof(struct acs_key_rec_aes_alg_hdr) + rec->aes.nonce_fixed_size;
 

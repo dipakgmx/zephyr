@@ -157,7 +157,51 @@ static void acs_cp_on_indicate_done(struct bt_conn *conn, const struct bt_gatt_a
 
 		LOG_WRN("Plain CP indication failed: %d", err);
 		acs_seq_abort(&ctx);
+		acs_conn->cp_proc.abort_pending = false;
 		atomic_set(&acs_conn->cp_proc.locked, 0);
+		return;
+	}
+
+	/* Deferred abort: an Abort opcode arrived while this indication was
+	 * in-flight.  The TX channel is now free (tx_in_flight cleared before
+	 * this callback), so tear down the procedure and send ABORT SUCCESS. */
+	if (acs_conn->cp_proc.abort_pending) {
+		struct acs_cp_ctx ctx = {
+			.prot_req = NULL,
+			.conn = conn,
+			.attr = attr,
+			.acs_conn = acs_conn,
+		};
+		struct k_work_sync sync;
+
+		acs_conn->cp_proc.abort_pending = false;
+
+		k_work_cancel_sync(&acs_conn->cp_tx.tx_work, &sync);
+		acs_seq_clear(&ctx);
+		if (acs_conn->cp_proc.response) {
+			acs_buf_free(acs_conn->cp_proc.response);
+			acs_conn->cp_proc.response = NULL;
+		}
+
+		/* Tear down KEX if in progress. */
+		if (acs_conn->key_state != BT_ACS_KEY_EXCHANGE_IDLE &&
+		    acs_conn->key_state != BT_ACS_KEY_EXCHANGE_COMPLETE) {
+			acs_conn->key_state = BT_ACS_KEY_EXCHANGE_IDLE;
+			if (acs_conn->kex) {
+				if (acs_conn->kex->ecdh_key_id != 0) {
+					psa_destroy_key(acs_conn->kex->ecdh_key_id);
+				}
+				acs_kex_free(acs_conn->kex);
+				acs_conn->kex = NULL;
+			}
+		}
+
+		/* Drain pending protected-resource requests. */
+		acs_prot_resource_req_abort_all(acs_conn);
+
+		LOG_DBG("Deferred abort committed — sending ABORT SUCCESS");
+		/* Lock stays held — ABORT now owns it; released on confirm. */
+		acs_cp_rsp_status(&ctx, BT_ACS_CP_OPCODE_ABORT, BT_ACS_CP_RESPONSE_SUCCESS);
 		return;
 	}
 

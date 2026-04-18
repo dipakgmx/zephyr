@@ -176,21 +176,30 @@ void acs_sec_mgmt_invalidate_key(struct acs_cp_ctx *ctx, struct net_buf_simple *
 		return;
 	}
 
-	if (key_id == 0xFFFF) {
+	if (key_id == BT_ACS_GET_KEY_DESC_ALL_RECORDS_FILTER) {
 		bt_acs_invalidate_security(ctx->conn);
 		response_code = BT_ACS_CP_RESPONSE_SUCCESS;
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
 	} else if (key_id == ACS_KEY_ID_KDF) {
 		if (!ctx->acs_conn->kdf_child_active) {
-			/* Spec: "key ID that is already invalid → Procedure Not Applicable" */
+			/* Spec §4.4.3.12: "key ID that is already invalid → Procedure Not
+			 * Applicable" */
 			response_code = BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE;
 		} else {
 			invalidate_kdf_child(ctx->acs_conn);
 #if defined(CONFIG_BT_SETTINGS) && !IS_ENABLED(CONFIG_BT_ACS_KDF_SESSION_KEY)
 			acs_session_store(ctx->conn, ctx->acs_conn);
 #endif
+			{
+				const struct bt_acs_cb *cb = acs_cb_get();
+
+				if (cb && cb->security_invalidated) {
+					cb->security_invalidated(ctx->conn);
+				}
+			}
+			acs_status_indicate(ctx->conn);
 			response_code = BT_ACS_CP_RESPONSE_SUCCESS;
-			LOG_DBG("KDF child key invalidated (parent retained)");
+			LOG_DBG("KDF child key invalidated");
 		}
 	} else if (is_active_algorithm_key_id(key_id) && ctx->acs_conn->kdf_child_active) {
 		/* Algorithm keys (GCM, CCM, …) use the KDF child as their actual key
@@ -199,6 +208,14 @@ void acs_sec_mgmt_invalidate_key(struct acs_cp_ctx *ctx, struct net_buf_simple *
 #if defined(CONFIG_BT_SETTINGS) && !IS_ENABLED(CONFIG_BT_ACS_KDF_SESSION_KEY)
 		acs_session_store(ctx->conn, ctx->acs_conn);
 #endif
+		{
+			const struct bt_acs_cb *cb = acs_cb_get();
+
+			if (cb && cb->security_invalidated) {
+				cb->security_invalidated(ctx->conn);
+			}
+		}
+		acs_status_indicate(ctx->conn);
 		response_code = BT_ACS_CP_RESPONSE_SUCCESS;
 		LOG_DBG("Algorithm key 0x%04x invalidated (KDF child destroyed, parent retained)",
 			key_id);
@@ -206,8 +223,7 @@ void acs_sec_mgmt_invalidate_key(struct acs_cp_ctx *ctx, struct net_buf_simple *
 	} else if (is_active_key_id(key_id)) {
 		ret = bt_acs_invalidate_security(ctx->conn);
 		if (ret) {
-			LOG_ERR("Failed to invalidate security for key ID 0x%04x: %d",
-				key_id, ret);
+			LOG_ERR("Failed to invalidate security for key ID 0x%04x: %d", key_id, ret);
 			response_code = BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED;
 		} else {
 			response_code = BT_ACS_CP_RESPONSE_SUCCESS;
@@ -277,9 +293,13 @@ void acs_sec_mgmt_abort(struct acs_cp_ctx *ctx)
 		return;
 	}
 
-	/* If any CP-bound indication is already handed to the stack we
-	 * cannot un-send it — spec §4.4.4: reply UNSUCCESSFUL and leave
-	 * the aborted procedure running.
+	/* If a CP indication is already handed to the BLE stack we cannot
+	 * un-send it, but we CAN suppress all subsequent indications once it
+	 * confirms.  Set a deferred flag so the confirm callback tears down the
+	 * procedure and sends ABORT SUCCESS when the channel is free.
+	 *
+	 * We must not try to send a response here — the TX channel is occupied
+	 * and the send would fail with -EBUSY.
 	 */
 	can_commit = !acs_conn->cp_tx.tx_in_flight;
 #if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION)
@@ -287,10 +307,8 @@ void acs_sec_mgmt_abort(struct acs_cp_ctx *ctx)
 #endif
 
 	if (!can_commit) {
-		LOG_WRN("response in flight — cannot abort");
-		/* Do NOT touch any state. The aborted procedure continues. */
-		acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_ABORT,
-				  BT_ACS_CP_RESPONSE_ABORT_UNSUCCESSFUL);
+		LOG_DBG("Abort deferred — indication in flight, will commit on confirm");
+		acs_conn->cp_proc.abort_pending = true;
 		return;
 	}
 
