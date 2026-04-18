@@ -119,16 +119,34 @@ struct bt_acs_crypto_session {
 
 /**
  * @brief NVS-serialised snapshot of an ACS crypto session.
+ *
+ * When KDF key exchange is enabled (persistent mode), this struct carries two
+ * keys: the ECDH parent key in @p session_key and, optionally, the KDF child
+ * key in the @p kdf_child_key fields. The parent is the root used to derive
+ * the child; only the child is ever used for AEAD, so @p tx/rx_nonce_counter
+ * always remain zero for the parent. Separating the two allows Invalidate Key
+ * to target either independently across connections.
+ *
+ * In session mode (CONFIG_BT_ACS_KDF_SESSION_KEY), only the ECDH parent is
+ * stored; the child key is discarded at disconnect and re-derived on reconnect.
  */
 struct bt_acs_session_store {
-	uint8_t session_key[CONFIG_BT_ACS_SESSION_KEY_SIZE]; /**< AES session key */
+	uint8_t session_key[CONFIG_BT_ACS_SESSION_KEY_SIZE]; /**< ECDH/OOB key (or parent if KDF) */
 #if IS_ENABLED(CONFIG_BT_ACS_HAS_NONCE_FIXED)
 	uint8_t server_nonce_fixed[CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE]; /**< Server fixed nonce */
 	uint8_t client_nonce_fixed[CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE]; /**< Client fixed nonce */
 #endif
-	uint32_t tx_nonce_counter;   /**< TX nonce counter */
-	uint32_t rx_nonce_counter;   /**< RX nonce counter */
+	uint32_t tx_nonce_counter;   /**< TX nonce counter for session_key (0 when KDF active) */
+	uint32_t rx_nonce_counter;   /**< RX nonce counter for session_key (0 when KDF active) */
 	uint16_t restriction_map_id; /**< Active restriction map ID */
+#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF) && !IS_ENABLED(CONFIG_BT_ACS_KDF_SESSION_KEY)
+	/** When true, the KDF child key below is valid and should be restored as
+	 *  the active AEAD key; session_key holds the ECDH parent for reference. */
+	bool kdf_child_valid;
+	uint8_t kdf_child_key[CONFIG_BT_ACS_SESSION_KEY_SIZE]; /**< KDF-derived child key */
+	uint32_t kdf_tx_nonce_counter; /**< TX nonce counter consumed against the child key */
+	uint32_t kdf_rx_nonce_counter; /**< RX nonce counter consumed against the child key */
+#endif
 };
 
 /**
@@ -210,6 +228,24 @@ struct bt_acs_conn {
 	const struct bt_gatt_attr *attr_doi;
 #endif
 	enum bt_acs_key_exchange_state key_state; /**< Key exchange state */
+#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
+	/** True when crypto.session_key holds a KDF-derived child key.
+	 *
+	 *  The KDF child key is the key actually used for all AEAD operations.
+	 *  The ECDH parent key (ecdh_parent_key below) is stored only to enable
+	 *  per-connection re-derivation and to satisfy the Get Current Key List
+	 *  and Invalidate Key procedures, which must be able to address the two
+	 *  keys independently. This flag tells the session-store, key-list, and
+	 *  disconnect handlers which key's nonces are the current live counters.
+	 */
+	bool kdf_child_active;
+	/** Snapshot of the ECDH parent key, taken when the KDF child key was
+	 *  derived and overwrote crypto.session_key.  Kept in RAM so the
+	 *  session-store can write it back to NVS alongside the child key
+	 *  without having to decrypt the stored session just to read the parent.
+	 */
+	uint8_t ecdh_parent_key[CONFIG_BT_ACS_SESSION_KEY_SIZE];
+#endif
 	uint8_t status_flags;                     /**< Status flags */
 	uint16_t restriction_map_id;              /**< Restriction map ID */
 	struct bt_acs_crypto_session crypto;      /**< Persistent crypto session */

@@ -41,7 +41,19 @@ LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
  * Applications may register additional records with BT_ACS_KEY_DESC_DEFINE() in their
  * own source files; the library discovers all records via the bt_acs_key_desc_record iterable
  * section.
+ *
+ * Algorithm records (CCM, GCM, CMAC, GMAC) carry a parent_key_id field that tells the peer
+ * which key was used to derive the algorithm's session material.  When KDF is enabled, the
+ * spec (Figure 4.4) requires algorithm records to reference the KDF key — not the ECDH key
+ * directly — because the KDF step produces the child key that is actually loaded into the AEAD
+ * engine.  Without KDF, the ECDH shared secret itself is the AEAD key, so the parent reference
+ * stays at ACS_KEY_ID_ECDH.
  */
+#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
+#define ACS_KEY_DESC_ALG_PARENT_KEY_ID ACS_KEY_ID_KDF
+#else
+#define ACS_KEY_DESC_ALG_PARENT_KEY_ID ACS_KEY_ID_ECDH
+#endif
 
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_ECDH)
 BT_ACS_KEY_DESC_DEFINE(acs_key_desc_ecdh, .type_id = ACS_KEY_REC_ECDH, .key_id = ACS_KEY_ID_ECDH,
@@ -57,7 +69,7 @@ BT_ACS_KEY_DESC_DEFINE(acs_key_desc_ecdh, .type_id = ACS_KEY_REC_ECDH, .key_id =
 BT_ACS_KEY_DESC_DEFINE(acs_key_desc_ccm, .type_id = ACS_KEY_REC_AES_128_CCM,
 		       .key_id = ACS_KEY_ID_CCM,
 		       .aes = {
-			       .parent_key_id = ACS_KEY_ID_ECDH,
+			       .parent_key_id = ACS_KEY_DESC_ALG_PARENT_KEY_ID,
 			       .msg_type = ACS_MSG_TYPE_PROTECTED,
 			       .mac_size = ACS_CCM_MAC_SIZE,
 			       .nonce_type = ACS_CCM_NONCE_TYPE,
@@ -70,7 +82,7 @@ BT_ACS_KEY_DESC_DEFINE(acs_key_desc_ccm, .type_id = ACS_KEY_REC_AES_128_CCM,
 BT_ACS_KEY_DESC_DEFINE(acs_key_desc_gcm, .type_id = ACS_KEY_REC_AES_128_GCM,
 		       .key_id = ACS_KEY_ID_GCM,
 		       .aes = {
-			       .parent_key_id = ACS_KEY_ID_ECDH,
+			       .parent_key_id = ACS_KEY_DESC_ALG_PARENT_KEY_ID,
 			       .msg_type = ACS_MSG_TYPE_PROTECTED,
 			       .mac_size = ACS_GCM_MAC_SIZE,
 			       .nonce_type = ACS_NONCE_SEQ_DIFF_FIXED,
@@ -84,7 +96,7 @@ BT_ACS_KEY_DESC_DEFINE(acs_key_desc_gcm, .type_id = ACS_KEY_REC_AES_128_GCM,
 BT_ACS_KEY_DESC_DEFINE(acs_key_desc_cmac, .type_id = ACS_KEY_REC_AES_128_CMAC,
 		       .key_id = ACS_KEY_ID_CMAC,
 		       .aes = {
-			       .parent_key_id = ACS_KEY_ID_ECDH,
+			       .parent_key_id = ACS_KEY_DESC_ALG_PARENT_KEY_ID,
 			       .msg_type = ACS_MSG_TYPE_PROTECTED,
 			       .mac_size = ACS_CRYPTO_AUTH_TAG_SIZE,
 			       .nonce_type = ACS_NONCE_SEQ_DIFF_FIXED,
@@ -99,7 +111,7 @@ BT_ACS_KEY_DESC_DEFINE(acs_key_desc_cmac, .type_id = ACS_KEY_REC_AES_128_CMAC,
 BT_ACS_KEY_DESC_DEFINE(acs_key_desc_gmac, .type_id = ACS_KEY_REC_AES_128_GMAC,
 		       .key_id = ACS_KEY_ID_GMAC,
 		       .aes = {
-			       .parent_key_id = ACS_KEY_ID_ECDH,
+			       .parent_key_id = ACS_KEY_DESC_ALG_PARENT_KEY_ID,
 			       .msg_type = ACS_MSG_TYPE_PROTECTED,
 			       .mac_size = ACS_GCM_MAC_SIZE,
 			       .nonce_type = ACS_NONCE_SEQ_DIFF_FIXED,
@@ -122,6 +134,8 @@ BT_ACS_KEY_DESC_DEFINE(acs_key_desc_oob, .type_id = ACS_KEY_REC_OOB, .key_id = A
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
 BT_ACS_KEY_DESC_DEFINE(acs_key_desc_kdf_rec, .type_id = ACS_KEY_REC_KDF, .key_id = ACS_KEY_ID_KDF,
 		       .kdf = {
+			       /* The KDF key record describes the key derivation step itself:
+				* parent is always the ECDH key from which the child is derived. */
 			       .parent_key_id = ACS_KEY_ID_ECDH,
 			       .kdf_algorithm = ACS_KEY_DESC_KDF,
 		       });

@@ -185,6 +185,13 @@ void acs_conn_cleanup(struct bt_acs_conn *acs_conn)
 
 	acs_conn->conn = NULL;
 	acs_conn->key_state = BT_ACS_KEY_EXCHANGE_IDLE;
+#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
+	acs_conn->kdf_child_active = false;
+	/* Zero the parent key snapshot now that the session is torn down.
+	 * crypto.session_key is cleared below via acs_crypto_destroy_session_key
+	 * and the crypto memset; ecdh_parent_key lives outside that struct. */
+	memset(acs_conn->ecdh_parent_key, 0, sizeof(acs_conn->ecdh_parent_key));
+#endif
 	acs_conn->status_flags = BT_ACS_STATUS_SECURITY_CONTROLS_ENABLED;
 
 	/* Release transient key-exchange context back to the pool. */
@@ -283,7 +290,11 @@ static void acs_bt_disconnected(struct bt_conn *conn, uint8_t reason)
 	}
 
 #if defined(CONFIG_BT_SETTINGS)
-	if (acs_conn->key_state == BT_ACS_KEY_EXCHANGE_COMPLETE) {
+	if (acs_conn->key_state == BT_ACS_KEY_EXCHANGE_COMPLETE
+#if IS_ENABLED(CONFIG_BT_ACS_KDF_SESSION_KEY)
+	    && !acs_conn->kdf_child_active
+#endif
+	) {
 		acs_session_store(conn, acs_conn);
 	}
 #endif
@@ -326,6 +337,10 @@ int bt_acs_invalidate_security(struct bt_conn *conn)
 
 	acs_conn->key_state = BT_ACS_KEY_EXCHANGE_IDLE;
 	acs_conn->status_flags &= ~BT_ACS_STATUS_SECURITY_ESTABLISHED;
+#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
+	acs_conn->kdf_child_active = false;
+	memset(acs_conn->ecdh_parent_key, 0, sizeof(acs_conn->ecdh_parent_key));
+#endif
 	acs_crypto_destroy_session_key(acs_conn);
 	memset(&acs_conn->crypto, 0, sizeof(acs_conn->crypto));
 

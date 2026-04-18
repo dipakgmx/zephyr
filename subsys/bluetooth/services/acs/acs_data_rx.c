@@ -180,6 +180,17 @@ static int acs_data_in_validate(struct acs_data_in_pipeline *pipe)
 		return ACS_DATA_ERR_NOT_AUTHORIZED;
 	}
 
+#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
+	/* The ISC for protected resources references the KDF child key (spec Figure 4.4:
+	 * algorithm records point to the KDF key, not the ECDH parent).  The child key only
+	 * exists after the peer has completed the KDF exchange for this connection.
+	 * Spec §4.4.4.15.1.4.4.1: "the key has not been exchanged yet" → Invalid Key. */
+	if (!acs_conn->kdf_child_active) {
+		LOG_WRN("Data In: KDF child key not yet established — Invalid Key");
+		return ACS_DATA_ERR_INVALID_KEY;
+	}
+#endif
+
 	if (buf->len < ACS_DATA_IN_HDR_SIZE) {
 		LOG_ERR("Data In payload too short for ISC_ID");
 		return -EINVAL;

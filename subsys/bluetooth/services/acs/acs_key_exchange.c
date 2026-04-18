@@ -375,7 +375,7 @@ int acs_crypto_derive_session_key(struct bt_acs_conn *acs_conn)
 }
 
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
-/* §4.4.3.17.2.1: Derive child key from session key via HKDF; replaces session_key. */
+/* §4.4.3.17.2.1: Derive child key from the ECDH session key via HKDF. */
 static int bt_acs_crypto_derive_kdf_child_key(struct bt_acs_conn *acs_conn)
 {
 	uint8_t child_key[CONFIG_BT_ACS_SESSION_KEY_SIZE];
@@ -396,6 +396,13 @@ static int bt_acs_crypto_derive_kdf_child_key(struct bt_acs_conn *acs_conn)
 		return ret;
 	}
 
+	/* The ECDH parent key is overwritten in crypto.session_key by the child key below.
+	 * Preserve it in ecdh_parent_key so the session-store handler can write both keys
+	 * to NVS independently, and so Get Current Key List and Invalidate Key can address
+	 * each key by its own ID across reconnects. */
+	memcpy(acs_conn->ecdh_parent_key, acs_conn->crypto.session_key,
+	       CONFIG_BT_ACS_SESSION_KEY_SIZE);
+
 	memcpy(acs_conn->crypto.session_key, child_key, CONFIG_BT_ACS_SESSION_KEY_SIZE);
 	acs_conn->crypto.tx_nonce_counter = 0;
 #if defined(CONFIG_BT_ACS_CCM_NONCE_SEQ_EVEN_ODD)
@@ -404,9 +411,8 @@ static int bt_acs_crypto_derive_kdf_child_key(struct bt_acs_conn *acs_conn)
 	acs_conn->crypto.rx_nonce_counter = 0;
 #endif
 
-	/* Destroy the parent key handle before importing the child key,
-	 * otherwise the old PSA key slot is leaked.
-	 */
+	/* Destroy the ECDH PSA key slot before importing the child; PSA allows only one
+	 * volatile key per purpose, so the old slot must be released first. */
 	acs_crypto_destroy_session_key(acs_conn);
 	return acs_crypto_import_session_key(acs_conn);
 }

@@ -40,9 +40,15 @@ void acs_cp_kex_get_current_key_list(struct acs_cp_ctx *ctx)
 		count++;
 #endif
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
-		sys_put_le16(ACS_KEY_ID_KDF, &buf[pos]);
-		pos += sizeof(uint16_t);
-		count++;
+		/* The KDF child key is only valid once the peer has completed the KDF
+		 * exchange for this connection.  Reporting it before that point would
+		 * let the peer attempt AEAD with a key that does not yet exist on the
+		 * server side, causing spurious decryption failures. */
+		if (ctx->acs_conn->kdf_child_active) {
+			sys_put_le16(ACS_KEY_ID_KDF, &buf[pos]);
+			pos += sizeof(uint16_t);
+			count++;
+		}
 #endif
 	}
 
@@ -96,18 +102,43 @@ static int kex_step_status(struct acs_cp_ctx *ctx)
 {
 	struct bt_acs_conn *acs_conn = ctx->acs_conn;
 
+#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
+	/* Mark the connection so key-list and AEAD gating know the child key is live.
+	 * Must be set before kex context is freed since we read start_kex.key_id. */
+	if (acs_conn->kex &&
+	    sys_le16_to_cpu(acs_conn->kex->start_kex.key_id) == ACS_KEY_ID_KDF) {
+		acs_conn->kdf_child_active = true;
+	}
+#endif
+
 	acs_kex_free(acs_conn->kex);
 	acs_conn->kex = NULL;
 	acs_conn->key_state = BT_ACS_KEY_EXCHANGE_COMPLETE;
 
 #if defined(CONFIG_BT_SETTINGS)
-	/* Persist only after KEY_EXCHANGE_RESPONSE has been confirmed.
-	 * Storing earlier (during KDF derivation or ECDH confirm-rand)
-	 * would leave NVS with the new key if the connection drops
-	 * before the response is delivered — the remote side would
-	 * discard the incomplete exchange and still expect the old key.
-	 */
-	acs_session_store(ctx->conn, acs_conn);
+	/* Persist only after KEY_EXCHANGE_RESPONSE has been confirmed: storing
+	 * earlier would leave NVS with the new key if the connection drops
+	 * before the response is delivered — the remote would discard the
+	 * incomplete exchange and still expect the old key on reconnect.
+	 *
+	 * In session mode (CONFIG_BT_ACS_KDF_SESSION_KEY), the KDF child key
+	 * intentionally lives only for this connection.  The ECDH parent key
+	 * was already stored when the ECDH exchange completed (with zero nonce
+	 * counters, since the parent is never used for AEAD directly).  Storing
+	 * again here would needlessly overwrite it with a child key that will be
+	 * discarded at disconnect anyway.  Skip the store; the peer must redo
+	 * the KDF exchange on every reconnect.
+	 *
+	 * In persistent mode (default), store unconditionally: acs_session_store
+	 * handles the two-key layout, writing the parent key (from ecdh_parent_key)
+	 * and the child key with its nonce counters into separate fields so both
+	 * can be restored on reconnect without repeating either exchange. */
+#if IS_ENABLED(CONFIG_BT_ACS_KDF_SESSION_KEY)
+	if (!acs_conn->kdf_child_active)
+#endif
+	{
+		acs_session_store(ctx->conn, acs_conn);
+	}
 #endif
 
 	acs_seq_clear(ctx);
@@ -411,6 +442,16 @@ void acs_cp_kex_start(struct acs_cp_ctx *ctx, struct net_buf_simple *buf)
 			LOG_WRN("no parent key available (key_state=%d, prior ECDH exchange "
 				"required)",
 				acs_conn->key_state);
+			acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_START_KEY_EXCHANGE,
+					  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE);
+			return;
+		}
+		/* A KDF child key derived from the ECDH parent is already installed.
+		 * The peer must invalidate it before deriving a new one; silently
+		 * re-deriving would orphan the old child's nonce counters and create
+		 * ambiguity about which key is current in NVS. */
+		if (acs_conn->kdf_child_active) {
+			LOG_WRN("KDF child key already active — invalidate before re-exchange");
 			acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_START_KEY_EXCHANGE,
 					  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE);
 			return;

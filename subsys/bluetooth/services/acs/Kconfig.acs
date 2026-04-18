@@ -174,6 +174,26 @@ config BT_ACS_HAS_INFO_FOR_HKDF
 	             BT_ACS_KDF_HKDF_SHA512_WITH_INFO
 	default n
 
+config BT_ACS_KDF_SESSION_KEY
+	bool "Derive a fresh KDF child key on each new connection"
+	default n
+	help
+	  When enabled, a new random KDF salt is used to derive a fresh child
+	  key from the persistent ECDH parent key at the start of every
+	  connection. The child key is discarded on disconnect; the peer must
+	  redo the KDF exchange on every reconnect. This provides per-connection
+	  forward secrecy: a compromised child key cannot retroactively decrypt
+	  traffic from other connections.
+
+	  When disabled (default), the KDF child key is written to non-volatile
+	  storage alongside the parent key. The peer may reconnect and resume
+	  protected operations immediately, without repeating the KDF exchange.
+	  The Get Current Key List response includes the KDF key only after the
+	  peer has completed the KDF exchange for the current connection.
+
+	  Both modes are spec-compliant. The server is permitted to expire keys
+	  at its discretion (spec §3.4); session-only lifetime is one such policy.
+
 endif # BT_ACS_KEY_EXCHANGE_KDF
 
 # KDF buffer sizes — always present so C code compiles when KDF is off.

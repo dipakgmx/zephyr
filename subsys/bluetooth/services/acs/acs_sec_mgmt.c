@@ -21,7 +21,7 @@ LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
 
 #if IS_ENABLED(CONFIG_BT_ACS_INVALIDATE_ESTABLISHED_SECURITY)
 
-static inline bool is_active_key_id(uint16_t key_id)
+static inline bool is_active_algorithm_key_id(uint16_t key_id)
 {
 	if (IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_CCM) && key_id == ACS_KEY_ID_CCM) {
 		return true;
@@ -33,6 +33,14 @@ static inline bool is_active_key_id(uint16_t key_id)
 		return true;
 	}
 	if (IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_GMAC) && key_id == ACS_KEY_ID_GMAC) {
+		return true;
+	}
+	return false;
+}
+
+static inline bool is_active_key_id(uint16_t key_id)
+{
+	if (is_active_algorithm_key_id(key_id)) {
 		return true;
 	}
 	if (IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_ECDH) && key_id == ACS_KEY_ID_ECDH) {
@@ -105,6 +113,35 @@ void acs_sec_mgmt_invalidate_all(struct acs_cp_ctx *ctx)
 			  BT_ACS_CP_RESPONSE_SUCCESS);
 }
 
+/**
+ * @brief Invalidate only the KDF child key, keeping the ECDH parent alive.
+ *
+ * Destroys the current PSA session key (the child), zeros crypto.session_key,
+ * resets nonce counters, and clears kdf_child_active.  The ECDH parent in
+ * ecdh_parent_key is untouched — the peer can Start Key Exchange(KDF) to
+ * derive a new child without repeating the full ECDH handshake.
+ */
+#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
+static void invalidate_kdf_child(struct bt_acs_conn *acs_conn)
+{
+	acs_crypto_destroy_session_key(acs_conn);
+
+	/* Restore the ECDH parent into crypto.session_key so a subsequent
+	 * Start Key Exchange(KDF) + Key Exchange KDF can use it as IKM for
+	 * bt_acs_crypto_derive_kdf_child_key().  Re-import it into PSA so
+	 * the key handle is valid if any code path touches psa_key_id before
+	 * the new child derivation overwrites it. */
+	memcpy(acs_conn->crypto.session_key, acs_conn->ecdh_parent_key,
+	       CONFIG_BT_ACS_SESSION_KEY_SIZE);
+	acs_conn->crypto.tx_nonce_counter = 0;
+	acs_conn->crypto.rx_nonce_counter = 0;
+	acs_conn->kdf_child_active = false;
+	acs_conn->status_flags &= ~BT_ACS_STATUS_SECURITY_ESTABLISHED;
+
+	acs_crypto_import_session_key(acs_conn);
+}
+#endif
+
 void acs_sec_mgmt_invalidate_key(struct acs_cp_ctx *ctx, struct net_buf_simple *buf)
 {
 	struct acs_cp_invalidate_key_req invalidate_req;
@@ -132,29 +169,49 @@ void acs_sec_mgmt_invalidate_key(struct acs_cp_ctx *ctx, struct net_buf_simple *
 		return;
 	}
 
+	if (ctx->acs_conn->key_state != BT_ACS_KEY_EXCHANGE_COMPLETE) {
+		LOG_ERR("Invalidate Key ID 0x%04x: no security established", key_id);
+		acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_INVALIDATE_KEY,
+				  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE);
+		return;
+	}
+
 	if (key_id == 0xFFFF) {
-		if (ctx->acs_conn->key_state == BT_ACS_KEY_EXCHANGE_IDLE) {
-			LOG_ERR("Invalidate All Keys not allowed with no security established");
+		bt_acs_invalidate_security(ctx->conn);
+		response_code = BT_ACS_CP_RESPONSE_SUCCESS;
+#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
+	} else if (key_id == ACS_KEY_ID_KDF) {
+		if (!ctx->acs_conn->kdf_child_active) {
+			/* Spec: "key ID that is already invalid → Procedure Not Applicable" */
 			response_code = BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE;
 		} else {
-			bt_acs_invalidate_security(ctx->conn);
+			invalidate_kdf_child(ctx->acs_conn);
+#if defined(CONFIG_BT_SETTINGS) && !IS_ENABLED(CONFIG_BT_ACS_KDF_SESSION_KEY)
+			acs_session_store(ctx->conn, ctx->acs_conn);
+#endif
 			response_code = BT_ACS_CP_RESPONSE_SUCCESS;
+			LOG_DBG("KDF child key invalidated (parent retained)");
 		}
+	} else if (is_active_algorithm_key_id(key_id) && ctx->acs_conn->kdf_child_active) {
+		/* Algorithm keys (GCM, CCM, …) use the KDF child as their actual key
+		 * material.  Invalidating them is equivalent to invalidating the child. */
+		invalidate_kdf_child(ctx->acs_conn);
+#if defined(CONFIG_BT_SETTINGS) && !IS_ENABLED(CONFIG_BT_ACS_KDF_SESSION_KEY)
+		acs_session_store(ctx->conn, ctx->acs_conn);
+#endif
+		response_code = BT_ACS_CP_RESPONSE_SUCCESS;
+		LOG_DBG("Algorithm key 0x%04x invalidated (KDF child destroyed, parent retained)",
+			key_id);
+#endif
 	} else if (is_active_key_id(key_id)) {
-		if (ctx->acs_conn->key_state != BT_ACS_KEY_EXCHANGE_COMPLETE) {
-			LOG_ERR("Invalidate Key ID 0x%04x not allowed with no security established",
-				key_id);
-			response_code = BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE;
+		ret = bt_acs_invalidate_security(ctx->conn);
+		if (ret) {
+			LOG_ERR("Failed to invalidate security for key ID 0x%04x: %d",
+				key_id, ret);
+			response_code = BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED;
 		} else {
-			ret = bt_acs_invalidate_security(ctx->conn);
-			if (ret) {
-				LOG_ERR("Failed to invalidate security for key ID 0x%04x: %d",
-					key_id, ret);
-				response_code = BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED;
-			} else {
-				response_code = BT_ACS_CP_RESPONSE_SUCCESS;
-				LOG_DBG("Key ID 0x%04x invalidated", key_id);
-			}
+			response_code = BT_ACS_CP_RESPONSE_SUCCESS;
+			LOG_DBG("Key ID 0x%04x invalidated (full teardown)", key_id);
 		}
 	} else {
 		LOG_ERR("Invalidate Key received with unknown Key ID 0x%04x", key_id);
