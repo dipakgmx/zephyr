@@ -106,7 +106,12 @@ struct acs_reply_seq_state {
  * @brief Persistent per-connection crypto session (survives key exchange).
  */
 struct bt_acs_crypto_session {
-	uint8_t session_key[CONFIG_BT_ACS_SESSION_KEY_SIZE]; /**< AES session key */
+	/** Operational AEAD key — whichever key is currently loaded for
+	 *  encryption/decryption.  Holds the ECDHKey (parent) after ECDH
+	 *  exchange, or the KDF-derived child key after standalone KDF.
+	 *  @c kdf_child_active in bt_acs_conn tracks which one is present.
+	 *  The original parent is preserved in @c ecdh_parent_key. */
+	uint8_t active_key[CONFIG_BT_ACS_SESSION_KEY_SIZE];
 #if IS_ENABLED(CONFIG_BT_ACS_HAS_NONCE_FIXED)
 	uint8_t server_nonce_fixed[CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE]; /**< Server fixed nonce */
 	uint8_t client_nonce_fixed[CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE]; /**< Client fixed nonce */
@@ -121,8 +126,8 @@ struct bt_acs_crypto_session {
  * @brief NVS-serialised snapshot of an ACS crypto session.
  *
  * When KDF key exchange is enabled (persistent mode), this struct carries two
- * keys: the ECDH parent key in @p session_key and, optionally, the KDF child
- * key in the @p kdf_child_key fields. The parent is the root used to derive
+ * keys: the ECDH parent key in @p parent_key and, optionally, the KDF child
+ * key in the @p child_key fields. The parent is the root used to derive
  * the child; only the child is ever used for AEAD, so @p tx/rx_nonce_counter
  * always remain zero for the parent. Separating the two allows Invalidate Key
  * to target either independently across connections.
@@ -131,19 +136,23 @@ struct bt_acs_crypto_session {
  * stored; the child key is discarded at disconnect and re-derived on reconnect.
  */
 struct bt_acs_session_store {
-	uint8_t session_key[CONFIG_BT_ACS_SESSION_KEY_SIZE]; /**< ECDH/OOB key (or parent if KDF) */
+	/** ECDH/OOB exchanged parent key (spec §4.4.3.12: "top-level parent key").
+	 *  When KDF is active, the child "session" key is in @c child_key. */
+	uint8_t parent_key[CONFIG_BT_ACS_SESSION_KEY_SIZE];
 #if IS_ENABLED(CONFIG_BT_ACS_HAS_NONCE_FIXED)
 	uint8_t server_nonce_fixed[CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE]; /**< Server fixed nonce */
 	uint8_t client_nonce_fixed[CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE]; /**< Client fixed nonce */
 #endif
-	uint32_t tx_nonce_counter;   /**< TX nonce counter for session_key (0 when KDF active) */
-	uint32_t rx_nonce_counter;   /**< RX nonce counter for session_key (0 when KDF active) */
+	uint32_t tx_nonce_counter;   /**< Reserved (always 0 when KDF active; parent has no AEAD
+					nonces) */
+	uint32_t rx_nonce_counter;   /**< Reserved (always 0 when KDF active; parent has no AEAD
+					nonces) */
 	uint16_t restriction_map_id; /**< Active restriction map ID */
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF) && !IS_ENABLED(CONFIG_BT_ACS_KDF_SESSION_KEY)
 	/** When true, the KDF child key below is valid and should be restored as
-	 *  the active AEAD key; session_key holds the ECDH parent for reference. */
+	 *  the active AEAD key; parent_key holds the ECDH parent for reference. */
 	bool kdf_child_valid;
-	uint8_t kdf_child_key[CONFIG_BT_ACS_SESSION_KEY_SIZE]; /**< KDF-derived child key */
+	uint8_t child_key[CONFIG_BT_ACS_SESSION_KEY_SIZE]; /**< KDF-derived child key */
 	uint32_t kdf_tx_nonce_counter; /**< TX nonce counter consumed against the child key */
 	uint32_t kdf_rx_nonce_counter; /**< RX nonce counter consumed against the child key */
 #endif
@@ -231,7 +240,7 @@ struct bt_acs_conn {
 #endif
 	enum bt_acs_key_exchange_state key_state; /**< Key exchange state */
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
-	/** True when crypto.session_key holds a KDF-derived child key.
+	/** True when crypto.active_key holds a KDF-derived child key.
 	 *
 	 *  The KDF child key is the key actually used for all AEAD operations.
 	 *  The ECDH parent key (ecdh_parent_key below) is stored only to enable
@@ -242,7 +251,7 @@ struct bt_acs_conn {
 	 */
 	bool kdf_child_active;
 	/** Snapshot of the ECDH parent key, taken when the KDF child key was
-	 *  derived and overwrote crypto.session_key.  Kept in RAM so the
+	 *  derived and overwrote crypto.active_key.  Kept in RAM so the
 	 *  session-store can write it back to NVS alongside the child key
 	 *  without having to decrypt the stored session just to read the parent.
 	 */

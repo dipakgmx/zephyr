@@ -190,7 +190,7 @@ void acs_conn_cleanup(struct bt_acs_conn *acs_conn)
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
 	acs_conn->kdf_child_active = false;
 	/* Zero the parent key snapshot now that the session is torn down.
-	 * crypto.session_key is cleared below via acs_crypto_destroy_session_key
+	 * crypto.active_key is cleared below via acs_crypto_destroy_session_key
 	 * and the crypto memset; ecdh_parent_key lives outside that struct. */
 	memset(acs_conn->ecdh_parent_key, 0, sizeof(acs_conn->ecdh_parent_key));
 #endif

@@ -116,7 +116,7 @@ void acs_sec_mgmt_invalidate_all(struct acs_cp_ctx *ctx)
 /**
  * @brief Invalidate only the KDF child key, keeping the ECDH parent alive.
  *
- * Destroys the current PSA session key (the child), zeros crypto.session_key,
+ * Destroys the current PSA key (the child), zeros crypto.active_key,
  * resets nonce counters, and clears kdf_child_active.  The ECDH parent in
  * ecdh_parent_key is untouched — the peer can Start Key Exchange(KDF) to
  * derive a new child without repeating the full ECDH handshake.
@@ -126,12 +126,12 @@ static void invalidate_kdf_child(struct bt_acs_conn *acs_conn)
 {
 	acs_crypto_destroy_session_key(acs_conn);
 
-	/* Restore the ECDH parent into crypto.session_key so a subsequent
+	/* Restore the ECDH parent into crypto.active_key so a subsequent
 	 * Start Key Exchange(KDF) + Key Exchange KDF can use it as IKM for
 	 * bt_acs_crypto_derive_kdf_child_key().  Re-import it into PSA so
 	 * the key handle is valid if any code path touches psa_key_id before
 	 * the new child derivation overwrites it. */
-	memcpy(acs_conn->crypto.session_key, acs_conn->ecdh_parent_key,
+	memcpy(acs_conn->crypto.active_key, acs_conn->ecdh_parent_key,
 	       CONFIG_BT_ACS_SESSION_KEY_SIZE);
 	acs_conn->crypto.tx_nonce_counter = 0;
 	acs_conn->crypto.rx_nonce_counter = 0;

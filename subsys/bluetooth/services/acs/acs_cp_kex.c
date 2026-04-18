@@ -123,7 +123,7 @@ static int kex_step_status(struct acs_cp_ctx *ctx)
 		const struct bt_acs_cb *cb = acs_cb_get();
 
 		if (cb && cb->security_established) {
-			cb->security_established(ctx->conn, acs_conn->crypto.session_key,
+			cb->security_established(ctx->conn, acs_conn->crypto.active_key,
 						 CONFIG_BT_ACS_SESSION_KEY_SIZE);
 		}
 	}
@@ -769,7 +769,7 @@ void acs_cp_kex_ecdh_confirm_rand(struct acs_cp_ctx *ctx, struct net_buf_simple 
 	 * copy it as the session key.  Otherwise derive via HKDF from the
 	 * raw shared secret. */
 	if (acs_conn->kex->kdf_applied) {
-		memcpy(acs_conn->crypto.session_key, acs_conn->kex->ecdh_key,
+		memcpy(acs_conn->crypto.active_key, acs_conn->kex->ecdh_key,
 		       CONFIG_BT_ACS_SESSION_KEY_SIZE);
 	} else {
 		err = acs_crypto_derive_session_key(acs_conn);

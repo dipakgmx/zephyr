@@ -68,12 +68,11 @@ void acs_session_store(struct bt_conn const *conn, struct bt_acs_conn const *acs
 		 * dedicated kdf_child_* fields.  On restore this lets the peer resume AEAD
 		 * with the child key immediately, while the parent remains addressable by
 		 * the Get Current Key List and Invalidate Key procedures. */
-		memcpy(store.session_key, acs_conn->ecdh_parent_key,
-		       CONFIG_BT_ACS_SESSION_KEY_SIZE);
+		memcpy(store.parent_key, acs_conn->ecdh_parent_key, CONFIG_BT_ACS_SESSION_KEY_SIZE);
 		store.tx_nonce_counter = 0;
 		store.rx_nonce_counter = 0;
 		store.kdf_child_valid = true;
-		memcpy(store.kdf_child_key, acs_conn->crypto.session_key,
+		memcpy(store.child_key, acs_conn->crypto.active_key,
 		       CONFIG_BT_ACS_SESSION_KEY_SIZE);
 		store.kdf_tx_nonce_counter = acs_conn->crypto.tx_nonce_counter;
 		store.kdf_rx_nonce_counter = acs_conn->crypto.rx_nonce_counter;
@@ -81,7 +80,7 @@ void acs_session_store(struct bt_conn const *conn, struct bt_acs_conn const *acs
 #endif
 	{
 		/* ECDH/OOB exchange without active KDF child: session_key IS the AEAD key. */
-		memcpy(store.session_key, acs_conn->crypto.session_key,
+		memcpy(store.parent_key, acs_conn->crypto.active_key,
 		       CONFIG_BT_ACS_SESSION_KEY_SIZE);
 		store.tx_nonce_counter = acs_conn->crypto.tx_nonce_counter;
 		store.rx_nonce_counter = acs_conn->crypto.rx_nonce_counter;
@@ -228,9 +227,9 @@ void acs_session_restore(struct bt_conn *conn, struct bt_acs_conn *acs_conn)
 				 * in session_key. The PSA import below installs whichever key is in
 				 * session_key, so setting it to the child here is enough to resume
 				 * protected ops with the correct key and nonce state. */
-				memcpy(acs_conn->ecdh_parent_key, s->session_key,
+				memcpy(acs_conn->ecdh_parent_key, s->parent_key,
 				       CONFIG_BT_ACS_SESSION_KEY_SIZE);
-				memcpy(acs_conn->crypto.session_key, s->kdf_child_key,
+				memcpy(acs_conn->crypto.active_key, s->child_key,
 				       CONFIG_BT_ACS_SESSION_KEY_SIZE);
 				acs_conn->crypto.tx_nonce_counter = s->kdf_tx_nonce_counter;
 				acs_conn->crypto.rx_nonce_counter = s->kdf_rx_nonce_counter;
@@ -238,7 +237,7 @@ void acs_session_restore(struct bt_conn *conn, struct bt_acs_conn *acs_conn)
 			} else
 #endif
 			{
-				memcpy(acs_conn->crypto.session_key, s->session_key,
+				memcpy(acs_conn->crypto.active_key, s->parent_key,
 				       CONFIG_BT_ACS_SESSION_KEY_SIZE);
 				acs_conn->crypto.tx_nonce_counter = s->tx_nonce_counter;
 				acs_conn->crypto.rx_nonce_counter = s->rx_nonce_counter;
@@ -251,16 +250,28 @@ void acs_session_restore(struct bt_conn *conn, struct bt_acs_conn *acs_conn)
 			}
 
 			acs_conn->key_state = BT_ACS_KEY_EXCHANGE_COMPLETE;
+
+			/* Security is only fully established when the AEAD key is
+			 * available.  With KDF configured, that means the child key
+			 * must be present; the ECDH parent alone cannot perform
+			 * protected operations (Data In rejects with Invalid Key
+			 * when kdf_child_active is false). */
+#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
+			if (acs_conn->kdf_child_active) {
+				acs_conn->status_flags |= BT_ACS_STATUS_SECURITY_ESTABLISHED;
+			}
+#else
 			acs_conn->status_flags |= BT_ACS_STATUS_SECURITY_ESTABLISHED;
+#endif
 
 			LOG_INF("ACS session restored for bonded peer%s",
-				IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF) &&
-						acs_conn->kdf_child_active
-					? " (KDF child key active)"
-					: "");
+				(acs_conn->status_flags & BT_ACS_STATUS_SECURITY_ESTABLISHED)
+					? " (security established)"
+					: " (parent only, KDF child required)");
 
-			if (cb && cb->security_established) {
-				cb->security_established(conn, acs_conn->crypto.session_key,
+			if ((acs_conn->status_flags & BT_ACS_STATUS_SECURITY_ESTABLISHED) && cb &&
+			    cb->security_established) {
+				cb->security_established(conn, acs_conn->crypto.active_key,
 							 CONFIG_BT_ACS_SESSION_KEY_SIZE);
 			}
 			return;

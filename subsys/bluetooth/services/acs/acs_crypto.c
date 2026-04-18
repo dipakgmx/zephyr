@@ -126,8 +126,8 @@ int acs_crypto_import_session_key(struct bt_acs_conn *acs_conn)
 	psa_set_key_type(&attrs, PSA_KEY_TYPE_AES);
 	psa_set_key_bits(&attrs, CONFIG_BT_ACS_SESSION_KEY_SIZE * BITS_PER_BYTE);
 
-	status = psa_import_key(&attrs, acs_conn->crypto.session_key,
-				CONFIG_BT_ACS_SESSION_KEY_SIZE, &acs_conn->crypto.psa_key_id);
+	status = psa_import_key(&attrs, acs_conn->crypto.active_key, CONFIG_BT_ACS_SESSION_KEY_SIZE,
+				&acs_conn->crypto.psa_key_id);
 	if (status != PSA_SUCCESS) {
 		LOG_ERR("Key import failed: %d", status);
 		return -EIO;

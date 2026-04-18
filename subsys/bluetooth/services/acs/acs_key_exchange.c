@@ -357,7 +357,7 @@ int acs_crypto_derive_session_key(struct bt_acs_conn *acs_conn)
 
 	ret = acs_hkdf(acs_get_psa_hkdf_alg(), salt, sizeof(salt), acs_conn->kex->shared_secret,
 		       acs_conn->kex->key_mat_len, info, sizeof(info) - 1,
-		       acs_conn->crypto.session_key, CONFIG_BT_ACS_SESSION_KEY_SIZE);
+		       acs_conn->crypto.active_key, CONFIG_BT_ACS_SESSION_KEY_SIZE);
 
 	if (ret != 0) {
 		LOG_ERR("HKDF session key derivation failed: %d", ret);
@@ -388,7 +388,7 @@ static int bt_acs_crypto_derive_kdf_child_key(struct bt_acs_conn *acs_conn)
 	sys_memcpy_swap(info_be, acs_conn->kex->kdf.info, acs_conn->kex->kdf.info_size);
 
 	ret = acs_hkdf(acs_get_psa_hkdf_alg(), salt_be, acs_conn->kex->kdf.salt_size,
-		       acs_conn->crypto.session_key, CONFIG_BT_ACS_SESSION_KEY_SIZE, info_be,
+		       acs_conn->crypto.active_key, CONFIG_BT_ACS_SESSION_KEY_SIZE, info_be,
 		       acs_conn->kex->kdf.info_size, child_key, CONFIG_BT_ACS_SESSION_KEY_SIZE);
 
 	if (ret != 0) {
@@ -396,14 +396,14 @@ static int bt_acs_crypto_derive_kdf_child_key(struct bt_acs_conn *acs_conn)
 		return ret;
 	}
 
-	/* The ECDH parent key is overwritten in crypto.session_key by the child key below.
+	/* The ECDH parent key is overwritten in crypto.active_key by the child key below.
 	 * Preserve it in ecdh_parent_key so the session-store handler can write both keys
 	 * to NVS independently, and so Get Current Key List and Invalidate Key can address
 	 * each key by its own ID across reconnects. */
-	memcpy(acs_conn->ecdh_parent_key, acs_conn->crypto.session_key,
+	memcpy(acs_conn->ecdh_parent_key, acs_conn->crypto.active_key,
 	       CONFIG_BT_ACS_SESSION_KEY_SIZE);
 
-	memcpy(acs_conn->crypto.session_key, child_key, CONFIG_BT_ACS_SESSION_KEY_SIZE);
+	memcpy(acs_conn->crypto.active_key, child_key, CONFIG_BT_ACS_SESSION_KEY_SIZE);
 	acs_conn->crypto.tx_nonce_counter = 0;
 #if defined(CONFIG_BT_ACS_CCM_NONCE_SEQ_EVEN_ODD)
 	acs_conn->crypto.rx_nonce_counter = 1; /* client uses odd counters: 1, 3, 5 ... */
@@ -741,7 +741,7 @@ int acs_key_exchange_kdf(struct bt_acs_conn *acs_conn, struct net_buf_simple *rs
 	acs_conn->kex->kdf.info_size = 0;
 #endif
 
-	/* Derive child session key: HKDF(salt, ikm=session_key, info) → new session_key */
+	/* Derive child key: HKDF(salt, ikm=parent_key, info) → child replaces parent_key */
 	err = bt_acs_crypto_derive_kdf_child_key(acs_conn);
 	if (err) {
 		LOG_ERR("KDF child key derivation failed: %d", err);
