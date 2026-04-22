@@ -634,6 +634,9 @@ struct bt_acs_cb {
 	 *
 	 * The @p action value comes from Table 4.51 (0x01=Beep, 0x03=Output Numeric).
 	 *
+	 * Required when @kconfig{CONFIG_BT_ACS_CONFIRMATION_OUTPUT_NUMERIC} or
+	 * @kconfig{CONFIG_BT_ACS_CONFIRMATION_OUTPUT_BEEP} is enabled.
+	 *
 	 * @param conn       Connection object.
 	 * @param action     Selected_Confirmation_Action value (Table 4.51).
 	 * @param oob_number The OOB number the server generated (1 … max_value).
@@ -650,6 +653,9 @@ struct bt_acs_cb {
 	 * The application must call bt_acs_set_oob_number() once the user
 	 * has provided the number, before the Confirmation Code opcode arrives.
 	 *
+	 * Required when @kconfig{CONFIG_BT_ACS_CONFIRMATION_INPUT_NUMERIC} or
+	 * @kconfig{CONFIG_BT_ACS_CONFIRMATION_INPUT_PUSH} is enabled.
+	 *
 	 * @param conn   Connection object.
 	 * @param action Selected_Confirmation_Action value (Table 4.52).
 	 */
@@ -662,6 +668,8 @@ struct bt_acs_cb {
 	 * Confirmation Static OOB Number Used (0x03, Table 4.50).
 	 * The application must fill @p oob_out with the static value and set
 	 * @p oob_len (1–32 bytes, big-endian, right-aligned).
+	 *
+	 * Required when @kconfig{CONFIG_BT_ACS_OOB_STATIC_NUM_NUMBER} is enabled.
 	 *
 	 * @param conn    Connection object.
 	 * @param oob_out Buffer to write the static OOB number into (32 bytes max).
@@ -680,6 +688,8 @@ struct bt_acs_cb {
 	 * code and random verification.  Write the OOB key bytes into
 	 * @p key_out and set @p key_len.
 	 *
+	 * Required when @kconfig{CONFIG_BT_ACS_KEY_EXCHANGE_OOB} is enabled.
+	 *
 	 * @param conn    Connection object.
 	 * @param key_out Buffer to receive the OOB shared key
 	 *                (up to CONFIG_BT_ACS_SHARED_SECRET_MAX_SIZE bytes).
@@ -696,6 +706,8 @@ struct bt_acs_cb {
 	 * Called when an AC Client sends opcode 0x17 (Get Key URI).
 	 * Write the URI string (UTF-8, no NUL terminator) into @p uri_buf
 	 * and set @p uri_len to the number of bytes written.
+	 *
+	 * Required when @kconfig{CONFIG_BT_ACS_KEY_URI} is enabled.
 	 *
 	 * @param conn        Connection object.
 	 * @param key_id      Key_ID from the Get Key URI request (host byte order).

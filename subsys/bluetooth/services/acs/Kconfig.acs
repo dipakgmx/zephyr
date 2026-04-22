@@ -222,22 +222,23 @@ config BT_ACS_OOB_TRANSPORT_ON_DEVICE
 	bool "On device"
 	default y
 	help
-	  OOB key is provided directly on the device (e.g., a label) (BIT(15) of
-	  OOB_Key_Exchange_Capabilities).
+	  Advertise OOB key on device (BIT(15) of OOB_Key_Exchange_Capabilities).
+	  Requires bt_acs_cb.oob_key_get (see <zephyr/bluetooth/services/acs.h>).
 
 config BT_ACS_OOB_STATIC_NUM_NUMBER
 	bool "Static OOB confirmation number — numeric"
 	default y
 	help
-	  Static OOB confirmation number is delivered in plain numeric format
-	  (BIT(5) of Confirmation_Static_OOB_Number_Capabilities).
+	  Advertise Static OOB number in numeric format (BIT(5) of
+	  Confirmation_Static_OOB_Number_Capabilities).
+	  Requires bt_acs_cb.static_oob_get (see <zephyr/bluetooth/services/acs.h>).
 
 config BT_ACS_OOB_STATIC_NUM_ON_DEVICE
 	bool "Static OOB confirmation number — on device"
 	default y
 	help
-	  Static OOB confirmation number is provided directly on the device
-	  (BIT(15) of Confirmation_Static_OOB_Number_Capabilities).
+	  Advertise Static OOB number location on device (BIT(15) of
+	  Confirmation_Static_OOB_Number_Capabilities).  Advertising-only bit.
 
 endif # BT_ACS_KEY_EXCHANGE_OOB
 
@@ -246,9 +247,9 @@ menu "Confirmation Capabilities"
 config BT_ACS_CONFIRMATION_OUTPUT_NUMERIC
 	bool "Numeric output display"
 	help
-	  AC Server can display a numeric value for the user to confirm.
-	  Sets BIT(3) of Confirmation_Output_OOB_Number_Capabilities in the
-	  Feature Response.
+	  Advertise numeric Output OOB confirmation (BIT(3) of
+	  Confirmation_Output_OOB_Number_Capabilities).
+	  Requires bt_acs_cb.output_oob_number (see <zephyr/bluetooth/services/acs.h>).
 
 config BT_ACS_CONFIRMATION_OUTPUT_MAX_VALUE
 	int
@@ -265,16 +266,16 @@ config BT_ACS_CONFIRMATION_OUTPUT_MAX_VALUE
 config BT_ACS_CONFIRMATION_OUTPUT_BEEP
 	bool "Output beep"
 	help
-	  AC Server can emit beeps for the user to count.
-	  Sets BIT(1) of Confirmation_Output_OOB_Number_Capabilities in the
-	  Feature Response.
+	  Advertise Beep Output OOB confirmation (BIT(1) of
+	  Confirmation_Output_OOB_Number_Capabilities).
+	  Requires bt_acs_cb.output_oob_number (see <zephyr/bluetooth/services/acs.h>).
 
 config BT_ACS_CONFIRMATION_INPUT_NUMERIC
 	bool "Numeric input"
 	help
-	  AC Server can accept typed numeric input from the user for
-	  confirmation.  Sets BIT(2) of
-	  Confirmation_Input_OOB_Number_Capabilities in the Feature Response.
+	  Advertise numeric Input OOB confirmation (BIT(2) of
+	  Confirmation_Input_OOB_Number_Capabilities).
+	  Requires bt_acs_cb.input_oob_request (see <zephyr/bluetooth/services/acs.h>).
 
 config BT_ACS_CONFIRMATION_INPUT_MAX_VALUE
 	int
@@ -291,9 +292,9 @@ config BT_ACS_CONFIRMATION_INPUT_MAX_VALUE
 config BT_ACS_CONFIRMATION_INPUT_PUSH
 	bool "Push input"
 	help
-	  AC Server can accept push input — user presses a button a specific
-	  number of times — for confirmation.  Sets BIT(0) of
-	  Confirmation_Input_OOB_Number_Capabilities in the Feature Response.
+	  Advertise Push Input OOB confirmation (BIT(0) of
+	  Confirmation_Input_OOB_Number_Capabilities).
+	  Requires bt_acs_cb.input_oob_request (see <zephyr/bluetooth/services/acs.h>).
 
 endmenu # Confirmation Capabilities
 

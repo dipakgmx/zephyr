@@ -396,36 +396,68 @@ void acs_cp_kex_start(struct acs_cp_ctx *ctx, struct net_buf_simple *buf)
 	method_action_valid = true;
 	cb = acs_cb_get();
 
-	/* Validate method/action combinations (Tables 4.50–4.52); RFU → invalid operand. */
+	/* Validate the selected method/action against Tables 4.50–4.52 and against
+	 * what this server advertises in the ACS Feature Response.  Spec §4.4.4.18.2:
+	 * "the Selected_Confirmation_Method field shall be set to an AC Server-supported
+	 * confirmation method."  Unsupported methods/actions are rejected as Invalid
+	 * Operand so the client learns to pick a different value. */
 	switch (method) {
 	case BT_ACS_CONFIRM_METHOD_NONE:
+		/* Always supported (no advertised capability needed).  Spec §4.4.4.18.3:
+		 * action MUST be 0xFF when method is None. */
 		if (action != BT_ACS_CONFIRM_ACTION_NOT_APPLICABLE) {
 			method_action_valid = false;
 		}
 		break;
+
 	case BT_ACS_CONFIRM_METHOD_OUTPUT_OOB:
-		if (action != BT_ACS_CONFIRM_ACTION_OUTPUT_BEEP &&
-		    action != BT_ACS_CONFIRM_ACTION_OUTPUT_NUMERIC) {
+		/* Table 4.51: valid actions are Beep (0x01) and Output Numeric (0x03).
+		 * Each action must be individually advertised in the Feature Response's
+		 * Confirmation_Output_OOB_Number_Capabilities field. */
+		if (action == BT_ACS_CONFIRM_ACTION_OUTPUT_BEEP) {
+			method_action_valid = IS_ENABLED(CONFIG_BT_ACS_CONFIRMATION_OUTPUT_BEEP);
+		} else if (action == BT_ACS_CONFIRM_ACTION_OUTPUT_NUMERIC) {
+			method_action_valid = IS_ENABLED(CONFIG_BT_ACS_CONFIRMATION_OUTPUT_NUMERIC);
+		} else {
 			method_action_valid = false;
 		}
 		break;
+
 	case BT_ACS_CONFIRM_METHOD_INPUT_OOB:
-		if (action != BT_ACS_CONFIRM_ACTION_INPUT_PUSH &&
-		    action != BT_ACS_CONFIRM_ACTION_INPUT_NUMERIC) {
+		/* Table 4.52: valid actions are Push (0x00) and Input Numeric (0x02).
+		 * Each action must be individually advertised in the Feature Response's
+		 * Confirmation_Input_OOB_Number_Capabilities field. */
+		if (action == BT_ACS_CONFIRM_ACTION_INPUT_PUSH) {
+			method_action_valid = IS_ENABLED(CONFIG_BT_ACS_CONFIRMATION_INPUT_PUSH);
+		} else if (action == BT_ACS_CONFIRM_ACTION_INPUT_NUMERIC) {
+			method_action_valid = IS_ENABLED(CONFIG_BT_ACS_CONFIRMATION_INPUT_NUMERIC);
+		} else {
 			method_action_valid = false;
 		}
 		break;
+
 	case BT_ACS_CONFIRM_METHOD_STATIC_OOB:
+		/* Spec §4.4.4.18.3 (after Table 4.52): Static OOB action MUST be 0xFF.
+		 * The method itself is only supported when the server advertises at least
+		 * one bit in Confirmation_Static_OOB_Number_Capabilities — otherwise the
+		 * client has no way to know the static number and the exchange would fail. */
 		if (action != BT_ACS_CONFIRM_ACTION_NOT_APPLICABLE) {
 			method_action_valid = false;
+		} else if (!IS_ENABLED(CONFIG_BT_ACS_OOB_STATIC_NUM_NUMBER) &&
+			   !IS_ENABLED(CONFIG_BT_ACS_OOB_STATIC_NUM_ON_DEVICE)) {
+			method_action_valid = false;
 		}
 		break;
+
 	default:
+		/* Table 4.50: values 0x04–0xFF are RFU. */
 		method_action_valid = false;
 		break;
 	}
 
 	if (!method_action_valid) {
+		LOG_WRN("Start Key Exchange: unsupported method/action (method=0x%02x action=0x%02x)",
+			method, action);
 		acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_START_KEY_EXCHANGE,
 				  BT_ACS_CP_RESPONSE_INVALID_OPERAND);
 		return;
