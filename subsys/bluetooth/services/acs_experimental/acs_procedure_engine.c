@@ -14,22 +14,40 @@
 /** See @ref acs_procedure_engine_start. */
 int acs_procedure_engine_start(struct acs_procedure *proc, const struct acs_frame *frame)
 {
+	int result;
+
 	if (!proc || !proc->ops || !proc->ops->start || !frame) {
 		return -EINVAL;
 	}
 
 	proc->status = ACS_PROC_RUNNING;
-	return proc->ops->start(proc, frame);
+	result = proc->ops->start(proc, frame);
+	if (result == ACS_PROC_RES_COMPLETE) {
+		proc->status = ACS_PROC_COMPLETE;
+	} else if (result == ACS_PROC_STEP_WAIT_IND_CONFIRM) {
+		proc->status = ACS_PROC_WAIT_CONFIRM;
+	}
+
+	return result;
 }
 
 /** See @ref acs_procedure_engine_on_confirm. */
 int acs_procedure_engine_on_confirm(struct acs_procedure *proc)
 {
+	int result;
+
 	if (!proc || !proc->ops || !proc->ops->on_confirm) {
 		return -EINVAL;
 	}
 
-	return proc->ops->on_confirm(proc);
+	result = proc->ops->on_confirm(proc);
+	if (result == ACS_PROC_RES_COMPLETE) {
+		proc->status = ACS_PROC_COMPLETE;
+	} else if (result == ACS_PROC_STEP_WAIT_IND_CONFIRM) {
+		proc->status = ACS_PROC_WAIT_CONFIRM;
+	}
+
+	return result;
 }
 
 /** See @ref acs_procedure_engine_abort. */

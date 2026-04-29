@@ -48,6 +48,22 @@ struct acs_saved_record {
 
 static struct acs_saved_record acs_saved_records[CONFIG_BT_MAX_PAIRED];
 
+static bool acs_persist_client_nonce_matches_wire(const struct acs_persist_record *rec,
+						  const uint8_t *nonce, size_t nonce_len)
+{
+	if (!rec || !nonce || rec->client_nonce_fixed_len != nonce_len) {
+		return false;
+	}
+
+	for (size_t i = 0U; i < nonce_len; i++) {
+		if (rec->client_nonce_fixed[nonce_len - 1U - i] != nonce[i]) {
+			return false;
+		}
+	}
+
+	return true;
+}
+
 static void acs_persist_key_from_addr(const bt_addr_le_t *addr, char *key, size_t len)
 {
 	snprintk(key, len, "%02X%02X%02X%02X%02X%02X_%02X", addr->a.val[5], addr->a.val[4],
@@ -181,7 +197,9 @@ int acs_persist_save_conn(struct acs_conn_ctx *conn_ctx)
 		return -EINVAL;
 	}
 
-	if (!conn_ctx->kex.parent_key_valid && !conn_ctx->crypto.session_key_valid) {
+	if (!conn_ctx->kex.parent_key_valid && !conn_ctx->crypto.session_key_valid &&
+	    conn_ctx->crypto.client_nonce_fixed_len == 0U &&
+	    conn_ctx->crypto.server_nonce_fixed_len == 0U) {
 		return 0;
 	}
 
@@ -290,4 +308,58 @@ int acs_persist_delete_conn(struct bt_conn *conn)
 	}
 
 	return err;
+}
+
+int acs_persist_delete_all(void)
+{
+	int err = 0;
+
+	if (!IS_ENABLED(CONFIG_BT_SETTINGS)) {
+		return 0;
+	}
+
+	for (size_t i = 0U; i < ARRAY_SIZE(acs_saved_records); i++) {
+		struct acs_saved_record *slot = &acs_saved_records[i];
+		char key[sizeof(ACS_SETTINGS_ROOT) + 1U + ACS_SETTINGS_KEY_LEN];
+
+		if (!slot->used) {
+			continue;
+		}
+
+		snprintk(key, sizeof(key), "%s/", ACS_SETTINGS_ROOT);
+		acs_persist_key_from_addr(&slot->record.peer, key + strlen(key),
+					  sizeof(key) - strlen(key));
+		err = settings_delete(key);
+		if (err != 0) {
+			return err;
+		}
+
+		memset(slot, 0, sizeof(*slot));
+	}
+
+	return 0;
+}
+
+bool acs_persist_client_nonce_conflicts(struct bt_conn *exclude_conn, const uint8_t *nonce,
+					size_t nonce_len)
+{
+	const bt_addr_le_t *exclude_peer = exclude_conn ? bt_conn_get_dst(exclude_conn) : NULL;
+
+	for (size_t i = 0U; i < ARRAY_SIZE(acs_saved_records); i++) {
+		const struct acs_saved_record *slot = &acs_saved_records[i];
+
+		if (!slot->used) {
+			continue;
+		}
+
+		if (exclude_peer && bt_addr_le_eq(&slot->record.peer, exclude_peer)) {
+			continue;
+		}
+
+		if (acs_persist_client_nonce_matches_wire(&slot->record, nonce, nonce_len)) {
+			return true;
+		}
+	}
+
+	return false;
 }

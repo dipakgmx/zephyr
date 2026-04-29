@@ -21,7 +21,7 @@ static void acs_data_out_complete_cb(struct bt_conn *conn, const struct bt_gatt_
 {
 	struct acs_conn_ctx *conn_ctx;
 	struct acs_procedure *proc;
-	int step_result = ACS_PROC_RES_FAILED;
+	int step_result = -EIO;
 	int abort_err;
 
 	ARG_UNUSED(attr);
@@ -55,7 +55,7 @@ static void acs_data_out_complete_cb(struct bt_conn *conn, const struct bt_gatt_
 
 			abort_err = acs_cp_domain_send_response_code(proc, BT_ACS_CP_OPCODE_ABORT,
 								     0x01U);
-			if (abort_err == ACS_PROC_RES_WAIT_CONFIRM) {
+			if (abort_err == ACS_PROC_STEP_WAIT_IND_CONFIRM) {
 				return;
 			}
 
@@ -68,12 +68,12 @@ static void acs_data_out_complete_cb(struct bt_conn *conn, const struct bt_gatt_
 		}
 
 		step_result = acs_procedure_engine_on_confirm(proc);
-		if (step_result != ACS_PROC_RES_WAIT_CONFIRM && step_result < 0) {
+		if (step_result != ACS_PROC_STEP_WAIT_IND_CONFIRM && step_result < 0) {
 			acs_procedure_engine_abort(proc, step_result);
 		}
 	}
 
-	if (step_result != ACS_PROC_RES_WAIT_CONFIRM) {
+	if (step_result != ACS_PROC_STEP_WAIT_IND_CONFIRM) {
 		k_work_submit(&conn_ctx->cp_complete_work);
 	}
 }
@@ -209,8 +209,7 @@ int acs_data_out_channel_send(struct acs_procedure *proc, struct acs_reply *repl
 			return err;
 		}
 		proc->pending_reply = *reply;
-		proc->status = ACS_PROC_WAIT_CONFIRM;
-		return ACS_PROC_RES_WAIT_CONFIRM;
+		return ACS_PROC_STEP_WAIT_IND_CONFIRM;
 	case ACS_REPLY_DON:
 		if (!IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_NOTIFICATION) &&
 		    !IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_READ)) {
@@ -240,7 +239,6 @@ int acs_data_out_channel_send(struct acs_procedure *proc, struct acs_reply *repl
 			return err;
 		}
 		proc->pending_reply = *reply;
-		proc->status = ACS_PROC_COMPLETE;
 		return ACS_PROC_RES_COMPLETE;
 	case ACS_REPLY_DOI:
 		if (!IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION)) {
@@ -268,8 +266,7 @@ int acs_data_out_channel_send(struct acs_procedure *proc, struct acs_reply *repl
 			return err;
 		}
 		proc->pending_reply = *reply;
-		proc->status = ACS_PROC_WAIT_CONFIRM;
-		return ACS_PROC_RES_WAIT_CONFIRM;
+		return ACS_PROC_STEP_WAIT_IND_CONFIRM;
 	case ACS_REPLY_STATUS:
 	default:
 		LOG_WRN("ACS send rejected: unsupported reply channel %d", reply->channel);

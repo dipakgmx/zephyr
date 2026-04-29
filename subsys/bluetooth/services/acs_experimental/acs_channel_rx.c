@@ -110,8 +110,8 @@ static int acs_channel_reassemble(struct bt_conn *conn, struct acs_seg_rx_ctx *r
 	}
 
 	res = acs_seg_rx_process(rx, buf, len);
-	if (res == ACS_SEG_RX_FRAGMENT) {
-		return ACS_SEG_RX_FRAGMENT;
+	if (res == ACS_SEG_RX_PENDING) {
+		return ACS_SEG_RX_PENDING;
 	}
 
 	if (res != ACS_SEG_RX_COMPLETE) {

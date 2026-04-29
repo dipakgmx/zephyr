@@ -159,7 +159,7 @@ static ssize_t acs_data_in_write(struct bt_conn *conn, const struct bt_gatt_attr
 
 	LOG_DBG("ACS Data In write: len=%u flags=0x%02x", len, flags);
 	err = acs_runtime_handle_data_in(conn, buf, len);
-	if (err == ACS_PROC_RES_WAIT_CONFIRM) {
+	if (err == ACS_PROC_STEP_WAIT_IND_CONFIRM) {
 		LOG_WRN("ACS Data In accepted: waiting for confirm-driven completion");
 		return len;
 	}
@@ -188,7 +188,7 @@ static ssize_t acs_cp_write(struct bt_conn *conn, const struct bt_gatt_attr *att
 	LOG_DBG("ACS CP write: len=%u flags=0x%02x opcode=0x%02x", len, flags,
 		len > 0U ? ((const uint8_t *)buf)[0] : 0U);
 	err = acs_runtime_handle_cp_write(conn, buf, len);
-	if (err == ACS_PROC_RES_WAIT_CONFIRM) {
+	if (err == ACS_PROC_STEP_WAIT_IND_CONFIRM) {
 		LOG_DBG("ACS CP accepted: waiting for confirm-driven completion");
 		return len;
 	}

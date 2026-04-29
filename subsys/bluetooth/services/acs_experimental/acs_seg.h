@@ -37,16 +37,12 @@ extern "C" {
  */
 enum acs_seg_rx_result {
 	ACS_SEG_RX_COMPLETE = 0,
-	ACS_SEG_RX_FRAGMENT = 1,
-	/*
-	 * Keep segmentation-private failures in their own range so they do not
-	 * collide with generic -errno values returned by higher layers.
-	 */
-	ACS_SEG_RX_ERR_COUNTER = -1001,
-	ACS_SEG_RX_ERR_OVERFLOW = -1002,
-	ACS_SEG_RX_ERR_ORPHAN = -1003,
-	ACS_SEG_RX_ERR_LEN = -1004,
-	ACS_SEG_RX_ERR_TIMEOUT = -1005,
+	ACS_SEG_RX_PENDING,
+	ACS_SEG_RX_ERR_COUNTER,
+	ACS_SEG_RX_ERR_OVERFLOW,
+	ACS_SEG_RX_ERR_ORPHAN,
+	ACS_SEG_RX_ERR_LEN,
+	ACS_SEG_RX_ERR_TIMEOUT,
 };
 
 /**

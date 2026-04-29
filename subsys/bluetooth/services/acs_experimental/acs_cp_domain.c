@@ -21,23 +21,147 @@
 
 LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
 
-/* ACS Feature Response operand wire layout (Table 4.59). */
+/**
+ * @brief ACS Feature Response wire structure (Table 4.59).
+ *
+ * Packed wire layout returned in the Feature Response operand. All multi-byte
+ * fields are little-endian on the wire.
+ */
 struct acs_feature_rsp {
+	/** Feature bits (Table 4.60). */
 	uint32_t features;
+	/** Protection methods (Table 4.61). */
 	uint16_t protection_methods;
+	/** OOB key exchange capabilities (Table 4.62). */
 	uint16_t oob_key_exchange_capabilities;
+	/** Static OOB number capabilities. */
 	uint16_t confirmation_static_oob_number_capabilities;
+	/** Input OOB number maximum value. */
 	uint32_t confirmation_input_oob_number_max_value;
+	/** Input OOB number capabilities (Table 4.63). */
 	uint16_t confirmation_input_oob_number_capabilities;
+	/** Output OOB number maximum value. */
 	uint32_t confirmation_output_oob_number_max_value;
+	/** Output OOB number capabilities (Table 4.64). */
 	uint16_t confirmation_output_oob_number_capabilities;
 } __packed;
 
+/**
+ * @brief Wire-format operand of the START_KEY_EXCHANGE opcode.
+ *
+ * This is the full ACS CP payload for START_KEY_EXCHANGE, including the opcode
+ * octet followed by the fixed-size operand fields.
+ */
 struct acs_cp_start_key_exchange_req {
-	uint16_t key_id;
+	/** CP opcode: @ref BT_ACS_CP_OPCODE_START_KEY_EXCHANGE. */
+	uint8_t opcode;
+	/** Key identifier in little-endian wire order. */
+	uint8_t key_id_le[2];
+	/** Selected confirmation method (Table 4.50). */
 	uint8_t confirmation_method;
+	/** Selected confirmation action associated with the method. */
 	uint8_t confirmation_action;
 } __packed;
+
+/**
+ * @brief Wire-format operand of GET_RESTRICTION_MAP_DESCRIPTOR.
+ *
+ * Carries a restriction-map identifier plus an optional resource-handle filter.
+ * A filter value of `0xFFFF` means "no specific handle filter".
+ */
+struct acs_cp_map_filter_req {
+	/** CP opcode: @ref BT_ACS_CP_OPCODE_GET_RESTRICTION_MAP_DESCRIPTOR. */
+	uint8_t opcode;
+	/** Restriction Map ID in little-endian wire order. */
+	uint8_t map_id_le[2];
+	/** Resource-handle filter in little-endian wire order. */
+	uint8_t filter_handle_le[2];
+} __packed;
+
+/**
+ * @brief Generic wire-format operand carrying only a map identifier.
+ *
+ * Used by CP procedures whose fixed operand is just `Map_ID`.
+ */
+struct acs_cp_map_id_req {
+	/** CP opcode selecting the specific map-based procedure. */
+	uint8_t opcode;
+	/** Map identifier in little-endian wire order. */
+	uint8_t map_id_le[2];
+} __packed;
+
+/**
+ * @brief Generic wire-format operand carrying only a key identifier.
+ *
+ * Used by fixed-layout key-oriented procedures such as GET_KEY_DESCRIPTOR,
+ * KEY_EXCHANGE_KDF, INVALIDATE_KEY, and GET_KEY_URI.
+ */
+struct acs_cp_key_id_req {
+	/** CP opcode selecting the specific key-based procedure. */
+	uint8_t opcode;
+	/** Key identifier in little-endian wire order. */
+	uint8_t key_id_le[2];
+} __packed;
+
+/**
+ * @brief Generic wire-format operand carrying only a resource handle.
+ *
+ * Used by procedures that look up UUID information for a single ACS resource
+ * handle.
+ */
+struct acs_cp_handle_req {
+	/** CP opcode selecting the specific handle-based procedure. */
+	uint8_t opcode;
+	/** Resource handle in little-endian wire order. */
+	uint8_t handle_le[2];
+} __packed;
+
+/**
+ * @brief Wire-format operand of GET_INFORMATION_SECURITY_CONFIGURATION_DESCRIPTOR.
+ *
+ * Carries an Information Security Configuration ID filter. A value of `0xFFFF`
+ * means "report all available ISC records".
+ */
+struct acs_cp_isc_filter_req {
+	/** CP opcode: @ref BT_ACS_CP_OPCODE_GET_INFORMATION_SECURITY_CONFIGURATION_DESCRIPTOR. */
+	uint8_t opcode;
+	/** ISC identifier filter in little-endian wire order. */
+	uint8_t isc_id_filter_le[2];
+} __packed;
+
+/**
+ * @brief Wire-format operand of SET_SECURITY_CONTROLS_SWITCH.
+ *
+ * Only the least significant bit of @ref switch_state is currently interpreted
+ * by the implementation.
+ */
+struct acs_cp_switch_req {
+	/** CP opcode: @ref BT_ACS_CP_OPCODE_SET_SECURITY_CONTROLS_SWITCH. */
+	uint8_t opcode;
+	/** Requested switch state; bit 0 controls enabled/disabled. */
+	uint8_t switch_state;
+} __packed;
+
+/**
+ * @brief Wire-format operand of SET_CLIENT_NONCE_FIXED.
+ *
+ * This struct models the fixed header only. The nonce bytes follow immediately
+ * after the header and have a compile-time length determined by
+ * `CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE`.
+ */
+struct acs_cp_set_client_nonce_fixed_req {
+	/** CP opcode: @ref BT_ACS_CP_OPCODE_SET_CLIENT_NONCE_FIXED. */
+	uint8_t opcode;
+	/** Key identifier in little-endian wire order. */
+	uint8_t key_id_le[2];
+	/** Flexible-array view of the nonce bytes that follow the fixed header. */
+	uint8_t nonce[];
+} __packed;
+
+static uint16_t acs_cp_wire_get_le16(const uint8_t le[2])
+{
+	return sys_get_le16(le);
+}
 
 enum acs_cp_response_code {
 	ACS_CP_RESPONSE_SUCCESS = 0x01,
@@ -49,6 +173,7 @@ enum acs_cp_response_code {
 	ACS_CP_RESPONSE_ABORT_UNSUCCESSFUL = 0x07,
 	ACS_CP_RESPONSE_NO_RECORDS_FOUND = 0x08,
 	ACS_CP_RESPONSE_INVALID_KEY_EXCHANGE_CONFIRMATION_CODE = 0x09,
+	ACS_CP_RESPONSE_INVALID_PUBLIC_KEY = 0x0A,
 };
 
 enum acs_key_exchange_result_code {
@@ -62,6 +187,14 @@ enum acs_rmap_record_type {
 	ACS_RMAP_RECORD_PROTECTED_CHARACTERISTIC = 0x02,
 	ACS_RMAP_RECORD_PROTECTED_CP = 0x03,
 };
+
+#define ACS_RMAP_FILTER_ALL 0xFFFFU
+#define ACS_KEY_DESC_FILTER_ALL 0xFFFFU
+#define ACS_ISC_RECORD_TYPE_ID 0x00U
+#define ACS_ISC_ALL_RECORDS_FILTER 0xFFFFU
+#define ACS_RHANDLE_ATTR_PRIMARY_SVC 0x00U
+#define ACS_RHANDLE_ATTR_SECONDARY_SVC 0x01U
+#define ACS_RHANDLE_ATTR_CHAR_VALUE 0x02U
 
 enum acs_isc_control_type {
 	ACS_ISC_CTRL_NONCE = 0x00,
@@ -325,13 +458,31 @@ static uint8_t acs_cp_status_from_errno(int err)
 	}
 }
 
-static uint16_t acs_cp_current_key_id(const struct acs_conn_ctx *conn_ctx)
+static bool acs_cp_map_requires_secure_transport(const struct bt_acs_restriction_map *map)
 {
-	if (!conn_ctx || !acs_crypto_has_session(&conn_ctx->crypto)) {
+	return map && map->map_isc_id != BT_ACS_ISC_ID_NONE;
+}
+
+static uint8_t acs_cp_append_current_key_ids(struct net_buf *buf,
+					     const struct acs_conn_ctx *conn_ctx)
+{
+	uint8_t count = 0U;
+
+	if (!buf || !conn_ctx) {
 		return 0U;
 	}
 
-	return conn_ctx->crypto.active_key_id;
+	if (conn_ctx->kex.parent_key_valid) {
+		net_buf_add_le16(buf, ACS_KEY_ID_ECDH);
+		count++;
+	}
+
+	if (conn_ctx->kex.session_key_valid) {
+		net_buf_add_le16(buf, ACS_KEY_ID_KDF);
+		count++;
+	}
+
+	return count;
 }
 
 static int acs_cp_send_payload(struct acs_procedure *proc, uint8_t rsp_opcode, struct net_buf *buf)
@@ -413,7 +564,7 @@ static const struct bt_acs_restriction_map *acs_cp_find_map(uint16_t map_id)
 
 static bool acs_cp_filter_matches(uint16_t filter_handle, uint16_t resource_handle)
 {
-	return filter_handle == 0xFFFFU || filter_handle == resource_handle;
+	return filter_handle == ACS_RMAP_FILTER_ALL || filter_handle == resource_handle;
 }
 
 static int acs_cp_append_mapping_record(struct net_buf *buf, uint8_t record_type,
@@ -529,7 +680,7 @@ static int acs_cp_append_isc_descriptor(struct net_buf *buf)
 		return -ENOMEM;
 	}
 
-	net_buf_add_u8(buf, 0x00);
+	net_buf_add_u8(buf, ACS_ISC_RECORD_TYPE_ID);
 	net_buf_add_le16(buf, BT_ACS_ISC_ID_DEFAULT);
 	size_ptr = net_buf_add(buf, 1);
 	size_ptr[0] = 0U;
@@ -637,6 +788,19 @@ static uint16_t acs_cp_algorithm_parent_key_id(void)
 	return IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF) ? ACS_KEY_ID_KDF : ACS_KEY_ID_ECDH;
 }
 
+static bool acs_cp_algorithm_supports_client_fixed_nonce(uint16_t key_id)
+{
+	if (key_id != acs_cp_algorithm_key_id()) {
+		return false;
+	}
+
+	if (acs_cp_algorithm_type() == ACS_KEY_REC_AES_CCM) {
+		return IS_ENABLED(CONFIG_BT_ACS_CCM_NONCE_SEQ_DIFF_FIXED);
+	}
+
+	return IS_ENABLED(CONFIG_BT_ACS_HAS_NONCE_FIXED);
+}
+
 static uint8_t acs_cp_ccm_mac_size(void)
 {
 #if defined(CONFIG_BT_ACS_CCM_MAC_SIZE)
@@ -671,7 +835,7 @@ static int acs_cp_append_key_descriptor(struct net_buf *buf, uint16_t filter_id)
 	const uint16_t algo_parent = acs_cp_algorithm_parent_key_id();
 	uint8_t algo_data_size;
 
-	if ((filter_id == 0xFFFFU || filter_id == ACS_KEY_ID_ECDH) &&
+	if ((filter_id == ACS_KEY_DESC_FILTER_ALL || filter_id == ACS_KEY_ID_ECDH) &&
 	    IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_ECDH)) {
 		if (acs_cp_append_key_record_header(buf, ACS_KEY_REC_ECDH, ACS_KEY_ID_ECDH, 4U) != 0) {
 			return -ENOMEM;
@@ -683,7 +847,7 @@ static int acs_cp_append_key_descriptor(struct net_buf *buf, uint16_t filter_id)
 		net_buf_add_u8(buf, kdf_id);
 	}
 
-	if ((filter_id == 0xFFFFU || filter_id == ACS_KEY_ID_KDF) &&
+	if ((filter_id == ACS_KEY_DESC_FILTER_ALL || filter_id == ACS_KEY_ID_KDF) &&
 	    IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)) {
 		if (acs_cp_append_key_record_header(buf, ACS_KEY_REC_KDF, ACS_KEY_ID_KDF, 3U) != 0) {
 			return -ENOMEM;
@@ -693,7 +857,7 @@ static int acs_cp_append_key_descriptor(struct net_buf *buf, uint16_t filter_id)
 		net_buf_add_u8(buf, kdf_id);
 	}
 
-	if (filter_id != 0xFFFFU && filter_id != algo_key_id) {
+	if (filter_id != ACS_KEY_DESC_FILTER_ALL && filter_id != algo_key_id) {
 		return 0;
 	}
 
@@ -793,7 +957,7 @@ static uint8_t acs_cp_uuid_map_walk_cb(const struct bt_gatt_attr *attr, uint16_t
 			return BT_GATT_ITER_STOP;
 		}
 
-		net_buf_add_u8(ctx->buf, 0x00);
+			net_buf_add_u8(ctx->buf, ACS_RHANDLE_ATTR_PRIMARY_SVC);
 		net_buf_add_le16(ctx->buf, handle);
 		if (!acs_cp_uuid_to_wire(svc_uuid, ctx->buf)) {
 			ctx->failed = true;
@@ -930,9 +1094,13 @@ static int acs_cp_send_rmap_descriptor_response(struct acs_procedure *proc, uint
 				   buf);
 }
 
-static int acs_cp_send_isc_descriptor_response(struct acs_procedure *proc)
+static int acs_cp_send_isc_descriptor_response(struct acs_procedure *proc, uint16_t filter_id)
 {
 	struct net_buf *buf = acs_channel_buf_alloc();
+
+	if (filter_id != ACS_ISC_ALL_RECORDS_FILTER && filter_id != BT_ACS_ISC_ID_DEFAULT) {
+		return -ENOENT;
+	}
 
 	if (!buf) {
 		return -ENOMEM;
@@ -977,18 +1145,17 @@ static int acs_cp_all_active_on_confirm(struct acs_procedure *proc)
 	switch (proc->step) {
 	case ACS_ALL_ACTIVE_STEP_RMAP:
 		proc->step = ACS_ALL_ACTIVE_STEP_ISC;
-		return acs_cp_send_isc_descriptor_response(proc);
+		return acs_cp_send_isc_descriptor_response(proc, ACS_ISC_ALL_RECORDS_FILTER);
 	case ACS_ALL_ACTIVE_STEP_ISC:
 		proc->step = ACS_ALL_ACTIVE_STEP_KEY;
-		return acs_cp_send_key_descriptor_response(proc, 0xFFFFU);
+		return acs_cp_send_key_descriptor_response(proc, ACS_KEY_DESC_FILTER_ALL);
 	case ACS_ALL_ACTIVE_STEP_KEY:
 		proc->step = ACS_ALL_ACTIVE_STEP_DONE;
 		return acs_cp_send_response_code(proc, BT_ACS_CP_OPCODE_GET_ALL_ACTIVE_DESCRIPTORS,
 						 ACS_CP_RESPONSE_SUCCESS);
-	case ACS_ALL_ACTIVE_STEP_DONE:
-		LOG_DBG("ACS CP GET_ALL_ACTIVE_DESCRIPTORS complete for map 0x%04x", map_id);
-		proc->status = ACS_PROC_COMPLETE;
-		return ACS_PROC_RES_COMPLETE;
+		case ACS_ALL_ACTIVE_STEP_DONE:
+			LOG_DBG("ACS CP GET_ALL_ACTIVE_DESCRIPTORS complete for map 0x%04x", map_id);
+			return ACS_PROC_RES_COMPLETE;
 	default:
 		return -EINVAL;
 	}
@@ -996,16 +1163,21 @@ static int acs_cp_all_active_on_confirm(struct acs_procedure *proc)
 
 static int acs_cp_kex_final_on_confirm(struct acs_procedure *proc)
 {
-	uint16_t key_id = (uint16_t)(uintptr_t)proc->state;
+	uint16_t key_id;
+
+	if (proc->state_kind != ACS_PROC_STATE_KEX_FINAL) {
+		return -EINVAL;
+	}
+
+	key_id = proc->state.key_id;
 
 	switch (proc->step) {
 	case 0:
 		proc->step = 1;
 		return acs_cp_send_key_exchange_result(proc, key_id,
 						       ACS_KEY_EXCHANGE_RESULT_SUCCESSFUL);
-	case 1:
-		proc->status = ACS_PROC_COMPLETE;
-		return ACS_PROC_RES_COMPLETE;
+		case 1:
+			return ACS_PROC_RES_COMPLETE;
 	default:
 		return -EINVAL;
 	}
@@ -1092,6 +1264,7 @@ static int acs_cp_handle_get_restriction_map_id_list(struct acs_procedure *proc,
 static int acs_cp_handle_get_restriction_map_descriptor(struct acs_procedure *proc,
 							const struct acs_frame *frame)
 {
+	const struct acs_cp_map_filter_req *req;
 	const struct bt_acs_restriction_map *map;
 	struct net_buf *buf;
 	uint16_t map_id;
@@ -1106,22 +1279,32 @@ static int acs_cp_handle_get_restriction_map_descriptor(struct acs_procedure *pr
 			ACS_CP_RESPONSE_OPCODE_NOT_SUPPORTED);
 	}
 
-	if (frame->payload_len != 5U) {
-		LOG_WRN("ACS CP GET_RESTRICTION_MAP_DESCRIPTOR invalid operand len=%u",
+	if (frame->payload_len != sizeof(*req)) {
+		LOG_WRN("invalid operand len=%u",
 			frame->payload_len);
 		return acs_cp_send_response_code(proc,
 						 BT_ACS_CP_OPCODE_GET_RESTRICTION_MAP_DESCRIPTOR,
 						 ACS_CP_RESPONSE_INVALID_OPERAND);
 	}
 
-	map_id = sys_get_le16(&frame->payload[1]);
-	filter_handle = sys_get_le16(&frame->payload[3]);
+	req = (const void *)frame->payload;
+	map_id = acs_cp_wire_get_le16(req->map_id_le);
+	filter_handle = acs_cp_wire_get_le16(req->filter_handle_le);
 	map = acs_cp_find_map(map_id);
 	if (!map) {
-		LOG_WRN("ACS CP GET_RESTRICTION_MAP_DESCRIPTOR unknown map_id=0x%04x", map_id);
+		LOG_WRN("unknown map_id=0x%04x", map_id);
 		return acs_cp_send_response_code(
 			proc, BT_ACS_CP_OPCODE_GET_RESTRICTION_MAP_DESCRIPTOR,
 			ACS_CP_RESPONSE_PARAMETER_OUT_OF_RANGE);
+	}
+
+	if (acs_cp_map_requires_secure_transport(map) &&
+	    (proc->flags & ACS_PROC_FLAG_SECURE_TRANSPORT) == 0U) {
+		LOG_WRN("ACS CP GET_RESTRICTION_MAP_DESCRIPTOR requires secure transport for map_id=0x%04x",
+			map_id);
+		return acs_cp_send_response_code(
+			proc, BT_ACS_CP_OPCODE_GET_RESTRICTION_MAP_DESCRIPTOR,
+			ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE);
 	}
 
 	buf = acs_channel_buf_alloc();
@@ -1159,6 +1342,7 @@ static int acs_cp_handle_get_restriction_map_descriptor(struct acs_procedure *pr
 static int acs_cp_handle_activate_restriction_map(struct acs_procedure *proc,
 						  const struct acs_frame *frame)
 {
+	const struct acs_cp_map_id_req *req;
 	uint16_t map_id;
 	int err;
 
@@ -1167,19 +1351,33 @@ static int acs_cp_handle_activate_restriction_map(struct acs_procedure *proc,
 						 ACS_CP_RESPONSE_OPCODE_NOT_SUPPORTED);
 	}
 
-	if (frame->payload_len != 3U) {
+	if (frame->payload_len != sizeof(*req)) {
 		LOG_WRN("ACS CP ACTIVATE_RESTRICTION_MAP invalid operand len=%u", frame->payload_len);
 		return acs_cp_send_response_code(proc, BT_ACS_CP_OPCODE_ACTIVATE_RESTRICTION_MAP,
 						 ACS_CP_RESPONSE_INVALID_OPERAND);
 	}
 
-	map_id = sys_get_le16(&frame->payload[1]);
-	err = bt_acs_set_restriction_map(proc->conn, map_id);
-	if (err == -ENOENT) {
-		LOG_WRN("ACS CP ACTIVATE_RESTRICTION_MAP unknown map_id=0x%04x", map_id);
-		return acs_cp_send_response_code(proc, BT_ACS_CP_OPCODE_ACTIVATE_RESTRICTION_MAP,
-						 ACS_CP_RESPONSE_PARAMETER_OUT_OF_RANGE);
+	req = (const void *)frame->payload;
+	map_id = acs_cp_wire_get_le16(req->map_id_le);
+	{
+		const struct bt_acs_restriction_map *map = acs_cp_find_map(map_id);
+
+		if (!map) {
+			LOG_WRN("ACS CP ACTIVATE_RESTRICTION_MAP unknown map_id=0x%04x", map_id);
+			return acs_cp_send_response_code(proc, BT_ACS_CP_OPCODE_ACTIVATE_RESTRICTION_MAP,
+							 ACS_CP_RESPONSE_PARAMETER_OUT_OF_RANGE);
+		}
+
+		if (acs_cp_map_requires_secure_transport(map) &&
+		    (proc->flags & ACS_PROC_FLAG_SECURE_TRANSPORT) == 0U) {
+			LOG_WRN("ACS CP ACTIVATE_RESTRICTION_MAP requires secure transport for map_id=0x%04x",
+				map_id);
+			return acs_cp_send_response_code(proc, BT_ACS_CP_OPCODE_ACTIVATE_RESTRICTION_MAP,
+							 ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE);
+		}
 	}
+
+	err = bt_acs_set_restriction_map(proc->conn, map_id);
 	if (err) {
 		LOG_WRN("ACS CP ACTIVATE_RESTRICTION_MAP failed: %d", err);
 		return acs_cp_send_response_code(proc, BT_ACS_CP_OPCODE_ACTIVATE_RESTRICTION_MAP,
@@ -1194,13 +1392,17 @@ static int acs_cp_handle_activate_restriction_map(struct acs_procedure *proc,
 static int acs_cp_handle_get_information_security_configuration_descriptor(
 	struct acs_procedure *proc, const struct acs_frame *frame)
 {
+	const struct acs_cp_isc_filter_req *req;
+	uint16_t filter_id;
+	int err;
+
 	if (!IS_ENABLED(CONFIG_BT_ACS_DESCRIPTORS)) {
 		return acs_cp_send_response_code(
 			proc, BT_ACS_CP_OPCODE_GET_INFORMATION_SECURITY_CONFIGURATION_DESCRIPTOR,
 			ACS_CP_RESPONSE_OPCODE_NOT_SUPPORTED);
 	}
 
-	if (frame->payload_len != 1U) {
+	if (frame->payload_len != sizeof(*req)) {
 		LOG_WRN("ACS CP GET_INFORMATION_SECURITY_CONFIGURATION_DESCRIPTOR invalid operand len=%u",
 			frame->payload_len);
 		return acs_cp_send_response_code(
@@ -1208,22 +1410,40 @@ static int acs_cp_handle_get_information_security_configuration_descriptor(
 			ACS_CP_RESPONSE_INVALID_OPERAND);
 	}
 
-	return acs_cp_send_isc_descriptor_response(proc);
+	req = (const void *)frame->payload;
+	filter_id = acs_cp_wire_get_le16(req->isc_id_filter_le);
+	err = acs_cp_send_isc_descriptor_response(proc, filter_id);
+	if (err == -ENOENT) {
+		LOG_WRN("ACS CP GET_INFORMATION_SECURITY_CONFIGURATION_DESCRIPTOR no records for filter=0x%04x",
+			filter_id);
+		return acs_cp_send_response_code(
+			proc, BT_ACS_CP_OPCODE_GET_INFORMATION_SECURITY_CONFIGURATION_DESCRIPTOR,
+			ACS_CP_RESPONSE_NO_RECORDS_FOUND);
+	}
+	if (err == -ENOMEM) {
+		return acs_cp_send_response_code(
+			proc, BT_ACS_CP_OPCODE_GET_INFORMATION_SECURITY_CONFIGURATION_DESCRIPTOR,
+			ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
+	}
+
+	return err;
 }
 
 static int acs_cp_handle_get_key_descriptor(struct acs_procedure *proc,
 					    const struct acs_frame *frame)
 {
+	const struct acs_cp_key_id_req *req;
 	uint16_t filter_id;
 	int err;
 
-	if (frame->payload_len != 3U) {
+	if (frame->payload_len != sizeof(*req)) {
 		LOG_WRN("ACS CP GET_KEY_DESCRIPTOR invalid operand len=%u", frame->payload_len);
 		return acs_cp_send_response_code(proc, BT_ACS_CP_OPCODE_GET_KEY_DESCRIPTOR,
 						 ACS_CP_RESPONSE_INVALID_OPERAND);
 	}
 
-	filter_id = sys_get_le16(&frame->payload[1]);
+	req = (const void *)frame->payload;
+	filter_id = acs_cp_wire_get_le16(req->key_id_le);
 	err = acs_cp_send_key_descriptor_response(proc, filter_id);
 	if (err == -ENOMEM) {
 		return acs_cp_send_response_code(proc, BT_ACS_CP_OPCODE_GET_KEY_DESCRIPTOR,
@@ -1242,7 +1462,7 @@ static int acs_cp_handle_get_current_key_list(struct acs_procedure *proc,
 {
 	struct acs_conn_ctx *conn_ctx;
 	struct net_buf *buf;
-	uint16_t key_id;
+	uint8_t key_count;
 
 	if (frame->payload_len != 1U) {
 		LOG_WRN("ACS CP GET_CURRENT_KEY_LIST invalid operand len=%u", frame->payload_len);
@@ -1263,17 +1483,14 @@ static int acs_cp_handle_get_current_key_list(struct acs_procedure *proc,
 	}
 
 	net_buf_add_u8(buf, 0U);
-	key_id = acs_cp_current_key_id(conn_ctx);
-	if (key_id != 0U) {
-		if (net_buf_tailroom(buf) < sizeof(uint16_t)) {
-			acs_channel_buf_free(buf);
-			return acs_cp_send_response_code(proc, BT_ACS_CP_OPCODE_GET_CURRENT_KEY_LIST,
-							 ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
-		}
-
-		net_buf_add_le16(buf, key_id);
-		buf->data[0] = 1U;
+	if (net_buf_tailroom(buf) < (2U * sizeof(uint16_t))) {
+		acs_channel_buf_free(buf);
+		return acs_cp_send_response_code(proc, BT_ACS_CP_OPCODE_GET_CURRENT_KEY_LIST,
+						 ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 	}
+
+	key_count = acs_cp_append_current_key_ids(buf, conn_ctx);
+	buf->data[0] = key_count;
 
 	return acs_cp_send_payload(proc, BT_ACS_CP_OPCODE_CURRENT_KEY_LIST_RESPONSE, buf);
 }
@@ -1282,10 +1499,10 @@ static int acs_cp_handle_start_key_exchange(struct acs_procedure *proc,
 					    const struct acs_frame *frame)
 {
 	struct acs_conn_ctx *conn_ctx;
-	struct acs_cp_start_key_exchange_req req;
+	const struct acs_cp_start_key_exchange_req *req;
 	int err;
 
-	if (frame->payload_len != 1U + sizeof(req)) {
+	if (frame->payload_len != sizeof(*req)) {
 		LOG_WRN("ACS CP START_KEY_EXCHANGE invalid operand len=%u", frame->payload_len);
 		return acs_cp_send_response_code(proc, BT_ACS_CP_OPCODE_START_KEY_EXCHANGE,
 						 ACS_CP_RESPONSE_INVALID_OPERAND);
@@ -1297,11 +1514,16 @@ static int acs_cp_handle_start_key_exchange(struct acs_procedure *proc,
 						 ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 	}
 
-	memcpy(&req, &frame->payload[1], sizeof(req));
-	err = acs_kex_start(conn_ctx, sys_le16_to_cpu(req.key_id), req.confirmation_method,
-			    req.confirmation_action);
+	req = (const void *)frame->payload;
+	err = acs_kex_start(conn_ctx, acs_cp_wire_get_le16(req->key_id_le),
+			    req->confirmation_method, req->confirmation_action);
 	if (err) {
 		LOG_WRN("ACS CP START_KEY_EXCHANGE rejected: %d", err);
+		if (err == -ENOENT || err == -EALREADY || err == -EAGAIN) {
+			return acs_cp_send_response_code(
+				proc, BT_ACS_CP_OPCODE_START_KEY_EXCHANGE,
+				ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE);
+		}
 		return acs_cp_send_response_code(proc, BT_ACS_CP_OPCODE_START_KEY_EXCHANGE,
 						 acs_cp_status_from_errno(err));
 	}
@@ -1364,6 +1586,11 @@ static int acs_cp_handle_key_exchange_ecdh(struct acs_procedure *proc, const str
 
 	err = acs_kex_build_ecdh_response(conn_ctx, ACS_KEY_ID_ECDH, &frame->payload[1],
 					  frame->payload_len - 1U, buf);
+	if (err == ACS_KEX_ERR_INVALID_PUBLIC_KEY) {
+		acs_channel_buf_free(buf);
+		return acs_cp_send_response_code(proc, BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH,
+						 ACS_CP_RESPONSE_INVALID_PUBLIC_KEY);
+	}
 	if (err == -EINVAL) {
 		acs_channel_buf_free(buf);
 		return acs_cp_send_response_code(proc, BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH,
@@ -1385,13 +1612,14 @@ static int acs_cp_handle_key_exchange_ecdh(struct acs_procedure *proc, const str
 
 static int acs_cp_handle_key_exchange_kdf(struct acs_procedure *proc, const struct acs_frame *frame)
 {
+	const struct acs_cp_key_id_req *req;
 	struct acs_conn_ctx *conn_ctx = acs_runtime_lookup_conn(proc->conn);
 	struct net_buf *buf;
 	uint16_t key_id;
 	bool send_final = false;
 	int err;
 
-	if (frame->payload_len != 3U) {
+	if (frame->payload_len != sizeof(*req)) {
 		return acs_cp_send_response_code(proc, BT_ACS_CP_OPCODE_KEY_EXCHANGE_KDF,
 						 ACS_CP_RESPONSE_INVALID_OPERAND);
 	}
@@ -1404,7 +1632,8 @@ static int acs_cp_handle_key_exchange_kdf(struct acs_procedure *proc, const stru
 						 ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE);
 	}
 
-	key_id = sys_get_le16(&frame->payload[1]);
+	req = (const void *)frame->payload;
+	key_id = acs_cp_wire_get_le16(req->key_id_le);
 	buf = acs_channel_buf_alloc();
 	if (!buf) {
 		return acs_cp_send_response_code(proc, BT_ACS_CP_OPCODE_KEY_EXCHANGE_KDF,
@@ -1437,7 +1666,8 @@ static int acs_cp_handle_key_exchange_kdf(struct acs_procedure *proc, const stru
 							 ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 		}
 		proc->ops = &acs_cp_kex_final_ops;
-		proc->state = (void *)(uintptr_t)key_id;
+		proc->state_kind = ACS_PROC_STATE_KEX_FINAL;
+		proc->state.key_id = key_id;
 		proc->step = 0U;
 	}
 
@@ -1541,7 +1771,8 @@ static int acs_cp_handle_ecdh_confirm_rand(struct acs_procedure *proc, const str
 
 	if (send_final) {
 		proc->ops = &acs_cp_kex_final_ops;
-		proc->state = (void *)(uintptr_t)ACS_KEY_ID_ECDH;
+		proc->state_kind = ACS_PROC_STATE_KEX_FINAL;
+		proc->state.key_id = ACS_KEY_ID_ECDH;
 		proc->step = 0U;
 	}
 
@@ -1560,8 +1791,8 @@ static int acs_cp_handle_invalidate_all_established_security(struct acs_procedur
 						 ACS_CP_RESPONSE_INVALID_OPERAND);
 	}
 
-	err = bt_acs_invalidate_security(proc->conn);
-	if (err && err != -ENOTCONN) {
+	err = acs_runtime_invalidate_all_security();
+	if (err) {
 		return acs_cp_send_response_code(proc,
 						 BT_ACS_CP_OPCODE_INVALIDATE_ALL_ESTABLISHED_SECURITY,
 						 ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
@@ -1574,29 +1805,27 @@ static int acs_cp_handle_invalidate_all_established_security(struct acs_procedur
 
 static int acs_cp_handle_invalidate_key(struct acs_procedure *proc, const struct acs_frame *frame)
 {
-	struct acs_conn_ctx *conn_ctx;
+	const struct acs_cp_key_id_req *req;
 	uint16_t key_id;
 	int err;
 
-	if (frame->payload_len != 3U) {
+	if (frame->payload_len != sizeof(*req)) {
 		return acs_cp_send_response_code(proc, BT_ACS_CP_OPCODE_INVALIDATE_KEY,
 						 ACS_CP_RESPONSE_INVALID_OPERAND);
 	}
 
-	conn_ctx = acs_runtime_lookup_conn(proc->conn);
-	if (!conn_ctx) {
+	req = (const void *)frame->payload;
+	key_id = acs_cp_wire_get_le16(req->key_id_le);
+	err = acs_runtime_invalidate_key(proc->conn, key_id);
+	if (err == -ENOENT) {
 		return acs_cp_send_response_code(proc, BT_ACS_CP_OPCODE_INVALIDATE_KEY,
-						 ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
+						 ACS_CP_RESPONSE_NO_RECORDS_FOUND);
 	}
-
-	key_id = sys_get_le16(&frame->payload[1]);
-	if (!acs_crypto_has_session(&conn_ctx->crypto) || conn_ctx->crypto.active_key_id != key_id) {
+	if (err == -EALREADY) {
 		return acs_cp_send_response_code(proc, BT_ACS_CP_OPCODE_INVALIDATE_KEY,
-						 ACS_CP_RESPONSE_PARAMETER_OUT_OF_RANGE);
+						 ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE);
 	}
-
-	err = bt_acs_invalidate_security(proc->conn);
-	if (err && err != -ENOTCONN) {
+	if (err) {
 		return acs_cp_send_response_code(proc, BT_ACS_CP_OPCODE_INVALIDATE_KEY,
 						 ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 	}
@@ -1619,6 +1848,7 @@ static int acs_cp_handle_abort(struct acs_procedure *proc, const struct acs_fram
 static int acs_cp_handle_set_security_controls_switch(struct acs_procedure *proc,
 						      const struct acs_frame *frame)
 {
+	const struct acs_cp_switch_req *req;
 	struct acs_conn_ctx *conn_ctx;
 	uint8_t switch_state;
 
@@ -1627,7 +1857,7 @@ static int acs_cp_handle_set_security_controls_switch(struct acs_procedure *proc
 						 ACS_CP_RESPONSE_OPCODE_NOT_SUPPORTED);
 	}
 
-	if (frame->payload_len != 2U) {
+	if (frame->payload_len != sizeof(*req)) {
 		return acs_cp_send_response_code(proc, BT_ACS_CP_OPCODE_SET_SECURITY_CONTROLS_SWITCH,
 						 ACS_CP_RESPONSE_INVALID_OPERAND);
 	}
@@ -1638,7 +1868,13 @@ static int acs_cp_handle_set_security_controls_switch(struct acs_procedure *proc
 						 ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 	}
 
-	switch_state = frame->payload[1] & 0x01U;
+	req = (const void *)frame->payload;
+	if (req->switch_state != 0U && req->switch_state != 1U) {
+		return acs_cp_send_response_code(proc, BT_ACS_CP_OPCODE_SET_SECURITY_CONTROLS_SWITCH,
+						 ACS_CP_RESPONSE_INVALID_OPERAND);
+	}
+
+	switch_state = req->switch_state;
 	if (switch_state != 0U) {
 		conn_ctx->status_flags |= BT_ACS_STATUS_SECURITY_CONTROLS_ENABLED;
 	} else {
@@ -1653,6 +1889,7 @@ static int acs_cp_handle_set_security_controls_switch(struct acs_procedure *proc
 static int acs_cp_handle_get_key_uri(struct acs_procedure *proc, const struct acs_frame *frame)
 {
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_URI)
+	const struct acs_cp_key_id_req *req;
 	const struct bt_acs_cb *cb = acs_runtime_callbacks();
 	struct net_buf *buf;
 	uint16_t key_id;
@@ -1660,7 +1897,7 @@ static int acs_cp_handle_get_key_uri(struct acs_procedure *proc, const struct ac
 	uint16_t uri_max;
 	int err;
 
-	if (frame->payload_len != 3U) {
+	if (frame->payload_len != sizeof(*req)) {
 		return acs_cp_send_response_code(proc, BT_ACS_CP_OPCODE_GET_KEY_URI,
 						 ACS_CP_RESPONSE_INVALID_OPERAND);
 	}
@@ -1676,7 +1913,8 @@ static int acs_cp_handle_get_key_uri(struct acs_procedure *proc, const struct ac
 						 ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 	}
 
-	key_id = sys_get_le16(&frame->payload[1]);
+	req = (const void *)frame->payload;
+	key_id = acs_cp_wire_get_le16(req->key_id_le);
 	net_buf_add_le16(buf, key_id);
 	uri_max = MIN((uint16_t)net_buf_tailroom(buf), (uint16_t)CONFIG_BT_ACS_KEY_URI_MAX_LEN);
 	err = cb->key_uri_get(proc->conn, key_id, net_buf_tail(buf), uri_max, &uri_len);
@@ -1726,6 +1964,7 @@ static int acs_cp_handle_initiate_pairing(struct acs_procedure *proc, const stru
 static int acs_cp_handle_get_service_characteristic_uuids(struct acs_procedure *proc,
 							   const struct acs_frame *frame)
 {
+	const struct acs_cp_handle_req *req;
 	struct net_buf *buf;
 	uint16_t resource_handle;
 	int err;
@@ -1736,13 +1975,14 @@ static int acs_cp_handle_get_service_characteristic_uuids(struct acs_procedure *
 			ACS_CP_RESPONSE_OPCODE_NOT_SUPPORTED);
 	}
 
-	if (frame->payload_len != 3U) {
+	if (frame->payload_len != sizeof(*req)) {
 		return acs_cp_send_response_code(
 			proc, BT_ACS_CP_OPCODE_GET_SERVICE_CHARACTERISTIC_UUIDS_CHAR_RESOURCE_HANDLE,
 			ACS_CP_RESPONSE_INVALID_OPERAND);
 	}
 
-	resource_handle = sys_get_le16(&frame->payload[1]);
+	req = (const void *)frame->payload;
+	resource_handle = acs_cp_wire_get_le16(req->handle_le);
 	buf = acs_channel_buf_alloc();
 	if (!buf) {
 		return acs_cp_send_response_code(
@@ -1800,19 +2040,16 @@ static int acs_cp_handle_att_mtu(struct acs_procedure *proc, const struct acs_fr
 static int acs_cp_handle_set_client_nonce_fixed(struct acs_procedure *proc,
 						const struct acs_frame *frame)
 {
+	const struct acs_cp_set_client_nonce_fixed_req *req;
 	struct acs_conn_ctx *conn_ctx;
+	bool security_established;
 	uint16_t key_id;
 	const uint8_t *nonce;
 	size_t nonce_len;
 	int err;
 
-	if (!IS_ENABLED(CONFIG_BT_ACS_HAS_NONCE_FIXED)) {
-		return acs_cp_send_response_code(proc, BT_ACS_CP_OPCODE_SET_CLIENT_NONCE_FIXED,
-						 ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE);
-	}
-
 	nonce_len = CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE;
-	if (frame->payload_len != 1U + sizeof(uint16_t) + nonce_len) {
+	if (frame->payload_len != sizeof(*req) + nonce_len) {
 		LOG_WRN("ACS CP SET_CLIENT_NONCE_FIXED invalid operand len=%u", frame->payload_len);
 		return acs_cp_send_response_code(proc, BT_ACS_CP_OPCODE_SET_CLIENT_NONCE_FIXED,
 						 ACS_CP_RESPONSE_INVALID_OPERAND);
@@ -1824,16 +2061,42 @@ static int acs_cp_handle_set_client_nonce_fixed(struct acs_procedure *proc,
 						 ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 	}
 
-	key_id = sys_get_le16(&frame->payload[1]);
+	req = (const void *)frame->payload;
+	key_id = acs_cp_wire_get_le16(req->key_id_le);
 	if (key_id != acs_cp_algorithm_key_id()) {
 		LOG_WRN("ACS CP SET_CLIENT_NONCE_FIXED unsupported key_id=0x%04x", key_id);
 		return acs_cp_send_response_code(proc, BT_ACS_CP_OPCODE_SET_CLIENT_NONCE_FIXED,
 						 ACS_CP_RESPONSE_PARAMETER_OUT_OF_RANGE);
 	}
 
-	nonce = &frame->payload[1 + sizeof(uint16_t)];
-	if (memcmp(nonce, conn_ctx->crypto.server_nonce_fixed, nonce_len) == 0) {
+	if (!acs_cp_algorithm_supports_client_fixed_nonce(key_id)) {
+		LOG_WRN("ACS CP SET_CLIENT_NONCE_FIXED unsupported nonce type for key_id=0x%04x",
+			key_id);
+		return acs_cp_send_response_code(proc, BT_ACS_CP_OPCODE_SET_CLIENT_NONCE_FIXED,
+						 ACS_CP_RESPONSE_OPCODE_NOT_SUPPORTED);
+	}
+
+	security_established =
+		(conn_ctx->status_flags & BT_ACS_STATUS_SECURITY_ESTABLISHED) != 0U &&
+		conn_ctx->crypto.active_key_id == key_id;
+	if (conn_ctx->kex.state != ACS_KEX_IDLE || security_established) {
+		LOG_WRN("ACS CP SET_CLIENT_NONCE_FIXED not applicable: kex_state=%d security=%u key_id=0x%04x",
+			(int)conn_ctx->kex.state, security_established ? 1U : 0U, key_id);
+		return acs_cp_send_response_code(proc, BT_ACS_CP_OPCODE_SET_CLIENT_NONCE_FIXED,
+						 ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE);
+	}
+
+	nonce = req->nonce;
+	if (conn_ctx->crypto.server_nonce_fixed_len == nonce_len &&
+	    memcmp(nonce, conn_ctx->crypto.server_nonce_fixed, nonce_len) == 0) {
 		LOG_WRN("ACS CP SET_CLIENT_NONCE_FIXED matches server nonce fixed");
+		return acs_cp_send_response_code(proc, BT_ACS_CP_OPCODE_SET_CLIENT_NONCE_FIXED,
+						 ACS_CP_RESPONSE_INVALID_OPERAND);
+	}
+
+	if (acs_runtime_client_nonce_conflicts(proc->conn, nonce, nonce_len) ||
+	    acs_persist_client_nonce_conflicts(proc->conn, nonce, nonce_len)) {
+		LOG_WRN("ACS CP SET_CLIENT_NONCE_FIXED conflicts with stored client nonce fixed");
 		return acs_cp_send_response_code(proc, BT_ACS_CP_OPCODE_SET_CLIENT_NONCE_FIXED,
 						 ACS_CP_RESPONSE_INVALID_OPERAND);
 	}
@@ -1888,6 +2151,7 @@ static int acs_cp_handle_get_resource_handle_uuid_map(struct acs_procedure *proc
 static int acs_cp_handle_get_all_active_descriptors(struct acs_procedure *proc,
 						    const struct acs_frame *frame)
 {
+	const struct bt_acs_restriction_map *map;
 	int err;
 
 	if (!IS_ENABLED(CONFIG_BT_ACS_DESCRIPTORS) ||
@@ -1903,9 +2167,23 @@ static int acs_cp_handle_get_all_active_descriptors(struct acs_procedure *proc,
 						 ACS_CP_RESPONSE_INVALID_OPERAND);
 	}
 
+	map = acs_cp_find_map(acs_cp_active_map_id(proc->conn));
+	if (!map) {
+		return acs_cp_send_response_code(proc, BT_ACS_CP_OPCODE_GET_ALL_ACTIVE_DESCRIPTORS,
+						 ACS_CP_RESPONSE_NO_RECORDS_FOUND);
+	}
+
+	if (acs_cp_map_requires_secure_transport(map) &&
+	    (proc->flags & ACS_PROC_FLAG_SECURE_TRANSPORT) == 0U) {
+		LOG_WRN("ACS CP GET_ALL_ACTIVE_DESCRIPTORS requires secure transport for map_id=0x%04x",
+			map->map_id);
+		return acs_cp_send_response_code(proc, BT_ACS_CP_OPCODE_GET_ALL_ACTIVE_DESCRIPTORS,
+						 ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE);
+	}
+
 	proc->ops = &acs_cp_all_active_ops;
 	proc->step = ACS_ALL_ACTIVE_STEP_RMAP;
-	err = acs_cp_send_rmap_descriptor_response(proc, acs_cp_active_map_id(proc->conn), 0xFFFFU);
+	err = acs_cp_send_rmap_descriptor_response(proc, map->map_id, ACS_RMAP_FILTER_ALL);
 	if (err == -ENOENT) {
 		return acs_cp_send_response_code(proc, BT_ACS_CP_OPCODE_GET_ALL_ACTIVE_DESCRIPTORS,
 						 ACS_CP_RESPONSE_NO_RECORDS_FOUND);

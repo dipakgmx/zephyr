@@ -173,6 +173,15 @@ static bool acs_kex_method_action_supported(uint8_t method, uint8_t action)
 	}
 }
 
+static bool acs_kex_kdf_confirmation_supported(uint16_t key_id, uint8_t method, uint8_t action)
+{
+	if (key_id != ACS_KEY_ID_KDF) {
+		return true;
+	}
+
+	return method == ACS_CONFIRM_METHOD_NONE && action == ACS_CONFIRM_ACTION_NOT_APPLICABLE;
+}
+
 static int acs_kex_prepare_auth_value(struct acs_conn_ctx *conn_ctx, uint8_t method, uint8_t action)
 {
 	const struct bt_acs_cb *cb = acs_runtime_callbacks();
@@ -327,6 +336,13 @@ static int acs_kex_parse_wire_public_key(struct acs_kex_ctx *ctx, const uint8_t 
 	}
 
 	ctx->peer_public_coord_len = coord_len;
+
+	if (ctx->peer_public_coord_len == ctx->public_coord_len &&
+	    memcmp(ctx->peer_public_x, ctx->local_public_x, ctx->public_coord_len) == 0 &&
+	    memcmp(ctx->peer_public_y, ctx->local_public_y, ctx->public_coord_len) == 0) {
+		return ACS_KEX_ERR_INVALID_PUBLIC_KEY;
+	}
+
 	return index == operand_len ? 0 : -EINVAL;
 }
 
@@ -354,6 +370,11 @@ static int acs_kex_compute_shared_secret(struct acs_kex_ctx *ctx)
 	status = psa_raw_key_agreement(PSA_ALG_ECDH, ctx->private_key_handle, peer_key, peer_key_len,
 					 ctx->shared_secret, sizeof(ctx->shared_secret),
 					 &ctx->shared_secret_len);
+	if (status == PSA_ERROR_INVALID_ARGUMENT || status == PSA_ERROR_INVALID_HANDLE ||
+	    status == PSA_ERROR_INVALID_SIGNATURE) {
+		return ACS_KEX_ERR_INVALID_PUBLIC_KEY;
+	}
+
 	return acs_kex_psa_status_to_errno(status);
 }
 
@@ -538,6 +559,11 @@ int acs_kex_start(struct acs_conn_ctx *conn_ctx, uint16_t key_id, uint8_t confir
 
 	if (!acs_kex_method_action_supported(confirmation_method, confirmation_action)) {
 		return -EINVAL;
+	}
+
+	if (!acs_kex_kdf_confirmation_supported(key_id, confirmation_method,
+						 confirmation_action)) {
+		return -EAGAIN;
 	}
 
 	if (conn_ctx->kex.state != ACS_KEX_IDLE && conn_ctx->kex.state != ACS_KEX_COMPLETE) {
@@ -782,6 +808,10 @@ int acs_kex_build_confirmation_random_response(struct acs_conn_ctx *conn_ctx, ui
 	}
 
 	acs_kex_reverse_copy(client_random_be, &operand[2], sizeof(client_random_be));
+	if (memcmp(client_random_be, ctx->server_random, sizeof(client_random_be)) == 0) {
+		return -EINVAL;
+	}
+
 	err = acs_kex_calculate_confirm_wire(ctx, client_random_be, expected_confirm_wire);
 	if (err) {
 		return err;

@@ -8,6 +8,7 @@
 #define ZEPHYR_SUBSYS_BLUETOOTH_SERVICES_ACS_EXPERIMENTAL_INTERNAL_H_
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #include <zephyr/bluetooth/conn.h>
@@ -56,9 +57,10 @@ enum acs_proc_status {
 
 /** Common procedure-engine step results. */
 enum acs_proc_result {
+	/** Step completed synchronously; procedure may be released immediately. */
 	ACS_PROC_RES_COMPLETE = 0,
-	ACS_PROC_RES_WAIT_CONFIRM,
-	ACS_PROC_RES_FAILED,
+	/** Current step is waiting for indication confirmation. */
+	ACS_PROC_STEP_WAIT_IND_CONFIRM,
 };
 
 /**
@@ -73,21 +75,50 @@ enum acs_proc_result {
  *   @c acs_runtime_dispatch_frame().
  */
 struct acs_frame {
+	/** Owning Bluetooth connection for this request. */
 	struct bt_conn *conn;
+	/**
+	 * Protected resource handle selected by the channel decode or secure
+	 * unwrap stage.
+	 *
+	 * For plain ACS CP writes this is typically 0 until routing decides that
+	 * the request targets the ACS Control Point transport itself.
+	 */
 	uint16_t resource_handle;
+	/**
+	 * Information Security Configuration identifier carried by the request.
+	 *
+	 * For plain CP writes this is 0. For secure Data In it is the outer
+	 * ISC_ID extracted before decryption.
+	 */
 	uint16_t isc_id;
+	/** Pointer to the normalized request payload bytes. */
 	const uint8_t *payload;
+	/** Length in bytes of @ref payload. */
 	uint16_t payload_len;
+	/** Channel on which the request entered the ACS service. */
 	enum acs_source_channel source_channel;
+	/** True when the payload arrived through the secure Data In path. */
 	bool encrypted;
+	/**
+	 * Buffer owning @ref payload storage, if any.
+	 *
+	 * The runtime frees this after dispatch. For single-buffer flows this may
+	 * be the segmented reassembly buffer; after secure unwrap it may instead
+	 * be the decrypted plaintext buffer.
+	 */
 	struct net_buf *backing_buf;
 };
 
 /** Router output describing how the runtime should execute an @ref acs_frame. */
 struct acs_route {
+	/** High-level execution path chosen for the request. */
 	enum acs_route_kind kind;
+	/** Resource handle to attach to the resulting procedure instance. */
 	uint16_t resource_handle;
+	/** ISC identifier to attach to the resulting procedure instance. */
 	uint16_t isc_id;
+	/** True when replies for this route should use secure transport semantics. */
 	bool encrypted;
 };
 
@@ -98,14 +129,37 @@ struct acs_route {
  * the outbound channel layer decides how to transmit it.
  */
 struct acs_reply {
+	/** ACS channel used to send this reply. */
 	enum acs_reply_channel channel;
+	/**
+	 * Plaintext reply payload buffer.
+	 *
+	 * For secure DON/DOI replies this may later be replaced by a wrapped wire
+	 * buffer in the outbound channel layer.
+	 */
 	struct net_buf *plaintext;
+	/** True when the reply must be wrapped with ACS secure data protection. */
 	bool encrypted;
+	/** True when transport confirmation is required before the procedure continues. */
 	bool needs_confirm;
 };
 
 enum acs_proc_flag {
 	ACS_PROC_FLAG_SECURE_TRANSPORT = BIT(0),
+};
+
+/** Typed procedure-private state carried by @ref acs_procedure. */
+enum acs_proc_state_kind {
+	/** Procedure does not carry additional typed state. */
+	ACS_PROC_STATE_NONE = 0,
+	/** Procedure is in the final key-exchange result stage and stores a key ID. */
+	ACS_PROC_STATE_KEX_FINAL,
+};
+
+/** Tagged procedure-private state payload. */
+union acs_proc_state_data {
+	/** Key identifier associated with a final KEX result sequence. */
+	uint16_t key_id;
 };
 
 struct acs_procedure;
@@ -114,9 +168,13 @@ struct acs_procedure;
  * @brief Procedure callbacks for one procedure implementation.
  */
 struct acs_proc_ops {
+	/** Start the first step of the procedure for a normalized inbound frame. */
 	int (*start)(struct acs_procedure *proc, const struct acs_frame *frame);
+	/** Advance the procedure after a transport confirmation callback. */
 	int (*on_confirm)(struct acs_procedure *proc);
+	/** Abort hook called when the procedure is terminated early. */
 	void (*on_abort)(struct acs_procedure *proc, int reason);
+	/** Final cleanup hook before the procedure storage is zeroed and reused. */
 	void (*destroy)(struct acs_procedure *proc);
 };
 
@@ -124,15 +182,25 @@ struct acs_proc_ops {
  * @brief Live execution context for one ACS operation.
  */
 struct acs_procedure {
+	/** Procedure callback table that implements this live operation. */
 	const struct acs_proc_ops *ops;
+	/** Connection on which the procedure is executing. */
 	struct bt_conn *conn;
+	/** Resource handle associated with the operation or reply channel wrapping. */
 	uint16_t resource_handle;
+	/** ISC identifier associated with the operation or secure reply. */
 	uint16_t isc_id;
-	void *owner;
-	void *state;
+	/** Generic step counter for chained or confirm-driven procedures. */
 	uint8_t step;
+	/** Bitset of @ref acs_proc_flag values. */
 	uint8_t flags;
+	/** Selects the active member in @ref state. */
+	enum acs_proc_state_kind state_kind;
+	/** Typed procedure-private state payload. */
+	union acs_proc_state_data state;
+	/** Current lifecycle state of the procedure. */
 	enum acs_proc_status status;
+	/** Reply currently owned by the procedure while waiting for completion/reset. */
 	struct acs_reply pending_reply;
 };
 
@@ -140,23 +208,41 @@ struct acs_procedure {
  * @brief Per-connection runtime state owned by @c acs_runtime.c.
  */
 struct acs_conn_ctx {
+	/** Referenced Bluetooth connection that owns this runtime slot. */
 	struct bt_conn *conn;
+	/** Connection-scoped crypto session, nonce, and active key state. */
 	struct acs_crypto_ctx crypto;
+	/** CP receive-side segmentation/reassembly context. */
 	struct acs_seg_rx_ctx cp_rx;
+	/** Data In receive-side segmentation/reassembly context. */
 	struct acs_seg_rx_ctx data_rx;
+	/** Segmented TX lane for CP indications. */
 	struct acs_seg_tx_ctx cp_tx;
+	/** Segmented TX lane for DOI indications. */
 	struct acs_seg_tx_ctx doi_tx;
+	/** Deferred completion work that releases the active procedure slot. */
 	struct k_work cp_complete_work;
+	/** Single active procedure slot for this connection. */
 	struct acs_procedure active_proc;
+	/** Admission gate indicating whether the procedure slot is currently occupied. */
 	atomic_t proc_busy;
+	/** Currently active restriction map identifier for this peer. */
 	uint16_t active_map_id;
+	/** Per-connection key-exchange state machine and derived key material. */
 	struct acs_kex_ctx kex;
+	/** ACS Status characteristic flags for this peer. */
 	uint8_t status_flags;
+	/** Input OOB value staged by the application for confirmation-based KEX. */
 	uint8_t input_oob[32];
+	/** Number of valid bytes in @ref input_oob. */
 	uint16_t input_oob_len;
+	/** Deferred ABORT request pending until the current indication lane unwinds. */
 	bool abort_pending;
+	/** Secure transport flags to apply to the deferred ABORT response. */
 	uint8_t abort_flags;
+	/** Resource handle to use when sending the deferred ABORT response. */
 	uint16_t abort_resource_handle;
+	/** ISC identifier to use when sending the deferred ABORT response. */
 	uint16_t abort_isc_id;
 };
 
@@ -190,10 +276,17 @@ struct acs_conn_ctx *acs_runtime_lookup_conn(struct bt_conn *conn);
 
 /** Return the runtime slot for @p conn, creating it if needed. */
 struct acs_conn_ctx *acs_runtime_acquire_conn(struct bt_conn *conn);
+bool acs_runtime_client_nonce_conflicts(struct bt_conn *exclude_conn, const uint8_t *nonce,
+					size_t nonce_len);
+int acs_runtime_invalidate_all_security(void);
+int acs_runtime_invalidate_key(struct bt_conn *conn, uint16_t key_id);
 
 int acs_persist_save_conn(struct acs_conn_ctx *conn_ctx);
 void acs_persist_restore_conn(struct acs_conn_ctx *conn_ctx);
 int acs_persist_delete_conn(struct bt_conn *conn);
+int acs_persist_delete_all(void);
+bool acs_persist_client_nonce_conflicts(struct bt_conn *exclude_conn, const uint8_t *nonce,
+					size_t nonce_len);
 
 /** Allocate a temporary channel buffer used during reassembly or reply build. */
 struct net_buf *acs_channel_buf_alloc(void);
@@ -224,10 +317,10 @@ int acs_data_in_channel_frame_from_write(struct bt_conn *conn, const void *buf, 
 					 struct acs_frame *frame);
 
 /** Classify a normalized request into an ACS route kind. */
-int acs_protected_resource_route_frame(const struct acs_frame *frame, struct acs_route *route);
+int acs_classify_frame(const struct acs_frame *frame, struct acs_route *route);
 
 /** Populate a procedure instance for the selected route. */
-int acs_protected_resource_build_procedure(const struct acs_frame *frame,
+int acs_build_procedure_for_route(const struct acs_frame *frame,
 					   const struct acs_route *route,
 					   struct acs_procedure *proc);
 

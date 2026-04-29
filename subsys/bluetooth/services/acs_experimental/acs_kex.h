@@ -30,6 +30,9 @@ enum acs_kex_state {
 #define ACS_KEX_INFO_BUF_SIZE 1
 #endif
 
+/** Internal error used when the AC Client public key fails ACS validation rules. */
+#define ACS_KEX_ERR_INVALID_PUBLIC_KEY (-1001)
+
 struct acs_kex_ctx {
 	enum acs_kex_state state;
 	uint16_t key_id;

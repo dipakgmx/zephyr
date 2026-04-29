@@ -263,6 +263,7 @@ enum acs_seg_rx_result acs_seg_rx_process(struct acs_seg_rx_ctx *ctx, const uint
 	__ASSERT_NO_MSG(ctx->buf->size > 0U);
 
 	if (len < ACS_SEG_HEADER_SIZE) {
+		LOG_WRN("invalid length %u", len);
 		return ACS_SEG_RX_ERR_LEN;
 	}
 
@@ -299,7 +300,7 @@ enum acs_seg_rx_result acs_seg_rx_process(struct acs_seg_rx_ctx *ctx, const uint
 		ctx->rx_in_progress = true;
 		ctx->rx_counter = (counter + 1U) % ACS_SEG_COUNTER_MAX;
 		ctx->rx_deadline = sys_timepoint_calc(ACS_SEG_RX_TIMEOUT);
-		return ACS_SEG_RX_FRAGMENT;
+		return ACS_SEG_RX_PENDING;
 	}
 
 	if (!ctx->rx_in_progress) {
@@ -339,7 +340,7 @@ enum acs_seg_rx_result acs_seg_rx_process(struct acs_seg_rx_ctx *ctx, const uint
 
 	ctx->rx_counter = (counter + 1U) % ACS_SEG_COUNTER_MAX;
 	ctx->rx_deadline = sys_timepoint_calc(ACS_SEG_RX_TIMEOUT);
-	return ACS_SEG_RX_FRAGMENT;
+	return ACS_SEG_RX_PENDING;
 }
 
 void acs_seg_tx_init(struct acs_seg_tx_ctx *ctx)

@@ -44,7 +44,7 @@ static const struct acs_proc_ops service_cp_ops = {
 };
 
 /** See @ref acs_protected_resource_route_frame. */
-int acs_protected_resource_route_frame(const struct acs_frame *frame, struct acs_route *route)
+int acs_classify_frame(const struct acs_frame *frame, struct acs_route *route)
 {
 	uint16_t acs_cp_handle;
 
@@ -77,7 +77,7 @@ int acs_protected_resource_route_frame(const struct acs_frame *frame, struct acs
 }
 
 /** See @ref acs_protected_resource_build_procedure. */
-int acs_protected_resource_build_procedure(const struct acs_frame *frame,
+int acs_build_procedure_for_route(const struct acs_frame *frame,
 					   const struct acs_route *route,
 					   struct acs_procedure *proc)
 {
@@ -102,6 +102,7 @@ int acs_protected_resource_build_procedure(const struct acs_frame *frame,
 		proc->ops = &service_cp_ops;
 		break;
 	default:
+	__ASSERT_NO_MSG(false);
 		return -EINVAL;
 	}
 
@@ -136,7 +137,7 @@ static int acs_service_cp_procedure_start(struct acs_procedure *proc,
 /** Default confirm completion for one-reply stub procedures. */
 static int acs_procedure_on_confirm_default(struct acs_procedure *proc)
 {
-	proc->status = ACS_PROC_COMPLETE;
+	ARG_UNUSED(proc);
 	return ACS_PROC_RES_COMPLETE;
 }
 

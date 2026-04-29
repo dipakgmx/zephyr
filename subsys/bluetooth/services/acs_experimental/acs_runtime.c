@@ -60,6 +60,49 @@ static int acs_runtime_send_abort_response(struct acs_conn_ctx *conn_ctx, bool s
 static int acs_runtime_handle_abort_frame(struct acs_conn_ctx *conn_ctx,
 					  const struct acs_frame *frame);
 
+static bool acs_runtime_client_nonce_matches_wire(const struct acs_crypto_ctx *crypto,
+						  const uint8_t *nonce, size_t nonce_len)
+{
+	if (!crypto || !nonce || crypto->client_nonce_fixed_len != nonce_len) {
+		return false;
+	}
+
+	for (size_t i = 0U; i < nonce_len; i++) {
+		if (crypto->client_nonce_fixed[nonce_len - 1U - i] != nonce[i]) {
+			return false;
+		}
+	}
+
+	return true;
+}
+
+static void acs_runtime_notify_security_invalidated(struct acs_conn_ctx *conn_ctx)
+{
+	if (!conn_ctx || !conn_ctx->conn) {
+		return;
+	}
+
+	if ((conn_ctx->status_flags & BT_ACS_STATUS_SECURITY_ESTABLISHED) != 0U && acs_app_cb &&
+	    acs_app_cb->security_invalidated) {
+		acs_app_cb->security_invalidated(conn_ctx->conn);
+	}
+}
+
+static int acs_runtime_sync_persist(struct acs_conn_ctx *conn_ctx)
+{
+	if (!conn_ctx || !conn_ctx->conn) {
+		return -EINVAL;
+	}
+
+	if (!conn_ctx->kex.parent_key_valid && !conn_ctx->crypto.session_key_valid &&
+	    conn_ctx->crypto.client_nonce_fixed_len == 0U &&
+	    conn_ctx->crypto.server_nonce_fixed_len == 0U) {
+		return acs_persist_delete_conn(conn_ctx->conn);
+	}
+
+	return acs_persist_save_conn(conn_ctx);
+}
+
 static const struct bt_gatt_authorization_cb acs_gatt_auth_cb = {
 	.read_authorize = acs_gatt_read_authorize,
 	.write_authorize = acs_gatt_write_authorize,
@@ -179,6 +222,24 @@ struct acs_conn_ctx *acs_runtime_acquire_conn(struct bt_conn *conn)
 	return conn_ctx;
 }
 
+bool acs_runtime_client_nonce_conflicts(struct bt_conn *exclude_conn, const uint8_t *nonce,
+					size_t nonce_len)
+{
+	for (size_t i = 0U; i < ARRAY_SIZE(acs_runtime_conns); i++) {
+		struct acs_conn_ctx *conn_ctx = &acs_runtime_conns[i];
+
+		if (!conn_ctx->conn || conn_ctx->conn == exclude_conn) {
+			continue;
+		}
+
+		if (acs_runtime_client_nonce_matches_wire(&conn_ctx->crypto, nonce, nonce_len)) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
 static void acs_runtime_cp_complete_work_handler(struct k_work *work)
 {
 	struct acs_conn_ctx *conn_ctx =
@@ -239,7 +300,7 @@ static int acs_runtime_send_abort_response(struct acs_conn_ctx *conn_ctx, bool s
 	proc->flags = secure ? ACS_PROC_FLAG_SECURE_TRANSPORT : 0U;
 
 	err = acs_cp_domain_send_response_code(proc, BT_ACS_CP_OPCODE_ABORT, response_code);
-	if (err != ACS_PROC_RES_WAIT_CONFIRM) {
+	if (err != ACS_PROC_STEP_WAIT_IND_CONFIRM) {
 		acs_procedure_engine_reset(proc);
 		atomic_set(&conn_ctx->proc_busy, 0);
 	}
@@ -275,7 +336,7 @@ static int acs_runtime_handle_abort_frame(struct acs_conn_ctx *conn_ctx, const s
 		conn_ctx->abort_flags = secure ? ACS_PROC_FLAG_SECURE_TRANSPORT : 0U;
 		conn_ctx->abort_resource_handle = frame->resource_handle;
 		conn_ctx->abort_isc_id = frame->isc_id;
-		return ACS_PROC_RES_WAIT_CONFIRM;
+		return ACS_PROC_STEP_WAIT_IND_CONFIRM;
 	}
 
 	acs_runtime_abort_active_proc(conn_ctx);
@@ -373,6 +434,11 @@ static int acs_runtime_dispatch_frame(const struct acs_frame *frame)
 	struct acs_procedure *proc;
 	int err;
 
+	/* TODO: acs_runtime_handle_cp_write() and acs_runtime_handle_data_in()
+	 * already acquire conn_ctx before calling this helper. Consider passing
+	 * conn_ctx into acs_runtime_dispatch_frame() directly instead of resolving
+	 * it again from frame->conn.
+	 */
 	conn_ctx = acs_runtime_acquire_conn(frame->conn);
 	if (!conn_ctx) {
 		return -ENOMEM;
@@ -397,16 +463,16 @@ static int acs_runtime_dispatch_frame(const struct acs_frame *frame)
 		return -EBUSY;
 	}
 
-	err = acs_protected_resource_route_frame(frame, &route);
+	err = acs_classify_frame(frame, &route);
 	if (err != 0) {
-		LOG_WRN("route failed: %d", err);
+		LOG_WRN("unable to classify frame: %d", err);
 		atomic_set(&conn_ctx->proc_busy, 0);
 		goto out;
 	}
 
 	proc = &conn_ctx->active_proc;
 	memset(proc, 0, sizeof(*proc));
-	err = acs_protected_resource_build_procedure(frame, &route, proc);
+	err = acs_build_procedure_for_route(frame, &route, proc);
 	if (err) {
 		LOG_WRN("procedure build failed: %d", err);
 		atomic_set(&conn_ctx->proc_busy, 0);
@@ -414,15 +480,25 @@ static int acs_runtime_dispatch_frame(const struct acs_frame *frame)
 	}
 
 	err = acs_procedure_engine_start(proc, frame);
-	if (err && err != ACS_PROC_RES_WAIT_CONFIRM) {
+	if (err < 0) {
+		acs_procedure_engine_abort(proc, err);
+		acs_procedure_engine_reset(proc);
+		atomic_set(&conn_ctx->proc_busy, 0);
+		goto out;
+	}
+
+	if (err == ACS_PROC_STEP_WAIT_IND_CONFIRM) {
+		goto out;
+	}
+
+	if (err != ACS_PROC_RES_COMPLETE) {
+		__ASSERT(false, "unexpected procedure step result %d", err);
+		err = -EINVAL;
 		acs_procedure_engine_abort(proc, err);
 	}
 
-	if (err != ACS_PROC_RES_WAIT_CONFIRM) {
-		acs_procedure_engine_reset(proc);
-		atomic_set(&conn_ctx->proc_busy, 0);
-	}
-
+	acs_procedure_engine_reset(proc);
+	atomic_set(&conn_ctx->proc_busy, 0);
 out:
 	if (frame->backing_buf) {
 		acs_channel_buf_free(frame->backing_buf);
@@ -461,7 +537,7 @@ int acs_runtime_handle_cp_write(struct bt_conn *conn, const void *buf, uint16_t 
 
 	err = acs_cp_channel_reassemble(conn_ctx, buf, len, &frame);
 	if (err) {
-		return err == ACS_SEG_RX_FRAGMENT ? 0 : err;
+		return err == ACS_SEG_RX_PENDING ? 0 : err;
 	}
 
 	return acs_runtime_dispatch_frame(&frame);
@@ -485,7 +561,7 @@ int acs_runtime_handle_data_in(struct bt_conn *conn, const void *buf, uint16_t l
 
 	err = acs_data_in_channel_reassemble(conn_ctx, buf, len, &frame);
 	if (err) {
-		return err == ACS_SEG_RX_FRAGMENT ? 0 : err;
+		return err == ACS_SEG_RX_PENDING ? 0 : err;
 	}
 
 	err = acs_runtime_unwrap_data_in(conn_ctx, &frame);
@@ -753,11 +829,7 @@ int bt_acs_invalidate_security(struct bt_conn *conn)
 		return -ENOTCONN;
 	}
 
-	if ((conn_ctx->status_flags & BT_ACS_STATUS_SECURITY_ESTABLISHED) != 0U && acs_app_cb &&
-	    acs_app_cb->security_invalidated) {
-		acs_app_cb->security_invalidated(conn);
-	}
-
+	acs_runtime_notify_security_invalidated(conn_ctx);
 	acs_crypto_session_clear(&conn_ctx->crypto);
 	acs_kex_reset(&conn_ctx->kex);
 	conn_ctx->status_flags &= (uint8_t)~BT_ACS_STATUS_SECURITY_ESTABLISHED;
@@ -766,6 +838,88 @@ int bt_acs_invalidate_security(struct bt_conn *conn)
 	(void)acs_persist_delete_conn(conn);
 
 	return 0;
+}
+
+int acs_runtime_invalidate_all_security(void)
+{
+	int err;
+
+	if (!acs_runtime_initialized) {
+		return -EINVAL;
+	}
+
+	for (size_t i = 0U; i < ARRAY_SIZE(acs_runtime_conns); i++) {
+		struct acs_conn_ctx *conn_ctx = &acs_runtime_conns[i];
+
+		if (!conn_ctx->conn) {
+			continue;
+		}
+
+		acs_runtime_notify_security_invalidated(conn_ctx);
+		acs_crypto_session_clear(&conn_ctx->crypto);
+		acs_kex_reset(&conn_ctx->kex);
+		conn_ctx->status_flags &= (uint8_t)~BT_ACS_STATUS_SECURITY_ESTABLISHED;
+		memset(conn_ctx->input_oob, 0, sizeof(conn_ctx->input_oob));
+		conn_ctx->input_oob_len = 0U;
+	}
+
+	err = acs_persist_delete_all();
+	return err;
+}
+
+int acs_runtime_invalidate_key(struct bt_conn *conn, uint16_t key_id)
+{
+	struct acs_conn_ctx *conn_ctx;
+
+	if (!acs_runtime_initialized || !conn) {
+		return -EINVAL;
+	}
+
+	conn_ctx = acs_runtime_lookup_conn(conn);
+	if (!conn_ctx) {
+		return -ENOTCONN;
+	}
+
+	if (key_id == 0xFFFFU) {
+		if (!conn_ctx->kex.parent_key_valid && !conn_ctx->kex.session_key_valid) {
+			return -EALREADY;
+		}
+
+		acs_runtime_notify_security_invalidated(conn_ctx);
+		acs_crypto_session_clear(&conn_ctx->crypto);
+		acs_kex_reset(&conn_ctx->kex);
+		conn_ctx->status_flags &= (uint8_t)~BT_ACS_STATUS_SECURITY_ESTABLISHED;
+		return acs_runtime_sync_persist(conn_ctx);
+	}
+
+	if (key_id == 0x0001U) {
+		if (!conn_ctx->kex.parent_key_valid) {
+			return -EALREADY;
+		}
+
+		acs_runtime_notify_security_invalidated(conn_ctx);
+		acs_crypto_session_clear(&conn_ctx->crypto);
+		acs_kex_reset(&conn_ctx->kex);
+		conn_ctx->status_flags &= (uint8_t)~BT_ACS_STATUS_SECURITY_ESTABLISHED;
+		return acs_runtime_sync_persist(conn_ctx);
+	}
+
+	if (key_id == 0x0002U) {
+		if (!conn_ctx->kex.session_key_valid) {
+			return -EALREADY;
+		}
+
+		acs_runtime_notify_security_invalidated(conn_ctx);
+		acs_crypto_session_clear(&conn_ctx->crypto);
+		memset(conn_ctx->kex.session_key, 0, sizeof(conn_ctx->kex.session_key));
+		conn_ctx->kex.session_key_valid = false;
+		conn_ctx->status_flags &= (uint8_t)~BT_ACS_STATUS_SECURITY_ESTABLISHED;
+		conn_ctx->kex.state = conn_ctx->kex.parent_key_valid ? ACS_KEX_COMPLETE :
+							 ACS_KEX_IDLE;
+		return acs_runtime_sync_persist(conn_ctx);
+	}
+
+	return -ENOENT;
 }
 
 uint8_t bt_acs_status_get(struct bt_conn *conn)
