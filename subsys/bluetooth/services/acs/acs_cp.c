@@ -20,8 +20,11 @@
 #include <zephyr/logging/log.h>
 LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
 
-static void acs_cp_on_indicate_done(struct bt_conn *conn, const struct bt_gatt_attr *attr, int err,
-				    void *user_data);
+/* Definition below; non-static so the data-out channel layer can pass it
+ * as the seg-TX completion callback for plain-CP indications.
+ */
+void acs_cp_on_indicate_done(struct bt_conn *conn, const struct bt_gatt_attr *attr, int err,
+			     void *user_data);
 
 struct net_buf *acs_cp_rsp_alloc(struct acs_cp_ctx *ctx)
 {
@@ -45,7 +48,7 @@ struct net_buf *acs_cp_rsp_alloc(struct acs_cp_ctx *ctx)
 		net_buf_reserve(buf, ACS_CRYPTO_HEADROOM);
 		net_buf_add_le16(buf, ctx->prot_req->resource_handle);
 	} else {
-		struct acs_cp_proc_ctx *proc = &ctx->acs_conn->cp_proc;
+		acs_procedure *proc = &ctx->acs_conn->plain_cp_proc;
 
 		if (!proc->response) {
 			proc->response = acs_buf_alloc(K_NO_WAIT);
@@ -64,43 +67,41 @@ struct net_buf *acs_cp_rsp_alloc(struct acs_cp_ctx *ctx)
 int acs_cp_rsp_send(struct acs_cp_ctx *ctx)
 {
 	struct bt_acs_prot_resource_req *req = ctx->prot_req;
-	struct bt_conn *conn = ctx->conn;
 	struct bt_acs_conn *acs_conn = ctx->acs_conn;
+	struct acs_reply reply;
 	int err;
 
 	__ASSERT_NO_MSG(acs_conn != NULL);
 
 	if (req) {
-		uint16_t resource_handle = req->resource_handle;
-
 		__ASSERT_NO_MSG(req->response != NULL);
 		__ASSERT_NO_MSG(req->response->len > 0);
-		err = acs_prot_resource_rsp_indicate(req);
-		if (err) {
-			acs_seq_abort(ctx);
-			LOG_WRN("Protected CP DOI queue failed for handle 0x%04x: %d",
-				resource_handle, err);
-		}
-		return err;
+		reply = (struct acs_reply){
+			.channel = ACS_REPLY_DOI,
+			.plaintext = req->response,
+			.encrypted = true,
+			.needs_confirm = true,
+		};
+	} else {
+		__ASSERT_NO_MSG(acs_conn->plain_cp_proc.response != NULL);
+		__ASSERT_NO_MSG(acs_conn->plain_cp_proc.response->len > 0);
+		reply = (struct acs_reply){
+			.channel = ACS_REPLY_CP,
+			.plaintext = acs_conn->plain_cp_proc.response,
+			.encrypted = false,
+			.needs_confirm = true,
+		};
 	}
 
-	struct net_buf *rsp_buf = acs_conn->cp_proc.response;
-
-	acs_conn->cp_proc.response = NULL;
-
-	__ASSERT_NO_MSG(rsp_buf != NULL);
-	__ASSERT_NO_MSG(rsp_buf->len > 0);
-
-	/* Pass the buffer via user_data so the completion callback can free
-	 * it.  The seg-TX engine borrows the buffer but does not own it.
-	 */
-	err = acs_seg_tx_send(&acs_conn->cp_tx, conn, ctx->attr, rsp_buf, acs_cp_on_indicate_done,
-			      rsp_buf);
+	err = acs_data_out_channel_send_cp(ctx, &reply);
 	if (err) {
 		acs_seq_abort(ctx);
-		atomic_set(&acs_conn->cp_proc.locked, 0);
-		acs_buf_free(rsp_buf);
-		LOG_WRN("response indication failed: %d", err);
+		if (req) {
+			LOG_WRN("Protected CP DOI queue failed for handle 0x%04x: %d",
+				req->resource_handle, err);
+		} else {
+			LOG_WRN("Plain CP response indication failed: %d", err);
+		}
 	}
 	return err;
 }
@@ -112,7 +113,7 @@ int acs_cp_rsp_status(struct acs_cp_ctx *ctx, uint8_t req_opcode, uint8_t code)
 	if (!buf) {
 		acs_seq_abort(ctx);
 		if (!ctx->prot_req) {
-			atomic_set(&ctx->acs_conn->cp_proc.locked, 0);
+			atomic_set(&ctx->acs_conn->plain_cp_proc.locked, 0);
 		}
 		return -ENOMEM;
 	}
@@ -136,8 +137,8 @@ int acs_cp_rsp_status(struct acs_cp_ctx *ctx, uint8_t req_opcode, uint8_t code)
  * @param err       0 on confirm, negative errno if the indication failed.
  * @param user_data Unused.
  */
-static void acs_cp_on_indicate_done(struct bt_conn *conn, const struct bt_gatt_attr *attr, int err,
-				    void *user_data)
+void acs_cp_on_indicate_done(struct bt_conn *conn, const struct bt_gatt_attr *attr, int err,
+			     void *user_data)
 {
 	struct net_buf *rsp_buf = user_data;
 	struct bt_acs_conn *acs_conn = acs_conn_lookup(conn);
@@ -157,15 +158,15 @@ static void acs_cp_on_indicate_done(struct bt_conn *conn, const struct bt_gatt_a
 
 		LOG_WRN("Plain CP indication failed: %d", err);
 		acs_seq_abort(&ctx);
-		acs_conn->cp_proc.abort_pending = false;
-		atomic_set(&acs_conn->cp_proc.locked, 0);
+		acs_conn->plain_cp_proc.abort_pending = false;
+		atomic_set(&acs_conn->plain_cp_proc.locked, 0);
 		return;
 	}
 
 	/* Deferred abort: an Abort opcode arrived while this indication was
 	 * in-flight.  The TX channel is now free (tx_in_flight cleared before
 	 * this callback), so tear down the procedure and send ABORT SUCCESS. */
-	if (acs_conn->cp_proc.abort_pending) {
+	if (acs_conn->plain_cp_proc.abort_pending) {
 		struct acs_cp_ctx ctx = {
 			.prot_req = NULL,
 			.conn = conn,
@@ -174,13 +175,13 @@ static void acs_cp_on_indicate_done(struct bt_conn *conn, const struct bt_gatt_a
 		};
 		struct k_work_sync sync;
 
-		acs_conn->cp_proc.abort_pending = false;
+		acs_conn->plain_cp_proc.abort_pending = false;
 
 		k_work_cancel_sync(&acs_conn->cp_tx.tx_work, &sync);
 		acs_seq_clear(&ctx);
-		if (acs_conn->cp_proc.response) {
-			acs_buf_free(acs_conn->cp_proc.response);
-			acs_conn->cp_proc.response = NULL;
+		if (acs_conn->plain_cp_proc.response) {
+			acs_buf_free(acs_conn->plain_cp_proc.response);
+			acs_conn->plain_cp_proc.response = NULL;
 		}
 
 		/* Tear down KEX if in progress. */
@@ -207,146 +208,26 @@ static void acs_cp_on_indicate_done(struct bt_conn *conn, const struct bt_gatt_a
 
 	acs_seq_on_cp_confirm(conn, attr);
 
-	if (acs_conn->cp_proc.reply_seq.desc == NULL) {
-		atomic_set(&acs_conn->cp_proc.locked, 0);
+	if (acs_conn->plain_cp_proc.reply_seq.desc == NULL) {
+		atomic_set(&acs_conn->plain_cp_proc.locked, 0);
 	}
 }
 
-/**
- * @brief Check if this is the first segment of a multi-segment write.
- */
-static inline bool is_first_segment(const uint8_t *data)
-{
-	return (data[0] & ACS_SEG_FIRST_MASK) != 0;
-}
-
-ssize_t acs_cp_write(struct bt_conn *conn, const struct bt_gatt_attr *attr, const void *buf,
-		     uint16_t len, uint16_t offset, uint8_t flags)
-{
-	int ret;
-	struct bt_acs_conn *acs_conn;
-	enum acs_seg_rx_result seg_rx_result;
-
-	ARG_UNUSED(attr);
-	ARG_UNUSED(flags);
-
-	if (offset != 0) {
-		LOG_WRN("CP write: unexpected offset %u", offset);
-		return BT_GATT_ERR(BT_ATT_ERR_INVALID_OFFSET);
-	}
-
-	if (len < 2) {
-		LOG_WRN("CP write: PDU too short (%u bytes)", len);
-		return BT_GATT_ERR(BT_ATT_ERR_INVALID_ATTRIBUTE_LEN);
-	}
-
-	if (!acs_is_initialized()) {
-		LOG_ERR("CP write: ACS not initialized");
-		return BT_GATT_ERR(BT_ATT_ERR_UNLIKELY);
-	}
-
-	/* Spec-mandated: reject CP write if CP indications not enabled (ATT CCC_IMPROPER_CONF). */
-	ret = acs_cp_ccc_check(conn);
-
-	if (ret == -EINVAL) {
-		LOG_WRN("CP write: CP indications not enabled by client");
-		return BT_GATT_ERR(BT_ATT_ERR_CCC_IMPROPER_CONF);
-	}
-	if (ret) {
-		LOG_ERR("CP write: CCC check failed (%d)", ret);
-		return BT_GATT_ERR(BT_ATT_ERR_UNLIKELY);
-	}
-
-	acs_conn = acs_conn_lookup(conn);
-
-	if (!acs_conn) {
-		LOG_ERR("CP write: no ACS connection state for conn %p", (void *)conn);
-		return BT_GATT_ERR(BT_ATT_ERR_UNLIKELY);
-	}
-
-	/* Allocate buffer from pool on first segment if not already allocated */
-	if (is_first_segment(buf) && !acs_conn->cp_rx.buf) {
-		struct net_buf *rx_buf = acs_buf_alloc(K_NO_WAIT);
-
-		if (!rx_buf) {
-			LOG_ERR("CP: Failed to allocate buffer from pool");
-			return BT_GATT_ERR(BT_ATT_ERR_INSUFFICIENT_RESOURCES);
-		}
-		acs_seg_rx_begin(&acs_conn->cp_rx, rx_buf);
-	}
-
-	if (!acs_conn->cp_rx.buf) {
-		LOG_ERR("CP: No buffer for continuation segment");
-		return BT_GATT_ERR(BT_ATT_ERR_UNLIKELY);
-	}
-
-	seg_rx_result = acs_seg_rx_process(&acs_conn->cp_rx, buf, len);
-
-	switch (seg_rx_result) {
-	case ACS_SEG_RX_COMPLETE: {
-		struct net_buf_simple simple;
-		bool is_abort = false;
-
-#if IS_ENABLED(CONFIG_BT_ACS_ABORT)
-		/*
-		 * Abort command must preempt any in-progress procedure per §4.4.4: it bypasses the
-		 * cp_proc lock and the handler owns the lock semantics itself.
-		 */
-		is_abort = (acs_conn->cp_rx.buf->len > 0 &&
-			    acs_conn->cp_rx.buf->data[0] == BT_ACS_CP_OPCODE_ABORT);
-#endif
-		if (!is_abort && !atomic_cas(&acs_conn->cp_proc.locked, 0, 1)) {
-			acs_seg_rx_reset(&acs_conn->cp_rx);
-			LOG_WRN("procedure already in progress");
-			return BT_GATT_ERR(BT_ATT_ERR_PROCEDURE_IN_PROGRESS);
-		}
-		net_buf_simple_init_with_data(&simple, acs_conn->cp_rx.buf->data,
-					      acs_conn->cp_rx.buf->len);
-		acs_cp_dispatch(NULL, acs_conn, &simple);
-		acs_seg_rx_reset(&acs_conn->cp_rx);
-		break;
-	}
-	case ACS_SEG_RX_FRAGMENT:
-		break;
-	case ACS_SEG_RX_ERR_COUNTER:
-		LOG_WRN("CP RX: invalid segment counter (out-of-sequence PDU)");
-		acs_seg_rx_reset(&acs_conn->cp_rx);
-		return BT_GATT_ERR(BT_ACS_ATT_ERR_INVALID_SEG_COUNTER);
-	case ACS_SEG_RX_ERR_OVERFLOW:
-		LOG_WRN("CP RX: overflow — accumulated payload exceeds buffer (%zu bytes)",
-			acs_conn->cp_rx.buf ? acs_conn->cp_rx.buf->size : 0U);
-		acs_seg_rx_reset(&acs_conn->cp_rx);
-		return BT_GATT_ERR(BT_ATT_ERR_INSUFFICIENT_RESOURCES);
-	case ACS_SEG_RX_ERR_TIMEOUT:
-		LOG_WRN("CP RX: inter-segment timeout expired");
-		acs_seg_rx_reset(&acs_conn->cp_rx);
-		return BT_GATT_ERR(BT_ATT_ERR_UNLIKELY);
-	case ACS_SEG_RX_ERR_ORPHAN:
-		LOG_WRN("CP RX: continuation segment without prior first segment");
-		acs_seg_rx_reset(&acs_conn->cp_rx);
-		return BT_GATT_ERR(BT_ATT_ERR_UNLIKELY);
-	case ACS_SEG_RX_ERR_LEN:
-		LOG_WRN("CP RX: invalid segment length");
-		acs_seg_rx_reset(&acs_conn->cp_rx);
-		return BT_GATT_ERR(BT_ATT_ERR_UNLIKELY);
-	default:
-		LOG_ERR("CP RX: unexpected seg_rx result %d", (int)seg_rx_result);
-		acs_seg_rx_reset(&acs_conn->cp_rx);
-		return BT_GATT_ERR(BT_ATT_ERR_UNLIKELY);
-	}
-
-	return len;
-}
-
-/* Dispatch reassembled CP payload: payload[0]=opcode, payload[1..]=operand. */
-void acs_cp_dispatch(struct bt_acs_prot_resource_req *prot_req, struct bt_acs_conn *acs_conn,
-		     struct net_buf_simple *payload)
+/* Dispatch reassembled CP payload: frame->payload[0]=opcode, [1..]=operand. */
+void acs_cp_dispatch(struct acs_frame *frame, struct bt_acs_conn *acs_conn,
+		     struct bt_acs_prot_resource_req *prot_req)
 {
 	struct acs_cp_ctx ctx;
+	struct net_buf_simple payload_simple;
+	struct net_buf_simple *payload = &payload_simple;
 	uint8_t opcode;
 
+	__ASSERT_NO_MSG(frame != NULL);
+	__ASSERT_NO_MSG(frame->payload != NULL);
 	__ASSERT_NO_MSG(acs_conn != NULL);
 	__ASSERT_NO_MSG(acs_conn->conn != NULL);
+
+	net_buf_simple_init_with_data(&payload_simple, (void *)frame->payload, frame->payload_len);
 
 	ctx = (struct acs_cp_ctx){
 		.prot_req = prot_req,

@@ -214,7 +214,7 @@ static void acs_seq_continue_work_handler(struct k_work *work)
 
 	if (!conn || !req->reply_seq.desc) {
 		/* Sequence was aborted or connection lost — the ALLOC ref was
-		 * deferred from acs_data_in_route(), release it here.
+		 * deferred from acs_runtime_dispatch_protected_cp_frame(), release it here.
 		 */
 		acs_prot_resource_req_release_owner(req);
 		goto drain;
@@ -309,6 +309,59 @@ int acs_prot_resource_rsp_notify(struct bt_acs_prot_resource_req *req)
 	acs_prot_resource_req_tx_done(req);
 	return err;
 #endif /* CONFIG_BT_ACS_PROTECTED_RESOURCE_NOTIFICATION */
+}
+
+int acs_data_out_channel_send_protected(struct bt_acs_prot_resource_req *req,
+					const struct acs_reply *reply)
+{
+	__ASSERT_NO_MSG(req != NULL);
+	__ASSERT_NO_MSG(reply != NULL);
+
+	switch (reply->channel) {
+	case ACS_REPLY_DON:
+		return acs_prot_resource_rsp_notify(req);
+	case ACS_REPLY_DOI:
+		return acs_prot_resource_rsp_indicate(req);
+	case ACS_REPLY_CP:
+	default:
+		LOG_ERR("data_out_channel_send_protected: invalid channel %d", (int)reply->channel);
+		return -EINVAL;
+	}
+}
+
+int acs_data_out_channel_send_cp(struct acs_cp_ctx *ctx, const struct acs_reply *reply)
+{
+	struct bt_acs_conn *acs_conn;
+	struct net_buf *rsp_buf;
+	int err;
+
+	__ASSERT_NO_MSG(ctx != NULL);
+	__ASSERT_NO_MSG(reply != NULL);
+	__ASSERT_NO_MSG(ctx->acs_conn != NULL);
+
+	if (ctx->prot_req) {
+		return acs_data_out_channel_send_protected(ctx->prot_req, reply);
+	}
+
+	__ASSERT_NO_MSG(reply->channel == ACS_REPLY_CP);
+
+	acs_conn = ctx->acs_conn;
+	rsp_buf = acs_conn->plain_cp_proc.response;
+	acs_conn->plain_cp_proc.response = NULL;
+
+	__ASSERT_NO_MSG(rsp_buf != NULL);
+	__ASSERT_NO_MSG(rsp_buf == reply->plaintext);
+
+	/* Pass the buffer via user_data so the completion callback can free
+	 * it.  The seg-TX engine borrows the buffer but does not own it.
+	 */
+	err = acs_seg_tx_send(&acs_conn->cp_tx, ctx->conn, ctx->attr, rsp_buf,
+			      acs_cp_on_indicate_done, rsp_buf);
+	if (err) {
+		atomic_set(&acs_conn->plain_cp_proc.locked, 0);
+		acs_buf_free(rsp_buf);
+	}
+	return err;
 }
 
 int acs_prot_resource_rsp_indicate(struct bt_acs_prot_resource_req *req)

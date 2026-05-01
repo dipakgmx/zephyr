@@ -15,29 +15,36 @@ LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
 void acs_seq_clear(struct acs_cp_ctx *ctx);
 
 /**
- * @brief Resolve the reply sequence state from a CP context.
+ * @brief Resolve the active procedure object from a CP context.
  *
- * Protected CP procedures store their sequence state in the request context;
- * plain CP procedures store it in the per-connection cp_proc.
- *
- * @param ctx  CP dispatch context.
- * @return Pointer to the active reply sequence state, or NULL if ctx is invalid.
+ * Returns the slab-allocated protected procedure when present, otherwise the
+ * connection's embedded plain-CP singleton.
  */
-static struct acs_reply_seq_state *acs_seq_state_from_ctx(const struct acs_cp_ctx *ctx)
+static acs_procedure *acs_seq_proc_from_ctx(const struct acs_cp_ctx *ctx)
 {
 	if (!ctx) {
 		return NULL;
 	}
-
 	if (ctx->prot_req) {
-		return &ctx->prot_req->reply_seq;
+		return ctx->prot_req;
 	}
-
 	if (ctx->acs_conn) {
-		return &ctx->acs_conn->cp_proc.reply_seq;
+		return &ctx->acs_conn->plain_cp_proc;
 	}
-
 	return NULL;
+}
+
+/**
+ * @brief Resolve the reply sequence state from a CP context.
+ *
+ * Both plain CP and protected CP procedures now share a single
+ * @c reply_seq home on the unified procedure object.
+ */
+static struct acs_reply_seq_state *acs_seq_state_from_ctx(const struct acs_cp_ctx *ctx)
+{
+	acs_procedure *proc = acs_seq_proc_from_ctx(ctx);
+
+	return proc ? &proc->reply_seq : NULL;
 }
 
 /**
@@ -78,7 +85,7 @@ void acs_seq_begin(struct acs_cp_ctx *ctx, const struct acs_seq_desc *desc)
 	__ASSERT_NO_MSG(seq != NULL);
 
 	/* The ALLOC (owner) ref keeps the request alive for the full duration
-	 * of the reply sequence.  acs_data_in_route() defers release_owner()
+	 * of the reply sequence.  acs_runtime_dispatch_protected_cp_frame() defers release_owner()
 	 * when it sees reply_seq.desc != NULL after dispatch, and acs_seq_clear()
 	 * calls release_owner() when the sequence completes or aborts.
 	 */
@@ -99,7 +106,7 @@ void acs_seq_clear(struct acs_cp_ctx *ctx)
 	memset(seq, 0, sizeof(*seq));
 
 	/* The sequence owned the ALLOC ref for its duration (deferred from
-	 * acs_data_in_route).  Release it now that the sequence is done.
+	 * acs_runtime_dispatch_protected_cp_frame).  Release it now that the sequence is done.
 	 */
 	if (was_active && ctx->prot_req) {
 		acs_prot_resource_req_release_owner(ctx->prot_req);

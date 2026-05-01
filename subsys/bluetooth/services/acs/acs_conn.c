@@ -83,9 +83,15 @@ void acs_kex_free(struct bt_acs_kex_ctx *kex)
 
 static void acs_cp_proc_init(struct bt_acs_conn *acs_conn)
 {
-	atomic_set(&acs_conn->cp_proc.locked, 0);
-	acs_conn->cp_proc.response = NULL;
-	acs_conn->cp_proc.abort_pending = false;
+	/* Reset the embedded plain-CP procedure singleton. The conn's own memset
+	 * has already zeroed the memory; mark it as a singleton so the slab/refcount
+	 * paths skip it if anything ever drives it through them.
+	 */
+	acs_conn->plain_cp_proc.is_singleton = true;
+	acs_conn->plain_cp_proc.acs_conn = acs_conn;
+	atomic_set(&acs_conn->plain_cp_proc.locked, 0);
+	acs_conn->plain_cp_proc.response = NULL;
+	acs_conn->plain_cp_proc.abort_pending = false;
 	acs_seg_tx_init(&acs_conn->cp_tx);
 #if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION)
 	acs_seg_tx_init(&acs_conn->indicate_tx);
@@ -94,11 +100,11 @@ static void acs_cp_proc_init(struct bt_acs_conn *acs_conn)
 
 static void acs_cp_proc_cleanup(struct bt_acs_conn *acs_conn)
 {
-	atomic_set(&acs_conn->cp_proc.locked, 0);
-	acs_conn->cp_proc.abort_pending = false;
-	if (acs_conn->cp_proc.response) {
-		acs_buf_free(acs_conn->cp_proc.response);
-		acs_conn->cp_proc.response = NULL;
+	atomic_set(&acs_conn->plain_cp_proc.locked, 0);
+	acs_conn->plain_cp_proc.abort_pending = false;
+	if (acs_conn->plain_cp_proc.response) {
+		acs_buf_free(acs_conn->plain_cp_proc.response);
+		acs_conn->plain_cp_proc.response = NULL;
 	}
 	acs_seg_tx_reset(&acs_conn->cp_tx);
 

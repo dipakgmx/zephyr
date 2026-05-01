@@ -38,6 +38,101 @@ struct acs_cp_ctx;   /**< Defined below; forward-declared for callback typedefs 
 struct acs_seq_desc; /**< Defined below; forward-declared for acs_reply_seq_state */
 
 /**
+ * @brief Source GATT characteristic that produced an inbound frame.
+ *
+ * Set by the GATT entry layer and consumed by the runtime to decide whether
+ * the frame requires unwrap (Data In) or can be classified directly (plain CP).
+ */
+enum acs_source_channel {
+	ACS_SRC_CP = 0,      /**< ACS Control Point write */
+	ACS_SRC_DATA_IN = 1, /**< ACS Data In write (carries encrypted transport payload) */
+};
+
+/**
+ * @brief Normalized inbound request — handoff object from transport decode into runtime dispatch.
+ *
+ * Lifecycle:
+ * - Built by the GATT entry layer once @ref acs_channel_rx_feed reports COMPLETE.
+ *   At this point @c payload points at the reassembled bytes in @c backing_buf,
+ *   @c source_channel is set, @c encrypted is true for Data In and false for CP,
+ *   and @c resource_handle / @c isc_id are 0.
+ * - For Data In, the runtime then calls the unwrap helper which sets
+ *   @c resource_handle, @c isc_id, clears @c encrypted, and replaces @c payload /
+ *   @c payload_len with the inner plaintext.
+ * - The runtime owns @c backing_buf and is responsible for releasing it on
+ *   every terminal path.
+ */
+struct acs_frame {
+	struct bt_conn *conn;             /**< Connection that produced the frame */
+	uint16_t resource_handle;         /**< Inner resource handle (0 until unwrap for Data In) */
+	uint16_t isc_id;                  /**< ISC_ID (0 for plain CP) */
+	const uint8_t *payload;           /**< Pointer to current logical payload */
+	uint16_t payload_len;             /**< Length of @p payload */
+	enum acs_source_channel source_channel; /**< Originating ACS characteristic */
+	bool encrypted;                   /**< True between channel RX and unwrap */
+	struct net_buf *backing_buf;      /**< Owns request storage; runtime releases */
+};
+
+/**
+ * @brief Result kind from @ref acs_classify_frame.
+ *
+ * The classifier answers "what kind of work is this?" — it does not allocate
+ * state and does not dispatch.
+ */
+enum acs_route_kind {
+	ACS_ROUTE_ACS_CP = 0,            /**< Plain ACS Control Point opcode */
+	ACS_ROUTE_PROTECTED_CHAR = 1,    /**< Protected characteristic request (auto-respond / handler) */
+	ACS_ROUTE_PROTECTED_SERVICE_CP = 2, /**< Protected service Control Point request */
+};
+
+/**
+ * @brief Classification result for an inbound frame.
+ *
+ * Built by @ref acs_classify_frame. @c encrypted carries forward whether the
+ * eventual reply must be wrapped on the way out (drives @ref acs_reply::encrypted
+ * once that lands).
+ */
+struct acs_route {
+	enum acs_route_kind kind;
+	uint16_t resource_handle;
+	uint16_t isc_id;
+	bool encrypted;
+};
+
+/**
+ * @brief Outbound transport channel for an @ref acs_reply.
+ *
+ * Distinguishes the three send paths a reply can take:
+ *  - @ref ACS_REPLY_CP   — plain ACS Control Point indication (segmented).
+ *  - @ref ACS_REPLY_DON  — Data Out Notify (encrypted notification).
+ *  - @ref ACS_REPLY_DOI  — Data Out Indicate (encrypted, segmented, confirmed).
+ */
+enum acs_reply_channel {
+	ACS_REPLY_CP = 0,
+	ACS_REPLY_DON = 1,
+	ACS_REPLY_DOI = 2,
+};
+
+/**
+ * @brief Logical outbound message produced by a domain handler.
+ *
+ * Built by the CP-domain or service-adapter handlers and consumed by the
+ * data-out channel layer. The data-out layer decides how to transport @c
+ * plaintext (it may encrypt in place when @c encrypted is true) and whether
+ * to wait for an indication confirmation.
+ *
+ * @c plaintext lifetime is owned by the caller (typically the in-flight
+ * procedure / request context); the data-out layer only borrows it for the
+ * send path.
+ */
+struct acs_reply {
+	enum acs_reply_channel channel;
+	struct net_buf *plaintext;
+	bool encrypted;
+	bool needs_confirm;
+};
+
+/**
  * @brief Signature for one step in a multi-indication reply sequence.
  *
  * Return 0 on success (framework waits for confirm, then calls next step).
@@ -214,15 +309,62 @@ struct bt_acs_kex_ctx {
 };
 
 /**
- * @brief Transient state for one plain ACS Control Point procedure.
+ * @brief Live execution state of one ACS Control Point or protected resource procedure.
+ *
+ * This is the unified procedure object referenced as @c acs_procedure in the
+ * runtime model. Two flavours share this struct:
+ *
+ *  - **Slab-allocated protected procedure**: one per in-flight protected request
+ *    (Data In path), allocated from the per-connection slab and tracked in
+ *    @c acs_conn->pending_reqs[]. Lifetime is governed by @c ref_count;
+ *    @c is_singleton is false.
+ *
+ *  - **Singleton plain-CP procedure**: embedded in @c bt_acs_conn::plain_cp_proc.
+ *    Manages plain ACS Control Point flow on its connection. Lifetime is the
+ *    connection's lifetime; @c is_singleton is true and the slab/refcount/slot
+ *    bookkeeping fields are unused. Concurrency on the plain-CP path is gated
+ *    by @c locked (single in-flight procedure per connection); the @c locked
+ *    field is unused for slab-allocated protected procedures because the slot
+ *    pool itself enforces concurrency.
+ *
+ * Both flavours share a single @c reply_seq state, so the multi-indication
+ * reply-sequence engine has one home regardless of dispatch path.
+ *
+ * The legacy public name @c bt_acs_prot_resource_req is retained as the struct
+ * tag so existing handler signatures (@ref bt_acs_prot_resource_handler_t and
+ * @ref ACS_PROT_RESOURCE_HANDLER_DEFINE) keep working unchanged. The typedef
+ * @c acs_procedure below is the conceptual name used by new internal code.
  */
-struct acs_cp_proc_ctx {
-	atomic_t locked; /**< Set while a plain CP procedure is active on the connection */
-	struct acs_reply_seq_state reply_seq; /**< Explicit reply-sequence state for plain CP */
-	struct net_buf *response; /**< Plain CP response staging buffer owned by the procedure */
-	bool abort_pending; /**< Set when an Abort is requested during an active CP procedure with
-			       an indication in-flight */
+struct bt_acs_prot_resource_req {
+	sys_snode_t node;                  /**< k_fifo linkage for send queue (DOI) */
+	struct bt_acs_conn *acs_conn;      /**< Owning ACS connection; NULL after disconnect */
+	struct net_buf *response;          /**< Pool buffer for plaintext response staging */
+	struct net_buf *decrypted_request; /**< Reference-counted buffer from pool (request data) */
+	atomic_t ref_count;                /**< Request lifetime refcount (unused if @c is_singleton) */
+	ATOMIC_DEFINE(ref_flags, 2);       /**< Per-caller bitmask (debug: catch double-release) */
+	struct k_work work;                /**< Deferred dispatch work item */
+	struct acs_reply_seq_state reply_seq; /**< Multi-indication reply-sequence state */
+	enum acs_prot_resource_send_method send_method; /**< Selected response transport */
+	uint16_t resource_handle; /**< Protected resource handle (0 for plain CP singleton) */
+	uint16_t isc_id;          /**< ISC_ID associated with this request (0 for plain CP) */
+	uint16_t data_offset;     /**< Offset within decrypted_request->data where payload starts */
+	uint16_t data_length;     /**< Plaintext request payload length */
+	uint8_t req_slot;         /**< Index in acs_conn->pending_reqs[] (unused if singleton) */
+	bool input_owned;         /**< True when decrypted_request ownership was transferred */
+	/* Plain-CP singleton fields (unused for slab-allocated protected procedures): */
+	bool is_singleton;        /**< True for the embedded plain-CP procedure */
+	atomic_t locked;          /**< Plain-CP busy gate: 1 while a procedure is active */
+	bool abort_pending;       /**< Plain-CP deferred-abort flag (indication in flight) */
 };
+
+/**
+ * @brief Conceptual alias for the unified procedure object.
+ *
+ * Equivalent to @c struct bt_acs_prot_resource_req. New internal code should
+ * spell the type as @c acs_procedure to match the migration model; the legacy
+ * struct tag is kept for downstream-handler-API compatibility.
+ */
+typedef struct bt_acs_prot_resource_req acs_procedure;
 
 /**
  * @brief Per-connection ACS state.
@@ -263,7 +405,9 @@ struct bt_acs_conn {
 	struct bt_acs_kex_ctx *kex;          /**< Transient key exchange context */
 	uint8_t status_data[3];              /**< Embedded status indication payload */
 	struct bt_gatt_indicate_params status_indicate_params; /**< Status indication params */
-	struct acs_cp_proc_ctx cp_proc; /**< Plain CP procedure lifetime and chaining state */
+	struct bt_acs_prot_resource_req plain_cp_proc; /**< Singleton plain-CP procedure
+							 *  (is_singleton=true; not slab-managed)
+							 */
 	struct acs_seg_tx_ctx cp_tx;    /**< Plain CP indication transport context */
 #if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION)
 	struct acs_seg_tx_ctx indicate_tx; /**< DOI indication segmentation context */
@@ -303,30 +447,6 @@ struct bt_acs_prot_resource_handler_entry {
 #define ACS_PROT_RESOURCE_HANDLER_DEFINE(_name, _char_uuid, _handler)                              \
 	BUILD_ASSERT(0, "ACS_PROT_RESOURCE_HANDLER_DEFINE requires data protection to be enabled")
 #endif
-
-/**
- * @brief Per-request ACS context for bounded same-connection concurrency.
- *
- * Owns the plaintext request input and plaintext response buffer for one
- * protected request. Protected Control Point requests use the same context.
- */
-struct bt_acs_prot_resource_req {
-	sys_snode_t node;                  /**< k_fifo linkage for send queue (DOI) */
-	struct bt_acs_conn *acs_conn;      /**< Owning ACS connection; NULL after disconnect */
-	struct net_buf *response;          /**< Pool buffer for plaintext response staging */
-	struct net_buf *decrypted_request; /**< Reference-counted buffer from pool (request data) */
-	atomic_t ref_count;                /**< Request lifetime refcount */
-	ATOMIC_DEFINE(ref_flags, 2);       /**< Per-caller bitmask (debug: catch double-release) */
-	struct k_work work;                /**< Deferred dispatch work item */
-	struct acs_reply_seq_state reply_seq; /**< Explicit reply-sequence state for protected CP */
-	enum acs_prot_resource_send_method send_method; /**< Selected response transport */
-	uint16_t resource_handle; /**< Protected resource handle from the request */
-	uint16_t isc_id;          /**< ISC_ID associated with this request */
-	uint16_t data_offset;     /**< Offset within decrypted_request->data where payload starts */
-	uint16_t data_length;     /**< Plaintext request payload length */
-	uint8_t req_slot;         /**< Index in acs_conn->pending_reqs[] */
-	bool input_owned;         /**< True when decrypted_request ownership was transferred */
-};
 
 /**
  * @brief Unified Control Point dispatch context.

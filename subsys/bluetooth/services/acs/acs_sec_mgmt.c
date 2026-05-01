@@ -255,7 +255,7 @@ void acs_sec_mgmt_invalidate_key(struct acs_cp_ctx *ctx, struct net_buf_simple *
  *   3. Commit  — only after both checks pass, tear down sequences, KEX, and
  *                data-op state, then send the ABORT SUCCESS response.
  *
- * ABORT bypasses the cp_proc.locked gate in acs_cp_write() (ABORT must be
+ * ABORT bypasses the plain_cp_proc.locked gate in acs_cp_write() (ABORT must be
  * able to preempt an in-progress procedure), so this handler also owns the
  * lock bookkeeping for its own response.
  */
@@ -269,7 +269,7 @@ void acs_sec_mgmt_abort(struct acs_cp_ctx *ctx)
 	bool has_work;
 	bool can_commit;
 
-	plain_cp_active = (atomic_get(&acs_conn->cp_proc.locked) == 1);
+	plain_cp_active = (atomic_get(&acs_conn->plain_cp_proc.locked) == 1);
 
 	kex_in_progress = (acs_conn->key_state != BT_ACS_KEY_EXCHANGE_IDLE &&
 			   acs_conn->key_state != BT_ACS_KEY_EXCHANGE_COMPLETE);
@@ -287,7 +287,7 @@ void acs_sec_mgmt_abort(struct acs_cp_ctx *ctx)
 	if (!has_work) {
 		LOG_WRN("Abort requested with no in-progress procedure");
 		/* Take the lock for our own response, since no proc holds it. */
-		atomic_set(&acs_conn->cp_proc.locked, 1);
+		atomic_set(&acs_conn->plain_cp_proc.locked, 1);
 		acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_ABORT,
 				  BT_ACS_CP_RESPONSE_ABORT_UNSUCCESSFUL);
 		return;
@@ -308,7 +308,7 @@ void acs_sec_mgmt_abort(struct acs_cp_ctx *ctx)
 
 	if (!can_commit) {
 		LOG_DBG("Abort deferred — indication in flight, will commit on confirm");
-		acs_conn->cp_proc.abort_pending = true;
+		acs_conn->plain_cp_proc.abort_pending = true;
 		return;
 	}
 
@@ -319,13 +319,13 @@ void acs_sec_mgmt_abort(struct acs_cp_ctx *ctx)
 	if (plain_cp_active) {
 		k_work_cancel_sync(&acs_conn->cp_tx.tx_work, &sync);
 		acs_seq_clear(ctx);
-		if (acs_conn->cp_proc.response) {
-			acs_buf_free(acs_conn->cp_proc.response);
-			acs_conn->cp_proc.response = NULL;
+		if (acs_conn->plain_cp_proc.response) {
+			acs_buf_free(acs_conn->plain_cp_proc.response);
+			acs_conn->plain_cp_proc.response = NULL;
 		}
 		/* lock stays held — ABORT now owns it for its own response */
 	} else {
-		atomic_set(&acs_conn->cp_proc.locked, 1);
+		atomic_set(&acs_conn->plain_cp_proc.locked, 1);
 	}
 
 	/* Tear down KEX state (local only — always safe once probed). */

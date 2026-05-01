@@ -41,12 +41,14 @@ void acs_buf_free(struct net_buf *buf);
 /**
  * @brief Dispatch a reassembled CP payload to the opcode handler.
  *
- * @param prot_req  NULL for plain CP, non-NULL for protected Data In path.
+ * @param frame     Normalized inbound frame. @c frame->payload[0] is the opcode.
+ *                  For the protected CP path, @p prot_req must be non-NULL and
+ *                  carries the live request context allocated by the runtime.
  * @param acs_conn  Per-connection ACS state.
- * @param payload   Reassembled buffer; payload[0] = opcode.
+ * @param prot_req  NULL for plain CP, non-NULL for protected Data In path.
  */
-void acs_cp_dispatch(struct bt_acs_prot_resource_req *prot_req, struct bt_acs_conn *acs_conn,
-		     struct net_buf_simple *payload);
+void acs_cp_dispatch(struct acs_frame *frame, struct bt_acs_conn *acs_conn,
+		     struct bt_acs_prot_resource_req *prot_req);
 
 /**
  * @brief GATT write handler for the ACS Control Point characteristic.
@@ -72,7 +74,7 @@ int acs_crypto_get_server_nonce_fixed(struct bt_acs_conn *acs_conn, uint8_t *non
 /**
  * @brief Allocate or reset the CP response buffer for @p ctx.
  *
- * Plain CP: lazy-allocs cp_proc.response.
+ * Plain CP: lazy-allocs plain_cp_proc.response.
  * Protected CP: lazy-allocs prot_req->response with crypto headroom.
  *
  * @param ctx  CP dispatch context.
@@ -163,6 +165,104 @@ struct bt_acs_conn *acs_conn_by_index(uint8_t index);
 ssize_t acs_data_in_write(struct bt_conn *conn, const struct bt_gatt_attr *attr, const void *buf,
 			  uint16_t len, uint16_t offset, uint8_t flags);
 
+/**
+ * @name Data In pipeline error codes (returned by @ref acs_data_in_unwrap_and_route).
+ *
+ * Mapped by the runtime entry layer to ATT error codes.
+ * @{
+ */
+#define ACS_DATA_ERR_CCC_IMPROPER_CONF         (-EPIPE)
+#define ACS_DATA_ERR_NOT_AUTHORIZED            (-EPERM)
+#define ACS_DATA_ERR_INVALID_KEY               (-EACCES)
+#define ACS_DATA_ERR_RESOURCE_NOT_PROTECTED    (-ENOENT)
+#define ACS_DATA_ERR_INCORRECT_SECURITY_CONFIG (-EPROTO)
+/** @} */
+
+/**
+ * @brief Unwrap a complete reassembled Data In payload and route it.
+ *
+ * Validates the ISC_ID/nonce header, decrypts the payload in place, builds a
+ * normalized @ref acs_frame, then hands it to @ref acs_runtime_dispatch_frame.
+ *
+ * @return 0 on success, or one of @ref ACS_DATA_ERR_* on failure.
+ */
+int acs_data_in_unwrap_and_route(struct bt_conn *conn, struct bt_acs_conn *acs_conn,
+				 struct net_buf_simple *buf);
+
+/**
+ * @brief Common normalized-frame dispatch entry point.
+ *
+ * Single seam between the GATT-write entrypoints and the per-route execution
+ * helpers. Classifies @p frame against @p acs_conn's active restriction map
+ * (or trivially as @ref ACS_ROUTE_ACS_CP for CP-source frames) and forwards
+ * to the matching @c acs_runtime_dispatch_*_frame helper.
+ *
+ * @return 0 on success, negative errno or @ref ACS_DATA_ERR_* on failure.
+ */
+int acs_runtime_dispatch_frame(struct acs_frame *frame, struct bt_acs_conn *acs_conn);
+
+/**
+ * @brief Dispatch a frame whose route kind is @ref ACS_ROUTE_ACS_CP.
+ *
+ * Forwards directly to @ref acs_cp_dispatch with @p prot_req. For plain CP
+ * frames @p prot_req is NULL; for protected CP frames @p prot_req is the
+ * already-allocated request context owning the decrypted input buffer.
+ */
+int acs_runtime_dispatch_cp_frame(struct acs_frame *frame, struct bt_acs_conn *acs_conn,
+				  struct bt_acs_prot_resource_req *prot_req);
+
+/**
+ * @brief Dispatch a Data-In frame that targets a protected service CP.
+ *
+ * Performs the DOI CCC check, allocates a request context, transfers ownership
+ * of @c acs_conn->data_rx.buf into the context, then forwards to
+ * @ref acs_runtime_dispatch_cp_frame. Drops the owner reference here unless a
+ * multi-step reply sequence took it over.
+ */
+int acs_runtime_dispatch_protected_cp_frame(struct acs_frame *frame, struct bt_acs_conn *acs_conn);
+
+/**
+ * @brief Dispatch a Data-In frame that targets a protected characteristic.
+ *
+ * Resolves the required Data Out subscription, allocates a request context,
+ * transfers ownership of @c acs_conn->data_rx.buf into the context, then
+ * queues the work item that runs the application/auto-respond handler.
+ */
+int acs_runtime_dispatch_protected_char_frame(struct acs_frame *frame,
+					      struct bt_acs_conn *acs_conn);
+
+/**
+ * @brief Resolve the Data Out subscription for a protected resource handle.
+ *
+ * Picks DON or DOI based on the characteristic's properties; for zero-length
+ * payloads only DON is checked. Returns 0 if the required CCC is configured,
+ * @c -EINVAL when the CCC is missing, or other negative errno on lookup failure.
+ */
+int acs_require_data_out_subscription(struct bt_conn *conn, uint16_t resource_handle,
+				      uint16_t data_length);
+
+/**
+ * @brief Send a CP-channel reply.
+ *
+ * Unifies the plain-CP and protected-CP send paths. For protected CP
+ * (@c ctx->prot_req != NULL) delegates to @ref acs_data_out_channel_send_protected.
+ * For plain CP, pulls the staged response buffer out of
+ * @c acs_conn->plain_cp_proc.response and arms the segmented indication on
+ * @c acs_conn->cp_tx with @ref acs_cp_on_indicate_done as completion callback.
+ *
+ * @return 0 on success, negative errno on failure.
+ */
+int acs_data_out_channel_send_cp(struct acs_cp_ctx *ctx, const struct acs_reply *reply);
+
+/**
+ * @brief Plain-CP indication-confirmation callback (defined in acs_cp.c).
+ *
+ * Exposed so the data-out channel layer can pass it as the completion handler
+ * for plain-CP segmented indications.
+ */
+void acs_cp_on_indicate_done(struct bt_conn *conn, const struct bt_gatt_attr *attr, int err,
+			     void *user_data);
+
 /** @brief Increment @p req reference count for caller @p who. */
 void acs_prot_resource_req_ref(struct bt_acs_prot_resource_req *req,
 			       enum acs_prot_resource_ref_who who);
@@ -217,6 +317,28 @@ int acs_prot_resource_rsp_notify(struct bt_acs_prot_resource_req *req);
  * @return 0 on success, negative errno on failure.
  */
 int acs_prot_resource_rsp_indicate(struct bt_acs_prot_resource_req *req);
+
+/**
+ * @brief Send a logical reply on a protected resource request.
+ *
+ * Thin indirection over the per-channel send helpers — selects between
+ * Data Out Notify and Data Out Indicate based on @p reply->channel. The reply
+ * @c plaintext must already be staged in @p req->response by the caller; this
+ * helper does not consult @c reply->plaintext directly (it currently exists
+ * to make the channel choice an explicit value rather than a series of
+ * conditionals at the call site).
+ *
+ * Plain ACS CP replies do not go through this helper; they are sent inline
+ * by the CP domain since they share a connection-singleton transport
+ * context with confirm-driven completion.
+ *
+ * @param req    Live protected resource request (must own @c response).
+ * @param reply  Reply descriptor; only @c channel is consulted today.
+ *
+ * @return 0 on success, negative errno on failure.
+ */
+int acs_data_out_channel_send_protected(struct bt_acs_prot_resource_req *req,
+					const struct acs_reply *reply);
 
 /**
  * @brief Derive the session key from the completed key exchange.

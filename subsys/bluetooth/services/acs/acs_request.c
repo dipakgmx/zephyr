@@ -275,11 +275,16 @@ static int acs_auto_respond(struct bt_acs_prot_resource_req *req)
 	}
 
 	/* Route: Indicate → DOI, Notify/Read → DON. */
-	if (props & BT_GATT_CHRC_INDICATE) {
-		return acs_prot_resource_rsp_indicate(req);
-	}
+	{
+		struct acs_reply reply = {
+			.channel = (props & BT_GATT_CHRC_INDICATE) ? ACS_REPLY_DOI : ACS_REPLY_DON,
+			.plaintext = req->response,
+			.encrypted = true,
+			.needs_confirm = (props & BT_GATT_CHRC_INDICATE) != 0,
+		};
 
-	return acs_prot_resource_rsp_notify(req);
+		return acs_data_out_channel_send_protected(req, &reply);
+	}
 }
 
 void acs_prot_resource_req_abort_all(struct bt_acs_conn *acs_conn)
