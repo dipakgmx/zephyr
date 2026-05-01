@@ -34,11 +34,15 @@ static void acs_data_out_complete_cb(struct bt_conn *conn, const struct bt_gatt_
 	}
 
 	if (err != 0U) {
+		LOG_WRN("ACS data out completion reported error: %d", err);
 		acs_procedure_engine_abort(proc, -EIO);
 	} else {
+		LOG_DBG("ACS data out indication callback complete for handle=0x%04x",
+			bt_gatt_attr_get_handle(attr));
 		if (conn_ctx->abort_pending) {
 			bool secure = (conn_ctx->abort_flags & ACS_PROC_FLAG_SECURE_TRANSPORT) != 0U;
 
+			LOG_DBG("ACS data out completion: processing deferred abort response");
 			conn_ctx->abort_pending = false;
 			acs_procedure_engine_abort(proc, -ECANCELED);
 			acs_procedure_engine_reset(proc);

@@ -17,6 +17,7 @@
 #include <zephyr/sys/util.h>
 
 #include "acs_internal.h"
+#include "acs_key_desc.h"
 
 LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
 
@@ -33,11 +34,6 @@ enum acs_confirmation_action {
 	ACS_CONFIRM_ACTION_INPUT_NUMERIC = 0x02,
 	ACS_CONFIRM_ACTION_OUTPUT_NUMERIC = 0x03,
 	ACS_CONFIRM_ACTION_NOT_APPLICABLE = 0xFF,
-};
-
-enum {
-	ACS_KEY_ID_ECDH = 0x0001,
-	ACS_KEY_ID_KDF = 0x0002,
 };
 
 static int acs_kex_psa_status_to_errno(psa_status_t status)

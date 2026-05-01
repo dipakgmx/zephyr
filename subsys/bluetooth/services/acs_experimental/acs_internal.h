@@ -280,6 +280,9 @@ bool acs_runtime_client_nonce_conflicts(struct bt_conn *exclude_conn, const uint
 					size_t nonce_len);
 int acs_runtime_invalidate_all_security(void);
 int acs_runtime_invalidate_key(struct bt_conn *conn, uint16_t key_id);
+int acs_policy_resolve_registered_handles(void);
+const struct bt_acs_restriction_map *acs_policy_find_map(uint16_t map_id);
+extern const struct bt_gatt_authorization_cb acs_gatt_auth_cb;
 
 int acs_persist_save_conn(struct acs_conn_ctx *conn_ctx);
 void acs_persist_restore_conn(struct acs_conn_ctx *conn_ctx);
@@ -375,6 +378,8 @@ const struct bt_acs_cb *acs_runtime_callbacks(void);
 int acs_cp_domain_handle(struct acs_procedure *proc, const struct acs_frame *frame);
 int acs_cp_domain_send_response_code(struct acs_procedure *proc, uint8_t req_opcode,
 				     uint8_t response_code);
+int acs_cp_domain_send_payload(struct acs_procedure *proc, uint8_t rsp_opcode,
+			       struct net_buf *buf);
 
 /** Return the ACS Control Point value attribute. */
 const struct bt_gatt_attr *acs_service_attr_cp(void);

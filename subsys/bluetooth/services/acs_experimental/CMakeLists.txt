@@ -4,6 +4,7 @@ zephyr_sources_ifdef(
   CONFIG_BT_ACS
   acs_seg.c
   acs_persist.c
+  acs_policy.c
   acs_crypto.c
   acs_kex.c
   acs_cp_domain.c

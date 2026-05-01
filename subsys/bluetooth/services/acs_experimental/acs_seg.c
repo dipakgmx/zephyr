@@ -63,9 +63,13 @@ static void acs_seg_tx_confirm_cb(struct bt_conn *conn, struct bt_gatt_indicate_
 	}
 
 	if (ctx->offset < buf_len) {
+		LOG_DBG("seg_tx: indication confirmed, more segments pending offset=%u total_len=%u",
+			ctx->offset, buf_len);
 		k_work_submit(&ctx->tx_work);
 		return;
 	}
+
+	LOG_DBG("seg_tx: indication confirmed, transfer complete total_len=%u", buf_len);
 
 	if (tx_conn) {
 		bt_conn_unref(tx_conn);
