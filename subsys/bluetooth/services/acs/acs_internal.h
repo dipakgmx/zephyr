@@ -72,53 +72,32 @@ ssize_t acs_cp_write(struct bt_conn *conn, const struct bt_gatt_attr *attr, cons
 int acs_crypto_get_server_nonce_fixed(struct bt_acs_conn *acs_conn, uint8_t *nonce_buf, size_t len);
 
 /**
- * @brief Allocate or reset the CP response buffer for @p ctx.
+ * @brief Send a 3-byte Response Code indication on the active CP channel.
  *
- * Plain CP: lazy-allocs plain_cp_proc.response.
- * Protected CP: lazy-allocs prot_req->response with crypto headroom.
+ * Stages a fresh response buffer for @p owner via @ref acs_cp_prepare_reply_buf,
+ * fills [BT_ACS_CP_OPCODE_RESPONSE_CODE | req_opcode | code], and submits via
+ * @ref acs_tx_submit. Aborts any active reply sequence on prep failure.
  *
- * @param ctx  CP dispatch context.
- * @return Response buffer, or NULL on pool exhaustion.
- */
-struct net_buf *acs_cp_rsp_alloc(struct acs_cp_ctx *ctx);
-
-/**
- * @brief Send the CP response in the current buffer.
- *
- * Plain CP: arms segmented indication on cp_tx.
- * Protected CP: encrypts and queues via DOI.
- *
- * @param ctx  CP dispatch context.
  * @return 0 on success, negative errno on failure.
  */
-int acs_cp_rsp_send(struct acs_cp_ctx *ctx);
+int acs_cp_rsp_status(const struct acs_exec_owner *owner, uint8_t req_opcode, uint8_t code);
+
+/** @brief Return true if a multi-step reply sequence is active on @p owner. */
+bool acs_seq_active(const struct acs_exec_owner *owner);
 
 /**
- * @brief Send a 3-byte Response Code indication.
+ * @brief Start a multi-step reply sequence on @p owner.
  *
- * @param ctx        CP dispatch context.
- * @param req_opcode Opcode being responded to.
- * @param code       ACS CP response code value.
- * @return 0 on success, negative errno on failure.
- */
-int acs_cp_rsp_status(struct acs_cp_ctx *ctx, uint8_t req_opcode, uint8_t code);
-
-/** @brief Return true if a multi-step reply sequence is active on @p ctx. */
-bool acs_seq_active(const struct acs_cp_ctx *ctx);
-
-/**
- * @brief Start a multi-step reply sequence on @p ctx.
- *
- * @param ctx   CP dispatch context.
+ * @param owner Active execution owner.
  * @param desc  Sequence descriptor (step table + metadata).
  */
-void acs_seq_begin(struct acs_cp_ctx *ctx, const struct acs_seq_desc *desc);
+void acs_seq_begin(const struct acs_exec_owner *owner, const struct acs_seq_desc *desc);
 
 /** @brief Mark the active reply sequence as complete and release state. */
-void acs_seq_clear(struct acs_cp_ctx *ctx);
+void acs_seq_clear(const struct acs_exec_owner *owner);
 
 /** @brief Abort the active reply sequence, invoking on_abort if set. */
-void acs_seq_abort(struct acs_cp_ctx *ctx);
+void acs_seq_abort(const struct acs_exec_owner *owner);
 
 /** @brief Resume a plain CP reply sequence after the peer confirms an indication. */
 void acs_seq_on_cp_confirm(struct bt_conn *conn, const struct bt_gatt_attr *attr);
@@ -242,17 +221,89 @@ int acs_require_data_out_subscription(struct bt_conn *conn, uint16_t resource_ha
 				      uint16_t data_length);
 
 /**
- * @brief Send a CP-channel reply.
+ * @brief Single-seam outbound submission for any reply.
  *
- * Unifies the plain-CP and protected-CP send paths. For protected CP
- * (@c ctx->prot_req != NULL) delegates to @ref acs_data_out_channel_send_protected.
- * For plain CP, pulls the staged response buffer out of
- * @c acs_conn->plain_cp_proc.response and arms the segmented indication on
- * @c acs_conn->cp_tx with @ref acs_cp_on_indicate_done as completion callback.
+ * Decides the transport family from @p reply->channel:
+ *   - @ref ACS_REPLY_CP  — plain segmented CP indication on @c acs_conn->cp_tx,
+ *     completion via @ref acs_cp_on_indicate_done. @p owner must be the plain-CP
+ *     singleton.
+ *   - @ref ACS_REPLY_DOI — encrypts in place, queues on @c indicate_fifo with
+ *     @ref try_send_next, completion via @ref acs_data_out_on_indicate_done.
+ *     @p owner must be a protected request.
+ *   - @ref ACS_REPLY_DON — encrypts in place, sends an unconfirmed segmented
+ *     notification. @p owner must be a protected request.
+ *
+ * Domain code should produce a buffer + reply and call this. The send seam
+ * picks segmentation, queueing, encryption, and the completion callback.
  *
  * @return 0 on success, negative errno on failure.
  */
-int acs_data_out_channel_send_cp(struct acs_cp_ctx *ctx, const struct acs_reply *reply);
+int acs_tx_submit(const struct acs_exec_owner *owner, const struct acs_reply *reply);
+
+/**
+ * @brief Lazy-allocate or reset the response staging buffer for @p owner.
+ *
+ * Plain CP: returns the singleton @c plain_cp_proc.response, no headroom,
+ * no payload prefix.
+ *
+ * Protected CP / characteristic: returns @c req->response with
+ * @ref ACS_CRYPTO_HEADROOM reserved and the protected-resource handle prefix
+ * already pushed, so the handler can append its body bytes directly.
+ *
+ * @param owner     Active owner.
+ * @param channel   Reply channel — selects whether the resource_handle prefix
+ *                  is seeded (DON / DOI for protected paths).
+ * @param encrypted True when the reply will go through AEAD encryption (drives
+ *                  the headroom requirement).
+ * @return Buffer to append response bytes into, or NULL on pool exhaustion.
+ */
+struct net_buf *acs_prepare_reply_buf(const struct acs_exec_owner *owner,
+				      enum acs_reply_channel channel, bool encrypted);
+
+/**
+ * @brief Convenience wrapper that picks the CP-canonical reply mode for @p owner.
+ *
+ * Plain CP    → @ref ACS_REPLY_CP, encrypted=false.
+ * Protected CP → @ref ACS_REPLY_DOI, encrypted=true.
+ *
+ * Use in CP handlers that always reply on the canonical channel for their
+ * dispatch path; for explicit overrides (e.g. DON), call
+ * @ref acs_prepare_reply_buf directly.
+ */
+struct net_buf *acs_cp_prepare_reply_buf(const struct acs_exec_owner *owner);
+
+/**
+ * @brief Build a logical CP reply from an owner.
+ *
+ * Resolves the active procedure via the owner, validates its staged response
+ * buffer, and populates @p reply with channel/encrypted/needs_confirm
+ * matching the owner kind:
+ *   - plain CP   → ACS_REPLY_CP, encrypted=false
+ *   - protected  → ACS_REPLY_DOI, encrypted=true
+ * (@p needs_confirm is true for both — these are confirmed indications.)
+ */
+void acs_cp_build_reply(const struct acs_exec_owner *owner, struct acs_reply *reply);
+
+/**
+ * @brief Send a CP-channel reply assembled from @p owner.
+ *
+ * Convenience over @ref acs_cp_build_reply + @ref acs_tx_submit. Aborts any
+ * active reply sequence on submit failure and logs the failure.
+ *
+ * @return 0 on success, negative errno on failure.
+ */
+int acs_cp_send_reply(const struct acs_exec_owner *owner);
+
+/**
+ * @brief Owner-centric reply-sequence advance.
+ *
+ * Common implementation behind @ref acs_seq_on_cp_confirm and
+ * @ref acs_seq_on_req_confirm. Builds an @c acs_cp_step_ctx from the owner and
+ * drives the next step of any active reply sequence; aborts the sequence on
+ * step failure. No-op if no sequence is active.
+ */
+void acs_seq_on_owner_confirm(const struct acs_exec_owner *owner, struct bt_conn *conn,
+			      const struct bt_gatt_attr *attr);
 
 /**
  * @brief Plain-CP indication-confirmation callback (defined in acs_cp.c).
@@ -305,40 +356,25 @@ void acs_prot_resource_req_tx_done(struct bt_acs_prot_resource_req *req);
 void acs_prot_resource_req_abort_all(struct bt_acs_conn *acs_conn);
 
 /**
- * @brief Encrypt and send @p req response via Data Out Notify.
+ * @brief Encrypt and send @p plaintext via Data Out Notify on @p req's connection.
+ *
+ * @p plaintext must be the request's currently-staged response buffer
+ * (@c req->response). Passing it explicitly keeps the buffer authoritatively
+ * sourced from the @ref acs_reply contract rather than via an implicit
+ * convention; the helper asserts the consistency in debug builds.
  *
  * @return 0 on success, negative errno on failure.
  */
-int acs_prot_resource_rsp_notify(struct bt_acs_prot_resource_req *req);
+int acs_prot_resource_rsp_notify(struct bt_acs_prot_resource_req *req, struct net_buf *plaintext);
 
 /**
- * @brief Encrypt and queue @p req response for Data Out Indicate.
+ * @brief Encrypt and queue @p plaintext for Data Out Indicate on @p req's connection.
+ *
+ * Same contract as @ref acs_prot_resource_rsp_notify regarding @p plaintext.
  *
  * @return 0 on success, negative errno on failure.
  */
-int acs_prot_resource_rsp_indicate(struct bt_acs_prot_resource_req *req);
-
-/**
- * @brief Send a logical reply on a protected resource request.
- *
- * Thin indirection over the per-channel send helpers — selects between
- * Data Out Notify and Data Out Indicate based on @p reply->channel. The reply
- * @c plaintext must already be staged in @p req->response by the caller; this
- * helper does not consult @c reply->plaintext directly (it currently exists
- * to make the channel choice an explicit value rather than a series of
- * conditionals at the call site).
- *
- * Plain ACS CP replies do not go through this helper; they are sent inline
- * by the CP domain since they share a connection-singleton transport
- * context with confirm-driven completion.
- *
- * @param req    Live protected resource request (must own @c response).
- * @param reply  Reply descriptor; only @c channel is consulted today.
- *
- * @return 0 on success, negative errno on failure.
- */
-int acs_data_out_channel_send_protected(struct bt_acs_prot_resource_req *req,
-					const struct acs_reply *reply);
+int acs_prot_resource_rsp_indicate(struct bt_acs_prot_resource_req *req, struct net_buf *plaintext);
 
 /**
  * @brief Derive the session key from the completed key exchange.

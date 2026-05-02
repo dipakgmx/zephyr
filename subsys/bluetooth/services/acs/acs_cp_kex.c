@@ -21,14 +21,14 @@
 #include <zephyr/logging/log.h>
 LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
 
-void acs_cp_kex_get_current_key_list(struct acs_cp_ctx *ctx)
+void acs_cp_kex_get_current_key_list(const struct acs_exec_owner *owner)
 {
 	/* count(1 byte) + up to ACS_KEY_ID_COUNT x Key_ID(2 bytes) */
 	uint8_t buf[sizeof(uint8_t) + ACS_KEY_ID_COUNT * sizeof(uint16_t)];
 	uint8_t count = 0;
 	uint16_t pos = sizeof(uint8_t); /* byte 0 reserved for count */
 
-	if (ctx->acs_conn->key_state == BT_ACS_KEY_EXCHANGE_COMPLETE) {
+	if (owner->acs_conn->key_state == BT_ACS_KEY_EXCHANGE_COMPLETE) {
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_ECDH)
 		sys_put_le16(ACS_KEY_ID_ECDH, &buf[pos]);
 		pos += sizeof(uint16_t);
@@ -44,7 +44,7 @@ void acs_cp_kex_get_current_key_list(struct acs_cp_ctx *ctx)
 		 * exchange for this connection.  Reporting it before that point would
 		 * let the peer attempt AEAD with a key that does not yet exist on the
 		 * server side, causing spurious decryption failures. */
-		if (ctx->acs_conn->kdf_child_active) {
+		if (owner->acs_conn->kdf_child_active) {
 			sys_put_le16(ACS_KEY_ID_KDF, &buf[pos]);
 			pos += sizeof(uint16_t);
 			count++;
@@ -55,17 +55,17 @@ void acs_cp_kex_get_current_key_list(struct acs_cp_ctx *ctx)
 	buf[0] = count;
 
 	{
-		struct net_buf *rsp_buf = acs_cp_rsp_alloc(ctx);
+		struct net_buf *rsp_buf = acs_cp_prepare_reply_buf(owner);
 
 		if (!rsp_buf) {
 			LOG_WRN("buffer pool exhausted");
-			acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_GET_CURRENT_KEY_LIST,
+			acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_GET_CURRENT_KEY_LIST,
 					  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 			return;
 		}
 		net_buf_add_u8(rsp_buf, BT_ACS_CP_OPCODE_CURRENT_KEY_LIST_RESPONSE);
 		net_buf_add_mem(rsp_buf, buf, pos);
-		acs_cp_rsp_send(ctx);
+		acs_cp_send_reply(owner);
 	}
 }
 
@@ -73,9 +73,10 @@ void acs_cp_kex_get_current_key_list(struct acs_cp_ctx *ctx)
 
 /* --- Key exchange success sequence steps --- */
 
-static int kex_step_success_response(struct acs_cp_ctx *ctx)
+static int kex_step_success_response(struct acs_cp_step_ctx *ctx)
 {
-	struct bt_acs_conn *acs_conn = ctx->acs_conn;
+	const struct acs_exec_owner *owner = &ctx->owner;
+	struct bt_acs_conn *acs_conn = owner->acs_conn;
 	uint8_t payload[3];
 	uint16_t key_id;
 
@@ -88,19 +89,20 @@ static int kex_step_success_response(struct acs_cp_ctx *ctx)
 	sys_put_le16(key_id, &payload[0]);
 	payload[2] = 0x00;
 
-	struct net_buf *buf = acs_cp_rsp_alloc(ctx);
+	struct net_buf *buf = acs_cp_prepare_reply_buf(owner);
 
 	if (!buf) {
 		return -ENOMEM;
 	}
 	net_buf_add_u8(buf, BT_ACS_CP_OPCODE_KEY_EXCHANGE_RESPONSE);
 	net_buf_add_mem(buf, payload, sizeof(payload));
-	return acs_cp_rsp_send(ctx);
+	return acs_cp_send_reply(owner);
 }
 
-static int kex_step_status(struct acs_cp_ctx *ctx)
+static int kex_step_status(struct acs_cp_step_ctx *ctx)
 {
-	struct bt_acs_conn *acs_conn = ctx->acs_conn;
+	const struct acs_exec_owner *owner = &ctx->owner;
+	struct bt_acs_conn *acs_conn = owner->acs_conn;
 
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
 	/* Mark the connection so key-list and AEAD gating know the child key is live.
@@ -123,7 +125,7 @@ static int kex_step_status(struct acs_cp_ctx *ctx)
 		const struct bt_acs_cb *cb = acs_cb_get();
 
 		if (cb && cb->security_established) {
-			cb->security_established(ctx->conn, acs_conn->crypto.active_key,
+			cb->security_established(owner->acs_conn->conn, acs_conn->crypto.active_key,
 						 CONFIG_BT_ACS_SESSION_KEY_SIZE);
 		}
 	}
@@ -150,18 +152,18 @@ static int kex_step_status(struct acs_cp_ctx *ctx)
 	if (!acs_conn->kdf_child_active)
 #endif
 	{
-		acs_session_store(ctx->conn, acs_conn);
+		acs_session_store(owner->acs_conn->conn, acs_conn);
 	}
 #endif
 
-	acs_seq_clear(ctx);
-	acs_status_indicate(ctx->conn);
+	acs_seq_clear(owner);
+	acs_status_indicate(owner->acs_conn->conn);
 	return 0;
 }
 
-static void kex_on_abort(struct acs_cp_ctx *ctx)
+static void kex_on_abort(const struct acs_exec_owner *owner)
 {
-	struct bt_acs_conn *acs_conn = ctx ? ctx->acs_conn : NULL;
+	struct bt_acs_conn *acs_conn = owner ? owner->acs_conn : NULL;
 
 	if (!acs_conn || !acs_conn->kex) {
 		return;
@@ -188,9 +190,10 @@ static const struct acs_seq_desc kex_success_seq = {
 
 /* --- Key exchange failure sequence steps --- */
 
-static int kex_step_fail_response(struct acs_cp_ctx *ctx)
+static int kex_step_fail_response(struct acs_cp_step_ctx *ctx)
 {
-	struct bt_acs_conn *acs_conn = ctx->acs_conn;
+	const struct acs_exec_owner *owner = &ctx->owner;
+	struct bt_acs_conn *acs_conn = owner->acs_conn;
 	uint8_t payload[3];
 	uint16_t key_id;
 
@@ -202,23 +205,24 @@ static int kex_step_fail_response(struct acs_cp_ctx *ctx)
 	sys_put_le16(key_id, &payload[0]);
 	payload[2] = 0x01;
 
-	struct net_buf *buf = acs_cp_rsp_alloc(ctx);
+	struct net_buf *buf = acs_cp_prepare_reply_buf(owner);
 
 	if (!buf) {
 		return -ENOMEM;
 	}
 	net_buf_add_u8(buf, BT_ACS_CP_OPCODE_KEY_EXCHANGE_RESPONSE);
 	net_buf_add_mem(buf, payload, sizeof(payload));
-	return acs_cp_rsp_send(ctx);
+	return acs_cp_send_reply(owner);
 }
 
-static int kex_step_fail_cleanup(struct acs_cp_ctx *ctx)
+static int kex_step_fail_cleanup(struct acs_cp_step_ctx *ctx)
 {
-	struct bt_acs_conn *acs_conn = ctx->acs_conn;
+	const struct acs_exec_owner *owner = &ctx->owner;
+	struct bt_acs_conn *acs_conn = owner->acs_conn;
 
 	acs_kex_free(acs_conn->kex);
 	acs_conn->kex = NULL;
-	acs_seq_clear(ctx);
+	acs_seq_clear(owner);
 	return 0;
 }
 
@@ -233,9 +237,9 @@ static const struct acs_seq_desc kex_fail_seq = {
 	.on_abort = kex_on_abort,
 };
 
-void acs_cp_kex_exchange_kdf(struct acs_cp_ctx *ctx, struct net_buf_simple *buf)
+void acs_cp_kex_exchange_kdf(const struct acs_exec_owner *owner, struct net_buf_simple *buf)
 {
-	struct bt_acs_conn *acs_conn = ctx->acs_conn;
+	struct bt_acs_conn *acs_conn = owner->acs_conn;
 	struct acs_kdf_req req_data;
 	uint16_t key_id;
 	struct net_buf *rsp_buf;
@@ -244,7 +248,7 @@ void acs_cp_kex_exchange_kdf(struct acs_cp_ctx *ctx, struct net_buf_simple *buf)
 
 	if (buf->len != sizeof(struct acs_kdf_req)) {
 		LOG_WRN("Key exchange KDF operand invalid length: %u", buf->len);
-		acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_KEY_EXCHANGE_KDF,
+		acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_KEY_EXCHANGE_KDF,
 				  BT_ACS_CP_RESPONSE_INVALID_OPERAND);
 		return;
 	}
@@ -260,14 +264,14 @@ void acs_cp_kex_exchange_kdf(struct acs_cp_ctx *ctx, struct net_buf_simple *buf)
 	if (!acs_conn->kex || key_id != sys_le16_to_cpu(acs_conn->kex->start_kex.key_id)) {
 		LOG_WRN("Key exchange KDF operand invalid Key_ID: 0x%04x, expected 0x%04x", key_id,
 			acs_conn->kex ? sys_le16_to_cpu(acs_conn->kex->start_kex.key_id) : 0);
-		acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_KEY_EXCHANGE_KDF,
+		acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_KEY_EXCHANGE_KDF,
 				  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE);
 		return;
 	}
 
-	rsp_buf = acs_cp_rsp_alloc(ctx);
+	rsp_buf = acs_cp_prepare_reply_buf(owner);
 	if (!rsp_buf) {
-		acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_KEY_EXCHANGE_KDF,
+		acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_KEY_EXCHANGE_KDF,
 				  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 		return;
 	}
@@ -283,15 +287,15 @@ void acs_cp_kex_exchange_kdf(struct acs_cp_ctx *ctx, struct net_buf_simple *buf)
 		if (err == -EAGAIN) {
 			LOG_WRN("KDF key exchange: wrong state (state %d)", acs_conn->key_state);
 			acs_conn->key_state = BT_ACS_KEY_EXCHANGE_IDLE;
-			acs_seq_begin(ctx, &kex_fail_seq);
-			acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_KEY_EXCHANGE_KDF,
+			acs_seq_begin(owner, &kex_fail_seq);
+			acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_KEY_EXCHANGE_KDF,
 					  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE);
 			return;
 		} else if (err) {
 			LOG_ERR("KDF key exchange: internal error (err %d)", err);
 			acs_conn->key_state = BT_ACS_KEY_EXCHANGE_IDLE;
-			acs_seq_begin(ctx, &kex_fail_seq);
-			acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_KEY_EXCHANGE_KDF,
+			acs_seq_begin(owner, &kex_fail_seq);
+			acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_KEY_EXCHANGE_KDF,
 					  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 			return;
 		}
@@ -306,12 +310,12 @@ void acs_cp_kex_exchange_kdf(struct acs_cp_ctx *ctx, struct net_buf_simple *buf)
 		acs_conn->key_state = BT_ACS_KEY_EXCHANGE_PENDING_RESPONSE;
 
 		/* KDF_RESPONSE must be delivered before KEY_EXCHANGE_RESPONSE (§4.4.3.10). */
-		acs_seq_begin(ctx, &kex_success_seq);
-		arm_err = acs_cp_rsp_send(ctx);
+		acs_seq_begin(owner, &kex_success_seq);
+		arm_err = acs_cp_send_reply(owner);
 
 		if (arm_err) {
 			LOG_WRN("KDF standalone response indication arm failed: %d", arm_err);
-			acs_seq_abort(ctx);
+			acs_seq_abort(owner);
 		}
 		return;
 	}
@@ -323,7 +327,7 @@ void acs_cp_kex_exchange_kdf(struct acs_cp_ctx *ctx, struct net_buf_simple *buf)
 	 * been processed and the shared secret is available for derivation.
 	 */
 	if (acs_conn->key_state != BT_ACS_KEY_EXCHANGE_PUBKEY_EXCHANGED) {
-		acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_KEY_EXCHANGE_KDF,
+		acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_KEY_EXCHANGE_KDF,
 				  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE);
 		return;
 	}
@@ -333,33 +337,33 @@ void acs_cp_kex_exchange_kdf(struct acs_cp_ctx *ctx, struct net_buf_simple *buf)
 	if (err == -EAGAIN) {
 		LOG_WRN("ECDH KDF: wrong state (state %d)", acs_conn->key_state);
 		acs_conn->key_state = BT_ACS_KEY_EXCHANGE_IDLE;
-		acs_seq_begin(ctx, &kex_fail_seq);
-		acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_KEY_EXCHANGE_KDF,
+		acs_seq_begin(owner, &kex_fail_seq);
+		acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_KEY_EXCHANGE_KDF,
 				  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE);
 		return;
 	} else if (err) {
 		LOG_ERR("ECDH KDF: internal error (err %d)", err);
 		acs_conn->key_state = BT_ACS_KEY_EXCHANGE_IDLE;
-		acs_seq_begin(ctx, &kex_fail_seq);
-		acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_KEY_EXCHANGE_KDF,
+		acs_seq_begin(owner, &kex_fail_seq);
+		acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_KEY_EXCHANGE_KDF,
 				  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 		return;
 	}
 
-	arm_err = acs_cp_rsp_send(ctx);
+	arm_err = acs_cp_send_reply(owner);
 	if (arm_err) {
 		LOG_WRN("ECDH KDF response arm failed: %d", arm_err);
 	}
 #else
-	acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_KEY_EXCHANGE_KDF,
+	acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_KEY_EXCHANGE_KDF,
 			  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE);
 #endif /* CONFIG_BT_ACS_KEY_EXCHANGE_ECDH */
 }
 #endif /* CONFIG_BT_ACS_KEY_EXCHANGE_KDF || CONFIG_BT_ACS_KEY_EXCHANGE_ECDH */
 
-void acs_cp_kex_start(struct acs_cp_ctx *ctx, struct net_buf_simple *buf)
+void acs_cp_kex_start(const struct acs_exec_owner *owner, struct net_buf_simple *buf)
 {
-	struct bt_acs_conn *acs_conn = ctx->acs_conn;
+	struct bt_acs_conn *acs_conn = owner->acs_conn;
 	struct acs_cp_start_key_exchange_req req_data;
 	uint16_t key_id;
 	uint8_t method;
@@ -374,16 +378,16 @@ void acs_cp_kex_start(struct acs_cp_ctx *ctx, struct net_buf_simple *buf)
 
 #if defined(CONFIG_BT_SETTINGS)
 	/* Decline if session cache is full and this peer has no existing slot. */
-	if (!acs_session_cache_has_room(bt_conn_get_dst(ctx->conn))) {
+	if (!acs_session_cache_has_room(bt_conn_get_dst(owner->acs_conn->conn))) {
 		LOG_WRN("start_kex: session cache full");
-		acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_START_KEY_EXCHANGE,
+		acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_START_KEY_EXCHANGE,
 				  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 		return;
 	}
 #endif /* CONFIG_BT_SETTINGS */
 
 	if (buf->len < sizeof(struct acs_cp_start_key_exchange_req)) {
-		acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_START_KEY_EXCHANGE,
+		acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_START_KEY_EXCHANGE,
 				  BT_ACS_CP_RESPONSE_INVALID_OPERAND);
 		return;
 	}
@@ -458,7 +462,7 @@ void acs_cp_kex_start(struct acs_cp_ctx *ctx, struct net_buf_simple *buf)
 	if (!method_action_valid) {
 		LOG_WRN("Start Key Exchange: unsupported method/action (method=0x%02x action=0x%02x)",
 			method, action);
-		acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_START_KEY_EXCHANGE,
+		acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_START_KEY_EXCHANGE,
 				  BT_ACS_CP_RESPONSE_INVALID_OPERAND);
 		return;
 	}
@@ -472,7 +476,7 @@ void acs_cp_kex_start(struct acs_cp_ctx *ctx, struct net_buf_simple *buf)
 		    action != BT_ACS_CONFIRM_ACTION_NOT_APPLICABLE) {
 			LOG_WRN("invalid confirmation method/action (method=0x%02x action=0x%02x)",
 				method, action);
-			acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_START_KEY_EXCHANGE,
+			acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_START_KEY_EXCHANGE,
 					  BT_ACS_CP_RESPONSE_INVALID_OPERAND);
 			return;
 		}
@@ -480,7 +484,7 @@ void acs_cp_kex_start(struct acs_cp_ctx *ctx, struct net_buf_simple *buf)
 			LOG_WRN("no parent key available (key_state=%d, prior ECDH exchange "
 				"required)",
 				acs_conn->key_state);
-			acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_START_KEY_EXCHANGE,
+			acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_START_KEY_EXCHANGE,
 					  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE);
 			return;
 		}
@@ -490,7 +494,7 @@ void acs_cp_kex_start(struct acs_cp_ctx *ctx, struct net_buf_simple *buf)
 		 * ambiguity about which key is current in NVS. */
 		if (acs_conn->kdf_child_active) {
 			LOG_WRN("KDF child key already active — invalidate before re-exchange");
-			acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_START_KEY_EXCHANGE,
+			acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_START_KEY_EXCHANGE,
 					  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE);
 			return;
 		}
@@ -502,7 +506,7 @@ void acs_cp_kex_start(struct acs_cp_ctx *ctx, struct net_buf_simple *buf)
 	}
 
 	if (err != 0) {
-		acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_START_KEY_EXCHANGE,
+		acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_START_KEY_EXCHANGE,
 				  errno_to_acs_status(err));
 		return;
 	}
@@ -512,7 +516,7 @@ void acs_cp_kex_start(struct acs_cp_ctx *ctx, struct net_buf_simple *buf)
 		if (!acs_conn->kex) {
 			LOG_ERR("No free KEX context");
 			acs_conn->key_state = BT_ACS_KEY_EXCHANGE_IDLE;
-			acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_START_KEY_EXCHANGE,
+			acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_START_KEY_EXCHANGE,
 					  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 			return;
 		}
@@ -533,22 +537,22 @@ void acs_cp_kex_start(struct acs_cp_ctx *ctx, struct net_buf_simple *buf)
 		sys_put_be32(oob_num,
 			     &acs_conn->kex->auth_value[ACS_HMAC_SHA256_SIZE - sizeof(oob_num)]);
 		if (cb && cb->output_oob_number) {
-			cb->output_oob_number(ctx->conn, action, oob_num);
+			cb->output_oob_number(owner->acs_conn->conn, action, oob_num);
 		}
 		break;
 	case BT_ACS_CONFIRM_METHOD_INPUT_OOB:
 		if (cb && cb->input_oob_request) {
-			cb->input_oob_request(ctx->conn, action);
+			cb->input_oob_request(owner->acs_conn->conn, action);
 		}
 		break;
 	case BT_ACS_CONFIRM_METHOD_STATIC_OOB:
 		if (cb && cb->static_oob_get) {
 			oob_len = 0;
-			oob_err = cb->static_oob_get(ctx->conn, oob_buf, &oob_len);
+			oob_err = cb->static_oob_get(owner->acs_conn->conn, oob_buf, &oob_len);
 			if (oob_err || oob_len == 0 || oob_len > ACS_HMAC_SHA256_SIZE) {
 				LOG_WRN("start_key_exchange: static_oob_get failed: %d", oob_err);
 				acs_conn->key_state = BT_ACS_KEY_EXCHANGE_IDLE;
-				acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_START_KEY_EXCHANGE,
+				acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_START_KEY_EXCHANGE,
 						  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 				return;
 			}
@@ -564,26 +568,26 @@ void acs_cp_kex_start(struct acs_cp_ctx *ctx, struct net_buf_simple *buf)
 	/* Store request data only after OOB processing succeeds */
 	acs_conn->kex->start_kex = req_data;
 
-	acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_START_KEY_EXCHANGE, BT_ACS_CP_RESPONSE_SUCCESS);
+	acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_START_KEY_EXCHANGE, BT_ACS_CP_RESPONSE_SUCCESS);
 }
 
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_ECDH)
-void acs_cp_kex_exchange_ecdh(struct acs_cp_ctx *ctx, struct net_buf_simple *buf)
+void acs_cp_kex_exchange_ecdh(const struct acs_exec_owner *owner, struct net_buf_simple *buf)
 {
-	struct bt_acs_conn *acs_conn = ctx->acs_conn;
+	struct bt_acs_conn *acs_conn = owner->acs_conn;
 	uint16_t key_id;
 	int err;
 	int arm_err;
 
 	if (acs_conn->key_state != BT_ACS_KEY_EXCHANGE_STARTED) {
-		acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH,
+		acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH,
 				  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE);
 		return;
 	}
 
 	if (buf->len < 2) {
 		LOG_WRN("ECDH key exchange operand too short: %u", buf->len);
-		acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH,
+		acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH,
 				  BT_ACS_CP_RESPONSE_INVALID_OPERAND);
 		return;
 	}
@@ -593,7 +597,7 @@ void acs_cp_kex_exchange_ecdh(struct acs_cp_ctx *ctx, struct net_buf_simple *buf
 	/* Key_ID must match the one negotiated during Start Key Exchange. */
 	if (!acs_conn->kex || key_id != sys_le16_to_cpu(acs_conn->kex->start_kex.key_id)) {
 		LOG_WRN("ECDH key exchange with invalid Key_ID: 0x%04X", key_id);
-		acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH,
+		acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH,
 				  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE);
 		return;
 	}
@@ -604,20 +608,20 @@ void acs_cp_kex_exchange_ecdh(struct acs_cp_ctx *ctx, struct net_buf_simple *buf
 		const struct bt_acs_cb *cb = acs_cb_get();
 
 		if (!cb || !cb->oob_key_get) {
-			acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH,
+			acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH,
 					  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 			return;
 		}
-		err = cb->oob_key_get(ctx->conn, acs_conn->kex->shared_secret,
+		err = cb->oob_key_get(owner->acs_conn->conn, acs_conn->kex->shared_secret,
 				      &acs_conn->kex->key_mat_len);
 		if (err || acs_conn->kex->key_mat_len == 0) {
 			LOG_ERR("OOB key_get failed: %d", err);
-			acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH,
+			acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH,
 					  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 			return;
 		}
 		acs_conn->key_state = BT_ACS_KEY_EXCHANGE_PUBKEY_EXCHANGED;
-		acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH,
+		acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH,
 				  BT_ACS_CP_RESPONSE_SUCCESS);
 		return;
 	}
@@ -625,7 +629,7 @@ void acs_cp_kex_exchange_ecdh(struct acs_cp_ctx *ctx, struct net_buf_simple *buf
 
 	if (buf->len != sizeof(acs_conn->kex->client_pubkey)) {
 		LOG_WRN("ECDH key exchange operand invalid length: %u", buf->len);
-		acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH,
+		acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH,
 				  BT_ACS_CP_RESPONSE_INVALID_OPERAND);
 		return;
 	}
@@ -635,10 +639,10 @@ void acs_cp_kex_exchange_ecdh(struct acs_cp_ctx *ctx, struct net_buf_simple *buf
 	       sizeof(acs_conn->kex->client_pubkey));
 
 	{
-		struct net_buf *rsp_buf = acs_cp_rsp_alloc(ctx);
+		struct net_buf *rsp_buf = acs_cp_prepare_reply_buf(owner);
 
 		if (!rsp_buf) {
-			acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH,
+			acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH,
 					  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 			return;
 		}
@@ -649,23 +653,23 @@ void acs_cp_kex_exchange_ecdh(struct acs_cp_ctx *ctx, struct net_buf_simple *buf
 		if (err == -EBADMSG || err == -EINVAL) {
 			LOG_ERR("ECDH pubkey: invalid client public key (err %d)", err);
 			acs_conn->key_state = BT_ACS_KEY_EXCHANGE_IDLE;
-			acs_seq_begin(ctx, &kex_fail_seq);
-			acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH,
+			acs_seq_begin(owner, &kex_fail_seq);
+			acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH,
 					  BT_ACS_CP_RESPONSE_INVALID_PUBLIC_KEY);
 		} else if (err == -EAGAIN) {
 			LOG_WRN("ECDH pubkey: wrong state (state %d)", acs_conn->key_state);
 			acs_conn->key_state = BT_ACS_KEY_EXCHANGE_IDLE;
-			acs_seq_begin(ctx, &kex_fail_seq);
-			acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH,
+			acs_seq_begin(owner, &kex_fail_seq);
+			acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH,
 					  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE);
 		} else if (err) {
 			LOG_ERR("ECDH pubkey: internal error (err %d)", err);
 			acs_conn->key_state = BT_ACS_KEY_EXCHANGE_IDLE;
-			acs_seq_begin(ctx, &kex_fail_seq);
-			acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH,
+			acs_seq_begin(owner, &kex_fail_seq);
+			acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH,
 					  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 		} else {
-			arm_err = acs_cp_rsp_send(ctx);
+			arm_err = acs_cp_send_reply(owner);
 			if (arm_err) {
 				LOG_WRN("ECDH pubkey response arm failed: %d", arm_err);
 			}
@@ -673,9 +677,9 @@ void acs_cp_kex_exchange_ecdh(struct acs_cp_ctx *ctx, struct net_buf_simple *buf
 	}
 }
 
-void acs_cp_kex_ecdh_confirm_code(struct acs_cp_ctx *ctx, struct net_buf_simple *buf)
+void acs_cp_kex_ecdh_confirm_code(const struct acs_exec_owner *owner, struct net_buf_simple *buf)
 {
-	struct bt_acs_conn *acs_conn = ctx->acs_conn;
+	struct bt_acs_conn *acs_conn = owner->acs_conn;
 	struct acs_cp_ecdh_confirm_code_req req_data;
 	uint16_t key_id;
 	struct net_buf *rsp_buf;
@@ -684,13 +688,13 @@ void acs_cp_kex_ecdh_confirm_code(struct acs_cp_ctx *ctx, struct net_buf_simple 
 	if (acs_conn->key_state != BT_ACS_KEY_EXCHANGE_PUBKEY_EXCHANGED &&
 	    acs_conn->key_state != BT_ACS_KEY_EXCHANGE_KDF_DONE) {
 		LOG_ERR("confirm_code: invalid state %d", acs_conn->key_state);
-		acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_ECDH_CONFIRM_CODE,
+		acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_ECDH_CONFIRM_CODE,
 				  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE);
 		return;
 	}
 
 	if (buf->len != sizeof(struct acs_cp_ecdh_confirm_code_req)) {
-		acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_ECDH_CONFIRM_CODE,
+		acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_ECDH_CONFIRM_CODE,
 				  BT_ACS_CP_RESPONSE_INVALID_OPERAND);
 		return;
 	}
@@ -700,7 +704,7 @@ void acs_cp_kex_ecdh_confirm_code(struct acs_cp_ctx *ctx, struct net_buf_simple 
 
 	if (!acs_conn->kex ||
 	    sys_le16_to_cpu(req_data.key_id) != sys_le16_to_cpu(acs_conn->kex->start_kex.key_id)) {
-		acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_ECDH_CONFIRM_CODE,
+		acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_ECDH_CONFIRM_CODE,
 				  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE);
 		return;
 	}
@@ -711,9 +715,9 @@ void acs_cp_kex_ecdh_confirm_code(struct acs_cp_ctx *ctx, struct net_buf_simple 
 
 	memcpy(acs_conn->kex->client_confirm, req_data.confirm_code, ACS_HMAC_SHA256_SIZE);
 
-	rsp_buf = acs_cp_rsp_alloc(ctx);
+	rsp_buf = acs_cp_prepare_reply_buf(owner);
 	if (!rsp_buf) {
-		acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_ECDH_CONFIRM_CODE,
+		acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_ECDH_CONFIRM_CODE,
 				  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 		return;
 	}
@@ -724,32 +728,32 @@ void acs_cp_kex_ecdh_confirm_code(struct acs_cp_ctx *ctx, struct net_buf_simple 
 	if (err) {
 		/* Keep kex alive long enough to emit KEY_EXCHANGE_RESPONSE(failed). */
 		acs_conn->key_state = BT_ACS_KEY_EXCHANGE_IDLE;
-		acs_seq_begin(ctx, &kex_fail_seq);
-		acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_ECDH_CONFIRM_CODE,
+		acs_seq_begin(owner, &kex_fail_seq);
+		acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_ECDH_CONFIRM_CODE,
 				  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 	} else {
-		err = acs_cp_rsp_send(ctx);
+		err = acs_cp_send_reply(owner);
 		if (err) {
 			LOG_WRN("confirm_code: arm failed: %d", err);
 		}
 	}
 }
 
-void acs_cp_kex_ecdh_confirm_rand(struct acs_cp_ctx *ctx, struct net_buf_simple *buf)
+void acs_cp_kex_ecdh_confirm_rand(const struct acs_exec_owner *owner, struct net_buf_simple *buf)
 {
-	struct bt_acs_conn *acs_conn = ctx->acs_conn;
+	struct bt_acs_conn *acs_conn = owner->acs_conn;
 	struct acs_cp_ecdh_confirm_rand_req req_data;
 	struct net_buf *rsp_buf;
 	int err;
 
 	if (acs_conn->key_state != BT_ACS_KEY_EXCHANGE_CONFIRM_CODE) {
-		acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_ECDH_CONFIRM_RAND,
+		acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_ECDH_CONFIRM_RAND,
 				  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE);
 		return;
 	}
 
 	if (buf->len != sizeof(struct acs_cp_ecdh_confirm_rand_req)) {
-		acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_ECDH_CONFIRM_RAND,
+		acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_ECDH_CONFIRM_RAND,
 				  BT_ACS_CP_RESPONSE_INVALID_OPERAND);
 		return;
 	}
@@ -759,22 +763,22 @@ void acs_cp_kex_ecdh_confirm_rand(struct acs_cp_ctx *ctx, struct net_buf_simple 
 
 	if (!acs_conn->kex ||
 	    sys_le16_to_cpu(req_data.key_id) != sys_le16_to_cpu(acs_conn->kex->start_kex.key_id)) {
-		acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_ECDH_CONFIRM_RAND,
+		acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_ECDH_CONFIRM_RAND,
 				  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE);
 		return;
 	}
 
 	if (memcmp(req_data.random, acs_conn->kex->server_random, ACS_HMAC_SHA256_SIZE) == 0) {
-		acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_ECDH_CONFIRM_RAND,
+		acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_ECDH_CONFIRM_RAND,
 				  BT_ACS_CP_RESPONSE_INVALID_OPERAND);
 		return;
 	}
 
 	memcpy(acs_conn->kex->client_random, req_data.random, ACS_HMAC_SHA256_SIZE);
 
-	rsp_buf = acs_cp_rsp_alloc(ctx);
+	rsp_buf = acs_cp_prepare_reply_buf(owner);
 	if (!rsp_buf) {
-		acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_ECDH_CONFIRM_RAND,
+		acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_ECDH_CONFIRM_RAND,
 				  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 		return;
 	}
@@ -785,14 +789,14 @@ void acs_cp_kex_ecdh_confirm_rand(struct acs_cp_ctx *ctx, struct net_buf_simple 
 
 	if (err == -EACCES) {
 		/* Confirmation code mismatch: chain KEX_RESPONSE(failed). */
-		acs_seq_begin(ctx, &kex_fail_seq);
-		acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_ECDH_CONFIRM_RAND,
+		acs_seq_begin(owner, &kex_fail_seq);
+		acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_ECDH_CONFIRM_RAND,
 				  BT_ACS_CP_RESPONSE_INVALID_KEY_EXCHANGE_CONFIRMATION_CODE);
 		return;
 	} else if (err) {
 		acs_conn->key_state = BT_ACS_KEY_EXCHANGE_IDLE;
-		acs_seq_begin(ctx, &kex_fail_seq);
-		acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_ECDH_CONFIRM_RAND,
+		acs_seq_begin(owner, &kex_fail_seq);
+		acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_ECDH_CONFIRM_RAND,
 				  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 		return;
 	}
@@ -808,20 +812,20 @@ void acs_cp_kex_ecdh_confirm_rand(struct acs_cp_ctx *ctx, struct net_buf_simple 
 		if (err) {
 			LOG_ERR("Failed to derive session key: %d", err);
 			acs_conn->key_state = BT_ACS_KEY_EXCHANGE_IDLE;
-			acs_seq_begin(ctx, &kex_fail_seq);
-			acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_ECDH_CONFIRM_RAND,
+			acs_seq_begin(owner, &kex_fail_seq);
+			acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_ECDH_CONFIRM_RAND,
 					  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 			return;
 		}
 	}
 
 	acs_conn->key_state = BT_ACS_KEY_EXCHANGE_PENDING_RESPONSE;
-	acs_seq_begin(ctx, &kex_success_seq);
+	acs_seq_begin(owner, &kex_success_seq);
 
-	err = acs_cp_rsp_send(ctx);
+	err = acs_cp_send_reply(owner);
 	if (err) {
 		LOG_WRN("confirm_rand: arm failed: %d", err);
-		acs_seq_abort(ctx);
+		acs_seq_abort(owner);
 	}
 }
 #endif /* CONFIG_BT_ACS_KEY_EXCHANGE_ECDH */

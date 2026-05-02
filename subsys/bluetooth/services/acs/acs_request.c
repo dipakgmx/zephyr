@@ -148,7 +148,10 @@ struct bt_acs_prot_resource_req *acs_prot_resource_req_alloc(struct bt_acs_conn 
 	req->data_length = data_length;
 	req->data_offset = data_offset;
 
-	/* Response buffer is allocated lazily in acs_cp_rsp_alloc */
+	/* Response buffer is allocated lazily in acs_prepare_reply_buf
+	 * (called from CP handlers via acs_cp_prepare_reply_buf, or from
+	 * acs_auto_respond).
+	 */
 	req->response = NULL;
 
 	/* Claim a slot in the connection's active request array */
@@ -240,50 +243,51 @@ static int acs_auto_respond(struct bt_acs_prot_resource_req *req)
 		props = ((const struct bt_gatt_chrc *)ctx.decl->user_data)->properties;
 	}
 
-	/* Lazy-alloc the response buffer and reserve crypto headroom. */
-	if (!req->response) {
-		req->response = acs_buf_alloc(K_NO_WAIT);
-		if (!req->response) {
+	/* Pick the eventual reply channel up-front so the prep helper can stage
+	 * the response in the right form (channel only differs in metadata; the
+	 * buffer layout is identical for protected DON/DOI).
+	 */
+	{
+		enum acs_reply_channel channel = (props & BT_GATT_CHRC_INDICATE) ? ACS_REPLY_DOI
+									       : ACS_REPLY_DON;
+		struct acs_exec_owner owner = acs_exec_owner_protected(req);
+		struct net_buf *rsp_buf = acs_prepare_reply_buf(&owner, channel, true);
+		struct acs_reply reply;
+
+		if (!rsp_buf) {
 			LOG_ERR("auto_respond: response pool exhausted (handle 0x%04x)",
 				resource_handle);
 			return -ENOMEM;
 		}
-	} else {
-		net_buf_reset(req->response);
-	}
-	net_buf_reserve(req->response, ACS_CRYPTO_HEADROOM);
 
-	/* Build response: [resource_handle_le16][attribute_value...] */
-	net_buf_add_le16(req->response, resource_handle);
+		/* Read back the current attribute value, unless the characteristic is
+		 * write-only.
+		 */
+		if (props & BT_GATT_CHRC_READ) {
+			if (!ctx.value->read) {
+				LOG_WRN("auto_respond: attr 0x%04x has no read handler",
+					resource_handle);
+				return -ENOTSUP;
+			}
 
-	/* Read back the current attribute value, unless the characteristic is write-only. */
-	if (props & BT_GATT_CHRC_READ) {
-		if (!ctx.value->read) {
-			LOG_WRN("auto_respond: attr 0x%04x has no read handler", resource_handle);
-			return -ENOTSUP;
+			n = ctx.value->read(conn, ctx.value, net_buf_tail(rsp_buf),
+					    net_buf_tailroom(rsp_buf), 0);
+			if (n < 0) {
+				LOG_ERR("auto_respond: read handler error %d", (int)n);
+				return n;
+			}
+
+			net_buf_add(rsp_buf, n);
 		}
 
-		n = ctx.value->read(conn, ctx.value, net_buf_tail(req->response),
-				    net_buf_tailroom(req->response), 0);
-
-		if (n < 0) {
-			LOG_ERR("auto_respond: read handler error %d", (int)n);
-			return n;
-		}
-
-		net_buf_add(req->response, n);
-	}
-
-	/* Route: Indicate → DOI, Notify/Read → DON. */
-	{
-		struct acs_reply reply = {
-			.channel = (props & BT_GATT_CHRC_INDICATE) ? ACS_REPLY_DOI : ACS_REPLY_DON,
-			.plaintext = req->response,
+		reply = (struct acs_reply){
+			.channel = channel,
+			.plaintext = rsp_buf,
 			.encrypted = true,
-			.needs_confirm = (props & BT_GATT_CHRC_INDICATE) != 0,
+			.needs_confirm = channel == ACS_REPLY_DOI,
 		};
 
-		return acs_data_out_channel_send_protected(req, &reply);
+		return acs_tx_submit(&owner, &reply);
 	}
 }
 

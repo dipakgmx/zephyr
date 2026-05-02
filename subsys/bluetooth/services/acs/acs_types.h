@@ -34,7 +34,8 @@ extern "C" {
 
 struct bt_acs_prot_resource_req; /**< Defined below; forward-declared for bt_acs_conn */
 struct bt_acs_conn;  /**< Defined below; forward-declared for bt_acs_prot_resource_req */
-struct acs_cp_ctx;   /**< Defined below; forward-declared for callback typedefs */
+struct acs_cp_step_ctx; /**< Defined below; forward-declared for callback typedefs */
+struct acs_exec_owner;  /**< Defined below; forward-declared for callback typedefs */
 struct acs_seq_desc; /**< Defined below; forward-declared for acs_reply_seq_state */
 
 /**
@@ -138,7 +139,7 @@ struct acs_reply {
  * Return 0 on success (framework waits for confirm, then calls next step).
  * Return negative errno to abort the sequence.
  */
-typedef int (*acs_seq_step_fn)(struct acs_cp_ctx *ctx);
+typedef int (*acs_seq_step_fn)(struct acs_cp_step_ctx *ctx);
 
 /**
  * @brief Internal request-aware ACS handler callback type.
@@ -186,7 +187,7 @@ struct acs_seq_desc {
 	const acs_seq_step_fn *steps;
 	uint8_t step_count;
 	/** Optional hook invoked by acs_seq_abort before the sequence state is cleared. */
-	void (*on_abort)(struct acs_cp_ctx *ctx);
+	void (*on_abort)(const struct acs_exec_owner *owner);
 };
 
 /**
@@ -449,13 +450,98 @@ struct bt_acs_prot_resource_handler_entry {
 #endif
 
 /**
- * @brief Unified Control Point dispatch context.
+ * @brief Discriminator for an @ref acs_exec_owner — which procedure flavour owns a step.
  */
-struct acs_cp_ctx {
-	struct bt_acs_prot_resource_req *prot_req; /**< NULL = plain CP, non-NULL = protected CP */
-	struct bt_conn *conn;                      /**< Underlying BT connection */
+enum acs_exec_owner_kind {
+	ACS_EXEC_OWNER_PLAIN_CP = 0,    /**< Singleton plain-CP procedure on @c bt_acs_conn */
+	ACS_EXEC_OWNER_PROTECTED_REQ = 1, /**< Slab-allocated protected request context */
+};
+
+/**
+ * @brief Tagged-pointer view of "the procedure that owns this in-flight step".
+ *
+ * Lets the runtime, send seam, and continuation logic reason about plain CP
+ * and protected requests through one type without losing typed access. Exactly
+ * one of @c plain_cp or @c req is non-NULL; @c kind tells you which.
+ *
+ * Conceptually a runtime view, not a heap object — typically built on the
+ * stack by @ref acs_exec_owner_plain or @ref acs_exec_owner_protected and
+ * passed around by const pointer.
+ */
+struct acs_exec_owner {
+	enum acs_exec_owner_kind kind;
+	struct bt_acs_conn *acs_conn;                  /**< Always set */
+	acs_procedure *plain_cp;                       /**< Set iff kind == PLAIN_CP */
+	struct bt_acs_prot_resource_req *req;          /**< Set iff kind == PROTECTED_REQ */
+};
+
+/**
+ * @brief Build an owner view for the connection's plain-CP singleton procedure.
+ */
+static inline struct acs_exec_owner acs_exec_owner_plain(struct bt_acs_conn *acs_conn)
+{
+	return (struct acs_exec_owner){
+		.kind = ACS_EXEC_OWNER_PLAIN_CP,
+		.acs_conn = acs_conn,
+		.plain_cp = acs_conn ? &acs_conn->plain_cp_proc : NULL,
+		.req = NULL,
+	};
+}
+
+/**
+ * @brief Build an owner view for a slab-allocated protected request context.
+ */
+static inline struct acs_exec_owner
+acs_exec_owner_protected(struct bt_acs_prot_resource_req *req)
+{
+	return (struct acs_exec_owner){
+		.kind = ACS_EXEC_OWNER_PROTECTED_REQ,
+		.acs_conn = req ? req->acs_conn : NULL,
+		.plain_cp = NULL,
+		.req = req,
+	};
+}
+
+/**
+ * @brief True if @p owner is the plain-CP singleton.
+ */
+static inline bool acs_owner_is_plain_cp(const struct acs_exec_owner *owner)
+{
+	return owner && owner->kind == ACS_EXEC_OWNER_PLAIN_CP;
+}
+
+/**
+ * @brief Resolve the active procedure object behind an owner view.
+ *
+ * Convenience for code that just wants the @c acs_procedure regardless of
+ * which flavour owns this step (e.g. to read @c reply_seq).
+ */
+static inline acs_procedure *acs_owner_proc(const struct acs_exec_owner *owner)
+{
+	if (!owner) {
+		return NULL;
+	}
+	return owner->kind == ACS_EXEC_OWNER_PLAIN_CP ? owner->plain_cp : owner->req;
+}
+
+/**
+ * @brief Per-step CP execution context.
+ *
+ * Threaded into every CP handler and reply-sequence step. @c owner is the
+ * canonical view of which procedure is executing this step — read
+ * @c owner.req for the protected-request slot or @c owner.plain_cp for the
+ * connection's plain-CP singleton. The legacy @c prot_req / @c acs_conn
+ * fields are gone; access them through @c owner so the canonical and view
+ * representations cannot drift.
+ *
+ * @c conn and @c attr are explicit transport inputs (the BT connection and
+ * the CP characteristic attribute) so handlers do not need to reach back
+ * into @c owner.acs_conn for them.
+ */
+struct acs_cp_step_ctx {
+	struct acs_exec_owner owner;     /**< Canonical owner view */
+	struct bt_conn *conn;            /**< Underlying BT connection */
 	const struct bt_gatt_attr *attr; /**< CP GATT attribute (plain indication routing) */
-	struct bt_acs_conn *acs_conn;    /**< Pre-looked-up per-connection ACS state */
 };
 
 #ifdef __cplusplus

@@ -62,8 +62,9 @@ static void acs_format_secure_data_wire(uint8_t *ciphertext_and_tag, uint16_t pl
 /**
  * @brief Encrypt the response buffer in-place for wire transmission.
  *
- * The buffer was allocated with ACS_CRYPTO_HEADROOM reserved in
- * acs_cp_rsp_alloc (protected CP) or acs_auto_respond (auto-respond).
+ * The buffer was allocated through @ref acs_prepare_reply_buf with
+ * ACS_CRYPTO_HEADROOM reserved (protected paths only — plain CP never
+ * encrypts) and the inner resource_handle prefix already pushed.
  * Layout on entry:
  *
  *   [reserved headroom: ISC_ID(2) + Nonce_Var(N)] [ resource_handle(2) | payload... ]
@@ -243,6 +244,8 @@ static void acs_data_out_on_indicate_done(struct bt_conn *conn, const struct bt_
 	struct bt_acs_conn *acs_conn = req ? req->acs_conn : NULL;
 	bool continue_reply_seq = req && req->reply_seq.desc != NULL;
 
+	ARG_UNUSED(attr);
+
 #if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION)
 	if (acs_conn) {
 		atomic_ptr_cas(&acs_conn->active_indication, req, NULL);
@@ -259,15 +262,18 @@ static void acs_data_out_on_indicate_done(struct bt_conn *conn, const struct bt_
 			return;
 		}
 
-		struct acs_cp_ctx ctx = {
-			.prot_req = req,
-			.conn = conn,
-			.attr = attr,
-			.acs_conn = acs_conn ? acs_conn : (conn ? acs_conn_lookup(conn) : NULL),
-		};
+		struct acs_exec_owner owner = acs_exec_owner_protected(req);
+
+		/* req->acs_conn may be NULL post-disconnect; preserve the legacy
+		 * fallback so abort accounting still resolves the connection.
+		 */
+		if (!owner.acs_conn) {
+			owner.acs_conn = acs_conn ? acs_conn
+						  : (conn ? acs_conn_lookup(conn) : NULL);
+		}
 
 		LOG_WRN("Protected CP indication failed: %d", err);
-		acs_seq_abort(&ctx);
+		acs_seq_abort(&owner);
 	}
 
 	if (acs_conn) {
@@ -275,10 +281,11 @@ static void acs_data_out_on_indicate_done(struct bt_conn *conn, const struct bt_
 	}
 }
 
-int acs_prot_resource_rsp_notify(struct bt_acs_prot_resource_req *req)
+int acs_prot_resource_rsp_notify(struct bt_acs_prot_resource_req *req, struct net_buf *plaintext)
 {
 #if !IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_NOTIFICATION)
 	ARG_UNUSED(req);
+	ARG_UNUSED(plaintext);
 	return -ENOTSUP;
 #else
 	struct bt_acs_conn *acs_conn;
@@ -287,21 +294,21 @@ int acs_prot_resource_rsp_notify(struct bt_acs_prot_resource_req *req)
 	__ASSERT_NO_MSG(req != NULL);
 	__ASSERT_NO_MSG(req->acs_conn != NULL);
 	__ASSERT_NO_MSG(req->acs_conn->conn != NULL);
-	__ASSERT_NO_MSG(req->response != NULL);
-	__ASSERT_NO_MSG(req->response->len > 0);
+	__ASSERT_NO_MSG(plaintext != NULL);
+	__ASSERT_NO_MSG(plaintext->len > 0);
+	__ASSERT_NO_MSG(plaintext == req->response);
 
 	acs_conn = req->acs_conn;
 	req->send_method = ACS_PROT_RESOURCE_SEND_NOTIFY;
 
-	err = acs_data_out_encrypt_in_place(acs_conn, req->isc_id, req->response);
+	err = acs_data_out_encrypt_in_place(acs_conn, req->isc_id, plaintext);
 	if (err) {
 		LOG_WRN("DON encrypt failed for handle 0x%04x: %d", req->resource_handle, err);
 		acs_prot_resource_req_tx_done(req);
 		return err;
 	}
 
-	err = acs_seg_notify(acs_conn->conn, acs_conn->attr_don, req->response->data,
-			     req->response->len);
+	err = acs_seg_notify(acs_conn->conn, acs_conn->attr_don, plaintext->data, plaintext->len);
 	if (err) {
 		LOG_WRN("DON send failed for handle 0x%04x: %d", req->resource_handle, err);
 	}
@@ -311,41 +318,128 @@ int acs_prot_resource_rsp_notify(struct bt_acs_prot_resource_req *req)
 #endif /* CONFIG_BT_ACS_PROTECTED_RESOURCE_NOTIFICATION */
 }
 
-int acs_data_out_channel_send_protected(struct bt_acs_prot_resource_req *req,
-					const struct acs_reply *reply)
+struct net_buf *acs_prepare_reply_buf(const struct acs_exec_owner *owner,
+				      enum acs_reply_channel channel, bool encrypted)
 {
-	__ASSERT_NO_MSG(req != NULL);
-	__ASSERT_NO_MSG(reply != NULL);
+	struct net_buf **slot;
+	struct net_buf *buf;
+	uint16_t resource_handle = 0U;
 
-	switch (reply->channel) {
-	case ACS_REPLY_DON:
-		return acs_prot_resource_rsp_notify(req);
-	case ACS_REPLY_DOI:
-		return acs_prot_resource_rsp_indicate(req);
-	case ACS_REPLY_CP:
-	default:
-		LOG_ERR("data_out_channel_send_protected: invalid channel %d", (int)reply->channel);
-		return -EINVAL;
+	__ASSERT_NO_MSG(owner != NULL);
+	__ASSERT_NO_MSG(owner->acs_conn != NULL);
+
+	if (owner->kind == ACS_EXEC_OWNER_PLAIN_CP) {
+		__ASSERT_NO_MSG(channel == ACS_REPLY_CP);
+		__ASSERT_NO_MSG(!encrypted);
+		__ASSERT_NO_MSG(owner->plain_cp != NULL);
+		slot = &owner->plain_cp->response;
+	} else {
+		__ASSERT_NO_MSG(channel == ACS_REPLY_DOI || channel == ACS_REPLY_DON);
+		__ASSERT_NO_MSG(owner->req != NULL);
+		slot = &owner->req->response;
+		resource_handle = owner->req->resource_handle;
 	}
+
+	if (!*slot) {
+		*slot = acs_buf_alloc(K_NO_WAIT);
+		if (!*slot) {
+			LOG_ERR("acs_prepare_reply_buf: buffer pool exhausted");
+			return NULL;
+		}
+	} else {
+		net_buf_reset(*slot);
+	}
+	buf = *slot;
+
+	if (encrypted) {
+		/* Reserve room for the secure-transport prefix added by
+		 * acs_data_out_encrypt_in_place: ISC_ID + Nonce_Var.
+		 */
+		net_buf_reserve(buf, ACS_CRYPTO_HEADROOM);
+	}
+
+	if (owner->kind == ACS_EXEC_OWNER_PROTECTED_REQ) {
+		/* Protected wire format: inner [Resource_Handle | payload] */
+		net_buf_add_le16(buf, resource_handle);
+	}
+
+	return buf;
 }
 
-int acs_data_out_channel_send_cp(struct acs_cp_ctx *ctx, const struct acs_reply *reply)
+struct net_buf *acs_cp_prepare_reply_buf(const struct acs_exec_owner *owner)
 {
-	struct bt_acs_conn *acs_conn;
+	enum acs_reply_channel channel;
+	bool encrypted;
+
+	__ASSERT_NO_MSG(owner != NULL);
+
+	if (owner->kind == ACS_EXEC_OWNER_PLAIN_CP) {
+		channel = ACS_REPLY_CP;
+		encrypted = false;
+	} else {
+		channel = ACS_REPLY_DOI;
+		encrypted = true;
+	}
+
+	return acs_prepare_reply_buf(owner, channel, encrypted);
+}
+
+int acs_cp_rsp_status(const struct acs_exec_owner *owner, uint8_t req_opcode, uint8_t code)
+{
+	struct net_buf *buf;
+	struct acs_reply reply;
+	int err;
+
+	__ASSERT_NO_MSG(owner != NULL);
+	__ASSERT_NO_MSG(owner->acs_conn != NULL);
+
+	buf = acs_cp_prepare_reply_buf(owner);
+	if (!buf) {
+		acs_seq_abort(owner);
+		if (owner->kind == ACS_EXEC_OWNER_PLAIN_CP) {
+			atomic_set(&owner->acs_conn->plain_cp_proc.locked, 0);
+		}
+		return -ENOMEM;
+	}
+
+	net_buf_add_u8(buf, BT_ACS_CP_OPCODE_RESPONSE_CODE);
+	net_buf_add_u8(buf, req_opcode);
+	net_buf_add_u8(buf, code);
+
+	acs_cp_build_reply(owner, &reply);
+
+	err = acs_tx_submit(owner, &reply);
+	if (err) {
+		/* Status replies are still replies — same failure contract as
+		 * acs_cp_send_reply: tear down any active sequence so we don't
+		 * leak deferred ALLOC refs or leave stale step state behind.
+		 * The plain-CP busy-gate release for submit failure is handled
+		 * inside acs_tx_submit_plain_cp itself, so we don't double up.
+		 */
+		acs_seq_abort(owner);
+		if (owner->kind == ACS_EXEC_OWNER_PROTECTED_REQ) {
+			LOG_WRN("Protected CP status indication failed for handle 0x%04x: %d",
+				owner->req->resource_handle, err);
+		} else {
+			LOG_WRN("Plain CP status indication failed: %d", err);
+		}
+	}
+
+	return err;
+}
+
+/* Plain-CP final-mile send. Caller must already hold the busy gate. */
+static int acs_tx_submit_plain_cp(const struct acs_exec_owner *owner,
+				  const struct acs_reply *reply)
+{
+	struct bt_acs_conn *acs_conn = owner->acs_conn;
 	struct net_buf *rsp_buf;
 	int err;
 
-	__ASSERT_NO_MSG(ctx != NULL);
-	__ASSERT_NO_MSG(reply != NULL);
-	__ASSERT_NO_MSG(ctx->acs_conn != NULL);
-
-	if (ctx->prot_req) {
-		return acs_data_out_channel_send_protected(ctx->prot_req, reply);
-	}
-
 	__ASSERT_NO_MSG(reply->channel == ACS_REPLY_CP);
+	__ASSERT_NO_MSG(acs_conn != NULL);
+	__ASSERT_NO_MSG(acs_conn->conn != NULL);
 
-	acs_conn = ctx->acs_conn;
 	rsp_buf = acs_conn->plain_cp_proc.response;
 	acs_conn->plain_cp_proc.response = NULL;
 
@@ -355,7 +449,7 @@ int acs_data_out_channel_send_cp(struct acs_cp_ctx *ctx, const struct acs_reply 
 	/* Pass the buffer via user_data so the completion callback can free
 	 * it.  The seg-TX engine borrows the buffer but does not own it.
 	 */
-	err = acs_seg_tx_send(&acs_conn->cp_tx, ctx->conn, ctx->attr, rsp_buf,
+	err = acs_seg_tx_send(&acs_conn->cp_tx, acs_conn->conn, acs_conn->attr_cp, rsp_buf,
 			      acs_cp_on_indicate_done, rsp_buf);
 	if (err) {
 		atomic_set(&acs_conn->plain_cp_proc.locked, 0);
@@ -364,10 +458,59 @@ int acs_data_out_channel_send_cp(struct acs_cp_ctx *ctx, const struct acs_reply 
 	return err;
 }
 
-int acs_prot_resource_rsp_indicate(struct bt_acs_prot_resource_req *req)
+int acs_tx_submit(const struct acs_exec_owner *owner, const struct acs_reply *reply)
+{
+	if (!owner || !reply || !reply->plaintext) {
+		return -EINVAL;
+	}
+
+	/* Contract assertions — keep callers honest about every reply field, so
+	 * future call sites cannot drift channel/owner/encrypted/needs_confirm
+	 * out of sync without immediately tripping a debug build.
+	 */
+	switch (reply->channel) {
+	case ACS_REPLY_CP:
+		__ASSERT(owner->kind == ACS_EXEC_OWNER_PLAIN_CP,
+			 "ACS_REPLY_CP requires plain-CP owner");
+		__ASSERT(owner->plain_cp != NULL, "plain-CP owner missing procedure");
+		__ASSERT(reply->plaintext == owner->plain_cp->response,
+			 "ACS_REPLY_CP plaintext must be the staged plain_cp_proc.response");
+		__ASSERT(!reply->encrypted, "ACS_REPLY_CP must be unencrypted (plain transport)");
+		__ASSERT(reply->needs_confirm,
+			 "ACS_REPLY_CP is always confirmed (segmented indication)");
+		return acs_tx_submit_plain_cp(owner, reply);
+	case ACS_REPLY_DON:
+		__ASSERT(owner->kind == ACS_EXEC_OWNER_PROTECTED_REQ,
+			 "ACS_REPLY_DON requires protected-request owner");
+		__ASSERT(owner->req != NULL, "protected-request owner missing req");
+		__ASSERT(reply->plaintext == owner->req->response,
+			 "ACS_REPLY_DON plaintext must be the staged req->response");
+		__ASSERT(reply->encrypted, "ACS_REPLY_DON must be encrypted");
+		__ASSERT(!reply->needs_confirm,
+			 "ACS_REPLY_DON is unconfirmed (notification)");
+		return acs_prot_resource_rsp_notify(owner->req, reply->plaintext);
+	case ACS_REPLY_DOI:
+		__ASSERT(owner->kind == ACS_EXEC_OWNER_PROTECTED_REQ,
+			 "ACS_REPLY_DOI requires protected-request owner");
+		__ASSERT(owner->req != NULL, "protected-request owner missing req");
+		__ASSERT(reply->plaintext == owner->req->response,
+			 "ACS_REPLY_DOI plaintext must be the staged req->response");
+		__ASSERT(reply->encrypted, "ACS_REPLY_DOI must be encrypted");
+		__ASSERT(reply->needs_confirm,
+			 "ACS_REPLY_DOI is always confirmed (segmented indication)");
+		return acs_prot_resource_rsp_indicate(owner->req, reply->plaintext);
+	default:
+		LOG_ERR("acs_tx_submit: invalid channel %d", (int)reply->channel);
+		return -EINVAL;
+	}
+}
+
+
+int acs_prot_resource_rsp_indicate(struct bt_acs_prot_resource_req *req, struct net_buf *plaintext)
 {
 #if !IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION)
 	ARG_UNUSED(req);
+	ARG_UNUSED(plaintext);
 	return -ENOTSUP;
 #else
 	struct bt_acs_conn *acs_conn;
@@ -376,13 +519,14 @@ int acs_prot_resource_rsp_indicate(struct bt_acs_prot_resource_req *req)
 	__ASSERT_NO_MSG(req != NULL);
 	__ASSERT_NO_MSG(req->acs_conn != NULL);
 	__ASSERT_NO_MSG(req->acs_conn->conn != NULL);
-	__ASSERT_NO_MSG(req->response != NULL);
-	__ASSERT_NO_MSG(req->response->len > 0);
+	__ASSERT_NO_MSG(plaintext != NULL);
+	__ASSERT_NO_MSG(plaintext->len > 0);
+	__ASSERT_NO_MSG(plaintext == req->response);
 
 	acs_conn = req->acs_conn;
 	req->send_method = ACS_PROT_RESOURCE_SEND_INDICATE;
 
-	err = acs_data_out_encrypt_in_place(acs_conn, req->isc_id, req->response);
+	err = acs_data_out_encrypt_in_place(acs_conn, req->isc_id, plaintext);
 	if (err) {
 		LOG_WRN("DOI encrypt failed for handle 0x%04x: %d", req->resource_handle, err);
 		return err;

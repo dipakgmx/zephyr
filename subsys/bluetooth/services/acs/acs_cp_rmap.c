@@ -19,24 +19,24 @@
 #include <zephyr/logging/log.h>
 LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
 
-void acs_cp_handle_get_restriction_map_id_list(struct acs_cp_ctx *ctx)
+void acs_cp_handle_get_restriction_map_id_list(const struct acs_exec_owner *owner)
 {
 	struct net_buf *rsp_buf;
 	int build_err;
 
-	rsp_buf = acs_cp_rsp_alloc(ctx);
+	rsp_buf = acs_cp_prepare_reply_buf(owner);
 	if (!rsp_buf) {
-		acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_GET_RESTRICTION_MAP_ID_LIST,
+		acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_GET_RESTRICTION_MAP_ID_LIST,
 				  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 		return;
 	}
 	net_buf_add_u8(rsp_buf, BT_ACS_CP_OPCODE_RESTRICTION_MAP_ID_LIST_RESPONSE);
 	build_err = acs_rmap_build_id_list_response(&rsp_buf->b);
 	if (build_err) {
-		acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_GET_RESTRICTION_MAP_ID_LIST,
+		acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_GET_RESTRICTION_MAP_ID_LIST,
 				  errno_to_acs_status(build_err));
 	} else {
-		int err = acs_cp_rsp_send(ctx);
+		int err = acs_cp_send_reply(owner);
 
 		if (err) {
 			LOG_WRN("CP indicate failed for opcode 0x%02x: %d",
@@ -45,7 +45,7 @@ void acs_cp_handle_get_restriction_map_id_list(struct acs_cp_ctx *ctx)
 	}
 }
 
-void acs_cp_handle_get_restriction_map_descriptor(struct acs_cp_ctx *ctx,
+void acs_cp_handle_get_restriction_map_descriptor(const struct acs_exec_owner *owner,
 						  struct net_buf_simple *buf)
 {
 	struct acs_rmap_get_descriptor_req desc_req;
@@ -53,7 +53,7 @@ void acs_cp_handle_get_restriction_map_descriptor(struct acs_cp_ctx *ctx,
 	int build_err;
 
 	if (buf->len != sizeof(struct acs_rmap_get_descriptor_req)) {
-		acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_GET_RESTRICTION_MAP_DESCRIPTOR,
+		acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_GET_RESTRICTION_MAP_DESCRIPTOR,
 				  BT_ACS_CP_RESPONSE_INVALID_OPERAND);
 		return;
 	}
@@ -62,10 +62,10 @@ void acs_cp_handle_get_restriction_map_descriptor(struct acs_cp_ctx *ctx,
 	desc_req.map_id = net_buf_simple_pull_le16(buf);
 	desc_req.resource_handle_filter = net_buf_simple_pull_le16(buf);
 
-	rsp_buf = acs_cp_rsp_alloc(ctx);
+	rsp_buf = acs_cp_prepare_reply_buf(owner);
 	if (!rsp_buf) {
 		LOG_WRN("buffer pool exhausted");
-		acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_GET_RESTRICTION_MAP_DESCRIPTOR,
+		acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_GET_RESTRICTION_MAP_DESCRIPTOR,
 				  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 		return;
 	}
@@ -73,10 +73,10 @@ void acs_cp_handle_get_restriction_map_descriptor(struct acs_cp_ctx *ctx,
 
 	build_err = acs_rmap_build_descriptor_response(&desc_req, &rsp_buf->b);
 	if (build_err) {
-		acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_GET_RESTRICTION_MAP_DESCRIPTOR,
+		acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_GET_RESTRICTION_MAP_DESCRIPTOR,
 				  errno_to_acs_status(build_err));
 	} else {
-		int err = acs_cp_rsp_send(ctx);
+		int err = acs_cp_send_reply(owner);
 
 		if (err) {
 			LOG_WRN("CP indicate failed for opcode 0x%02x: %d",
@@ -85,21 +85,21 @@ void acs_cp_handle_get_restriction_map_descriptor(struct acs_cp_ctx *ctx,
 	}
 }
 
-void acs_cp_handle_activate_restriction_map(struct acs_cp_ctx *ctx, struct net_buf_simple *buf)
+void acs_cp_handle_activate_restriction_map(const struct acs_exec_owner *owner, struct net_buf_simple *buf)
 {
 	uint16_t map_id;
 	struct bt_acs_restriction_map map;
 
 	if (!IS_ENABLED(CONFIG_BT_ACS_MULTIPLE_RESTRICTION_MAPS)) {
 		LOG_ERR("Activate Restriction Map: feature not supported");
-		acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_ACTIVATE_RESTRICTION_MAP,
+		acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_ACTIVATE_RESTRICTION_MAP,
 				  BT_ACS_CP_RESPONSE_OPCODE_NOT_SUPPORTED);
 		return;
 	}
 
 	if (buf->len < 2) {
 		LOG_ERR("Activate Restriction Map: operand too short (%u)", buf->len);
-		acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_ACTIVATE_RESTRICTION_MAP,
+		acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_ACTIVATE_RESTRICTION_MAP,
 				  BT_ACS_CP_RESPONSE_INVALID_OPERAND);
 		return;
 	}
@@ -109,28 +109,28 @@ void acs_cp_handle_activate_restriction_map(struct acs_cp_ctx *ctx, struct net_b
 
 	if (acs_rmap_lookup(map_id, &map) != 0) {
 		LOG_WRN("Activate Restriction Map: map ID 0x%04x not found", map_id);
-		acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_ACTIVATE_RESTRICTION_MAP,
+		acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_ACTIVATE_RESTRICTION_MAP,
 				  BT_ACS_CP_RESPONSE_PARAMETER_OUT_OF_RANGE);
 		return;
 	}
 
 	/* Protected maps (ISC ID != 0) require ACS security to be established.
-	 * On the data channel (ctx->prot_req != NULL) security was verified during
+	 * On the data channel (owner->req != NULL) security was verified during
 	 * decryption.  On the plain CP the peer must have completed key exchange.
 	 */
-	if (map.map_isc_id != 0 && ctx->prot_req == NULL &&
-	    ctx->acs_conn->key_state != BT_ACS_KEY_EXCHANGE_COMPLETE) {
+	if (map.map_isc_id != 0 && owner->req == NULL &&
+	    owner->acs_conn->key_state != BT_ACS_KEY_EXCHANGE_COMPLETE) {
 		LOG_WRN("Activate Restriction Map: map 0x%04x is protected (ISC 0x%04x) — "
 			"security not established",
 			map_id, map.map_isc_id);
-		acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_ACTIVATE_RESTRICTION_MAP,
+		acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_ACTIVATE_RESTRICTION_MAP,
 				  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE);
 		return;
 	}
 
-	ctx->acs_conn->restriction_map_id = map_id;
+	owner->acs_conn->restriction_map_id = map_id;
 	LOG_DBG("Restriction map 0x%04x activated", map_id);
 
-	acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_ACTIVATE_RESTRICTION_MAP,
+	acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_ACTIVATE_RESTRICTION_MAP,
 			  BT_ACS_CP_RESPONSE_SUCCESS);
 }

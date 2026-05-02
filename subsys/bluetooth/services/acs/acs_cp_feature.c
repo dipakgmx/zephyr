@@ -129,13 +129,13 @@ static const struct bt_acs_feature_rsp acs_features = {
 			  : 0)),
 };
 
-void acs_cp_handle_get_feature(struct acs_cp_ctx *ctx, struct net_buf_simple *buf)
+void acs_cp_handle_get_feature(const struct acs_exec_owner *owner, struct net_buf_simple *buf)
 {
 	struct net_buf *rsp_buf;
 	int err;
 
 	if (buf->len != 0) {
-		acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_GET_FEATURE,
+		acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_GET_FEATURE,
 				  BT_ACS_CP_RESPONSE_INVALID_OPERAND);
 		return;
 	}
@@ -143,44 +143,44 @@ void acs_cp_handle_get_feature(struct acs_cp_ctx *ctx, struct net_buf_simple *bu
 	LOG_DBG("get_feature: feat=0x%02x prot=0x%02x", acs_features.features,
 		acs_features.protection_methods);
 
-	rsp_buf = acs_cp_rsp_alloc(ctx);
+	rsp_buf = acs_cp_prepare_reply_buf(owner);
 	if (!rsp_buf) {
-		acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_GET_FEATURE,
+		acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_GET_FEATURE,
 				  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 		return;
 	}
 	net_buf_add_u8(rsp_buf, BT_ACS_CP_OPCODE_ACS_FEATURE_RESPONSE);
 	net_buf_add_mem(rsp_buf, &acs_features, sizeof(acs_features));
 
-	err = acs_cp_rsp_send(ctx);
+	err = acs_cp_send_reply(owner);
 	if (err) {
 		LOG_WRN("get_feature: indication arm failed: %d", err);
 	}
 }
 
 #if IS_ENABLED(CONFIG_BT_ACS_ATT_MTU)
-void acs_cp_handle_att_mtu(struct acs_cp_ctx *ctx)
+void acs_cp_handle_att_mtu(const struct acs_exec_owner *owner)
 {
 	struct net_buf *rsp_buf;
 	uint16_t mtu;
 
-	rsp_buf = acs_cp_rsp_alloc(ctx);
+	rsp_buf = acs_cp_prepare_reply_buf(owner);
 	if (!rsp_buf) {
-		acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_ATT_MTU,
+		acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_ATT_MTU,
 				  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 		return;
 	}
-	mtu = bt_gatt_get_mtu(ctx->conn) - 3U;
+	mtu = bt_gatt_get_mtu(owner->acs_conn->conn) - 3U;
 	net_buf_add_u8(rsp_buf, BT_ACS_CP_OPCODE_ATT_MTU_RESPONSE);
 	net_buf_add_le16(rsp_buf, mtu);
-	acs_cp_rsp_send(ctx);
+	acs_cp_send_reply(owner);
 }
 #endif /* CONFIG_BT_ACS_ATT_MTU */
 
 #if IS_ENABLED(CONFIG_BT_ACS_HAS_NONCE_FIXED)
-void acs_cp_handle_set_client_nonce_fixed(struct acs_cp_ctx *ctx, struct net_buf_simple *buf)
+void acs_cp_handle_set_client_nonce_fixed(const struct acs_exec_owner *owner, struct net_buf_simple *buf)
 {
-	struct bt_acs_conn *acs_conn = ctx->acs_conn;
+	struct bt_acs_conn *acs_conn = owner->acs_conn;
 	struct acs_cp_set_client_nonce_req req_data;
 	uint16_t key_id;
 	bool key_id_valid;
@@ -189,7 +189,7 @@ void acs_cp_handle_set_client_nonce_fixed(struct acs_cp_ctx *ctx, struct net_buf
 
 	if (!acs_conn) {
 		LOG_ERR("Request to set client nonce fixed received for unknown connection");
-		acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_SET_CLIENT_NONCE_FIXED,
+		acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_SET_CLIENT_NONCE_FIXED,
 				  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 		return;
 	}
@@ -197,7 +197,7 @@ void acs_cp_handle_set_client_nonce_fixed(struct acs_cp_ctx *ctx, struct net_buf
 	/* Operand (§4.4.4.36, Table 4.77): Key_ID(2) + AC_Client_Nonce_Fixed_Value */
 	if (buf->len != sizeof(struct acs_cp_set_client_nonce_req)) {
 		LOG_WRN("Set client nonce fixed operand invalid length: %u", buf->len);
-		acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_SET_CLIENT_NONCE_FIXED,
+		acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_SET_CLIENT_NONCE_FIXED,
 				  BT_ACS_CP_RESPONSE_INVALID_OPERAND);
 		return;
 	}
@@ -220,7 +220,7 @@ void acs_cp_handle_set_client_nonce_fixed(struct acs_cp_ctx *ctx, struct net_buf
 	if (!key_id_valid) {
 		LOG_WRN("Set client nonce fixed: Key_ID 0x%04X is not a SEQ_DIFF_FIXED cipher",
 			key_id);
-		acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_SET_CLIENT_NONCE_FIXED,
+		acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_SET_CLIENT_NONCE_FIXED,
 				  BT_ACS_CP_RESPONSE_PARAMETER_OUT_OF_RANGE);
 		return;
 	}
@@ -234,7 +234,7 @@ void acs_cp_handle_set_client_nonce_fixed(struct acs_cp_ctx *ctx, struct net_buf
 	    acs_conn->key_state != BT_ACS_KEY_EXCHANGE_COMPLETE) {
 		LOG_WRN("Set client nonce fixed rejected: key exchange in progress (state %d)",
 			acs_conn->key_state);
-		acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_SET_CLIENT_NONCE_FIXED,
+		acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_SET_CLIENT_NONCE_FIXED,
 				  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE);
 		return;
 	}
@@ -245,7 +245,7 @@ void acs_cp_handle_set_client_nonce_fixed(struct acs_cp_ctx *ctx, struct net_buf
 	if (memcmp(nonce_value, acs_conn->crypto.server_nonce_fixed,
 		   CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE) == 0) {
 		LOG_WRN("Client nonce fixed equals server nonce fixed");
-		acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_SET_CLIENT_NONCE_FIXED,
+		acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_SET_CLIENT_NONCE_FIXED,
 				  BT_ACS_CP_RESPONSE_INVALID_OPERAND);
 		return;
 	}
@@ -259,7 +259,7 @@ void acs_cp_handle_set_client_nonce_fixed(struct acs_cp_ctx *ctx, struct net_buf
 	 * For other connections: always check (active nonce regardless of how
 	 * it was set).
 	 */
-	this_idx = bt_conn_index(ctx->conn);
+	this_idx = bt_conn_index(owner->acs_conn->conn);
 
 	for (uint8_t idx = 0; idx < CONFIG_BT_MAX_CONN; idx++) {
 		struct bt_acs_conn const *other = acs_conn_by_index(idx);
@@ -274,7 +274,7 @@ void acs_cp_handle_set_client_nonce_fixed(struct acs_cp_ctx *ctx, struct net_buf
 			   CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE) == 0) {
 			LOG_WRN("Client nonce fixed conflicts with %s connection",
 				idx == this_idx ? "current" : "another");
-			acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_SET_CLIENT_NONCE_FIXED,
+			acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_SET_CLIENT_NONCE_FIXED,
 					  BT_ACS_CP_RESPONSE_INVALID_OPERAND);
 			return;
 		}
@@ -286,6 +286,6 @@ void acs_cp_handle_set_client_nonce_fixed(struct acs_cp_ctx *ctx, struct net_buf
 
 	LOG_DBG("Client nonce fixed part stored");
 
-	acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_SET_CLIENT_NONCE_FIXED, BT_ACS_CP_RESPONSE_SUCCESS);
+	acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_SET_CLIENT_NONCE_FIXED, BT_ACS_CP_RESPONSE_SUCCESS);
 }
 #endif /* BT_ACS_HAS_NONCE_FIXED */

@@ -30,15 +30,20 @@ LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
  *
  * acs_cp_all_active_get sends RMAP first, then the table-driven sequence
  * advances ISC → KEY → RC on each confirm until the sequence completes.
+ *
+ * Step functions still take @c struct acs_cp_step_ctx — they are the inner
+ * sequence-engine contract — but their bodies always alias @c owner = &ctx->owner
+ * and use the owner-first helpers from there on.
  */
 
-static int all_active_step_isc(struct acs_cp_ctx *ctx)
+static int all_active_step_isc(struct acs_cp_step_ctx *ctx)
 {
+	const struct acs_exec_owner *owner = &ctx->owner;
 	static const uint8_t filter[2] = {0xFF, 0xFF};
 	struct net_buf *buf;
 	struct net_buf_simple operand;
 
-	buf = acs_cp_rsp_alloc(ctx);
+	buf = acs_cp_prepare_reply_buf(owner);
 	if (!buf) {
 		return -ENOMEM;
 	}
@@ -49,29 +54,31 @@ static int all_active_step_isc(struct acs_cp_ctx *ctx)
 
 	if (acs_isc_build_response(&operand, &buf->b) != 0) {
 		LOG_ERR("Get All Active Descriptors: ISC build failed");
-		acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_GET_ALL_ACTIVE_DESCRIPTORS,
+		acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_GET_ALL_ACTIVE_DESCRIPTORS,
 				  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
-		acs_seq_clear(ctx);
+		acs_seq_clear(owner);
 		return 0;
 	}
-	return acs_cp_rsp_send(ctx);
+	return acs_cp_send_reply(owner);
 }
 
-static int all_active_step_key(struct acs_cp_ctx *ctx)
+static int all_active_step_key(struct acs_cp_step_ctx *ctx)
 {
+	const struct acs_exec_owner *owner = &ctx->owner;
 	static const uint8_t filter[2] = {0xFF, 0xFF};
 	struct net_buf *buf;
 	struct net_buf_simple operand;
 	int err;
 
-	buf = acs_cp_rsp_alloc(ctx);
+	buf = acs_cp_prepare_reply_buf(owner);
 	if (!buf) {
 		return -ENOMEM;
 	}
 
 	uint8_t server_nonce[CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE];
 
-	err = acs_crypto_get_server_nonce_fixed(ctx->acs_conn, server_nonce, sizeof(server_nonce));
+	err = acs_crypto_get_server_nonce_fixed(owner->acs_conn, server_nonce,
+						sizeof(server_nonce));
 	if (err) {
 		return err;
 	}
@@ -82,32 +89,33 @@ static int all_active_step_key(struct acs_cp_ctx *ctx)
 	err = acs_key_desc_build_response(&operand, &buf->b, server_nonce);
 
 	if (err == -ENOENT) {
-		acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_GET_ALL_ACTIVE_DESCRIPTORS,
+		acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_GET_ALL_ACTIVE_DESCRIPTORS,
 				  BT_ACS_CP_RESPONSE_SUCCESS);
-		acs_seq_clear(ctx);
+		acs_seq_clear(owner);
 		return 0;
 	}
 	if (err) {
 		LOG_ERR("Get All Active Descriptors: Key build failed (%d)", err);
-		acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_GET_ALL_ACTIVE_DESCRIPTORS,
+		acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_GET_ALL_ACTIVE_DESCRIPTORS,
 				  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
-		acs_seq_clear(ctx);
+		acs_seq_clear(owner);
 		return 0;
 	}
-	return acs_cp_rsp_send(ctx);
+	return acs_cp_send_reply(owner);
 }
 
-static int all_active_step_rc(struct acs_cp_ctx *ctx)
+static int all_active_step_rc(struct acs_cp_step_ctx *ctx)
 {
-	/* Send the terminal Response Code first — acs_cp_rsp_send adds a TX
+	const struct acs_exec_owner *owner = &ctx->owner;
+	/* Send the terminal Response Code first — acs_cp_send_reply adds a TX
 	 * ref that keeps the request alive.  Clear the sequence afterwards so
 	 * the indication-complete callback sees reply_seq.desc == NULL and
 	 * does not try to advance further.
 	 */
-	int err = acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_GET_ALL_ACTIVE_DESCRIPTORS,
+	int err = acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_GET_ALL_ACTIVE_DESCRIPTORS,
 				    BT_ACS_CP_RESPONSE_SUCCESS);
 
-	acs_seq_clear(ctx);
+	acs_seq_clear(owner);
 	return err;
 }
 
@@ -122,7 +130,7 @@ static const struct acs_seq_desc all_active_seq = {
 	.step_count = ARRAY_SIZE(all_active_steps),
 };
 
-void acs_cp_all_active_get(struct acs_cp_ctx *ctx)
+void acs_cp_all_active_get(const struct acs_exec_owner *owner)
 {
 	struct net_buf *buf;
 	struct acs_rmap_get_descriptor_req rm_operand;
@@ -130,34 +138,34 @@ void acs_cp_all_active_get(struct acs_cp_ctx *ctx)
 
 	if (!IS_ENABLED(CONFIG_BT_ACS_DESCRIPTORS)) {
 		LOG_ERR("Get All Active Descriptors: feature not supported");
-		acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_GET_ALL_ACTIVE_DESCRIPTORS,
+		acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_GET_ALL_ACTIVE_DESCRIPTORS,
 				  BT_ACS_CP_RESPONSE_OPCODE_NOT_SUPPORTED);
 		return;
 	}
 
-	buf = acs_cp_rsp_alloc(ctx);
+	buf = acs_cp_prepare_reply_buf(owner);
 	if (!buf) {
-		acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_GET_ALL_ACTIVE_DESCRIPTORS,
+		acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_GET_ALL_ACTIVE_DESCRIPTORS,
 				  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 		return;
 	}
 	net_buf_add_u8(buf, BT_ACS_CP_OPCODE_RESTRICTION_MAP_DESCRIPTOR_RESPONSE);
 
-	rm_operand.map_id = ctx->acs_conn->restriction_map_id;
+	rm_operand.map_id = owner->acs_conn->restriction_map_id;
 	rm_operand.resource_handle_filter = ACS_RMAP_FILTER_ALL;
 	rm_err = acs_rmap_build_descriptor_response(&rm_operand, &buf->b);
 	if (rm_err != 0) {
 		LOG_ERR("Get All Active Descriptors: RMAP build failed (%d)", rm_err);
-		acs_cp_rsp_status(ctx, BT_ACS_CP_OPCODE_GET_ALL_ACTIVE_DESCRIPTORS,
+		acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_GET_ALL_ACTIVE_DESCRIPTORS,
 				  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 		return;
 	}
 
-	acs_seq_begin(ctx, &all_active_seq);
+	acs_seq_begin(owner, &all_active_seq);
 
-	err = acs_cp_rsp_send(ctx);
+	err = acs_cp_send_reply(owner);
 	if (err) {
-		acs_seq_abort(ctx);
+		acs_seq_abort(owner);
 		LOG_WRN("Get All Active Descriptors: RMAP arm failed: %d", err);
 	}
 }
