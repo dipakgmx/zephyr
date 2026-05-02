@@ -134,17 +134,10 @@ void acs_cp_all_active_get(const struct acs_exec_owner *owner)
 {
 	struct net_buf *buf;
 	struct acs_rmap_get_descriptor_req rm_operand;
-	int rm_err, err;
-
-	if (!IS_ENABLED(CONFIG_BT_ACS_DESCRIPTORS)) {
-		LOG_ERR("Get All Active Descriptors: feature not supported");
-		acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_GET_ALL_ACTIVE_DESCRIPTORS,
-				  BT_ACS_CP_RESPONSE_OPCODE_NOT_SUPPORTED);
-		return;
-	}
+	int err;
 
 	buf = acs_cp_prepare_reply_buf(owner);
-	if (!buf) {
+	if (buf == NULL) {
 		acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_GET_ALL_ACTIVE_DESCRIPTORS,
 				  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 		return;
@@ -153,9 +146,9 @@ void acs_cp_all_active_get(const struct acs_exec_owner *owner)
 
 	rm_operand.map_id = owner->acs_conn->restriction_map_id;
 	rm_operand.resource_handle_filter = ACS_RMAP_FILTER_ALL;
-	rm_err = acs_rmap_build_descriptor_response(&rm_operand, &buf->b);
-	if (rm_err != 0) {
-		LOG_ERR("Get All Active Descriptors: RMAP build failed (%d)", rm_err);
+	err = acs_rmap_build_descriptor_response(&rm_operand, &buf->b);
+	if (err != 0) {
+		LOG_ERR("Get All Active Descriptors: RMAP build failed (%d)", err);
 		acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_GET_ALL_ACTIVE_DESCRIPTORS,
 				  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 		return;
@@ -166,6 +159,6 @@ void acs_cp_all_active_get(const struct acs_exec_owner *owner)
 	err = acs_cp_send_reply(owner);
 	if (err) {
 		acs_seq_abort(owner);
-		LOG_WRN("Get All Active Descriptors: RMAP arm failed: %d", err);
+		LOG_WRN("RMAP indication send failed (%d)", err);
 	}
 }

@@ -45,6 +45,8 @@ int acs_seg_notify(struct bt_conn *conn, const struct bt_gatt_attr *attr, const 
 	offset = 0;
 	counter = 0;
 
+	LOG_DBG("seg_notify: start len=%u seg_payload=%u", len, seg_payload);
+
 	while (offset < len) {
 		uint16_t chunk = MIN(seg_payload, len - offset);
 		bool is_first = (offset == 0);
@@ -53,9 +55,14 @@ int acs_seg_notify(struct bt_conn *conn, const struct bt_gatt_attr *attr, const 
 		pdu[0] = seg_hdr_build(is_first, is_last, counter);
 		memcpy(&pdu[1], data + offset, chunk);
 
+		LOG_DBG("seg_notify: send first=%u last=%u counter=%u chunk=%u offset=%u/%u",
+			is_first, is_last, counter, chunk, offset, len);
+		LOG_HEXDUMP_DBG(pdu, chunk + ACS_SEG_HDR_SIZE, "seg_notify pdu");
+
 		err = bt_gatt_notify(conn, attr, pdu, chunk + ACS_SEG_HDR_SIZE);
 
 		if (err) {
+			LOG_ERR("seg_notify: bt_gatt_notify failed: %d", err);
 			return err;
 		}
 
@@ -123,6 +130,11 @@ enum acs_seg_rx_result acs_seg_rx_process(struct acs_seg_rx_ctx *ctx, const uint
 	payload = &data[1];
 	payload_len = len - 1;
 
+	LOG_DBG("seg_rx: first=%u last=%u counter=%u payload_len=%u in_progress=%u buf_len=%u",
+		is_first, is_last, counter, payload_len, ctx->rx_in_progress,
+		ctx->buf ? ctx->buf->len : 0);
+	LOG_HEXDUMP_DBG(data, len, "seg_rx raw");
+
 	if (is_first) {
 		ctx->rx_in_progress = false;
 		net_buf_reset(ctx->buf);
@@ -136,12 +148,16 @@ enum acs_seg_rx_result acs_seg_rx_process(struct acs_seg_rx_ctx *ctx, const uint
 		net_buf_add_mem(ctx->buf, payload, payload_len);
 
 		if (is_last) {
+			LOG_DBG("seg_rx: complete in single segment total_len=%u", ctx->buf->len);
+			LOG_HEXDUMP_DBG(ctx->buf->data, ctx->buf->len, "seg_rx assembled");
 			return ACS_SEG_RX_COMPLETE;
 		}
 
 		ctx->rx_in_progress = true;
 		ctx->rx_counter = (counter + 1) % ACS_SEG_COUNTER_MAX;
 		ctx->rx_deadline = sys_timepoint_calc(ACS_SEG_RX_TIMEOUT);
+		LOG_DBG("seg_rx: started reassembly total_len=%u next_counter=%u", ctx->buf->len,
+			ctx->rx_counter);
 		return ACS_SEG_RX_FRAGMENT;
 	}
 
@@ -178,11 +194,15 @@ enum acs_seg_rx_result acs_seg_rx_process(struct acs_seg_rx_ctx *ctx, const uint
 
 	if (is_last) {
 		ctx->rx_in_progress = false;
+		LOG_DBG("seg_rx: reassembly complete total_len=%u", ctx->buf->len);
+		LOG_HEXDUMP_DBG(ctx->buf->data, ctx->buf->len, "seg_rx assembled");
 		return ACS_SEG_RX_COMPLETE;
 	}
 
 	ctx->rx_counter = (counter + 1) % ACS_SEG_COUNTER_MAX;
 	ctx->rx_deadline = sys_timepoint_calc(ACS_SEG_RX_TIMEOUT);
+	LOG_DBG("seg_rx: appended fragment total_len=%u next_counter=%u", ctx->buf->len,
+		ctx->rx_counter);
 	return ACS_SEG_RX_FRAGMENT;
 }
 
@@ -223,11 +243,13 @@ static void acs_seg_tx_confirm_cb(struct bt_conn *conn, struct bt_gatt_indicate_
 	}
 
 	if (ctx->tx_offset < buf_len) {
+		LOG_DBG("seg_tx: indication confirmed, more segments pending offset=%u total_len=%u",
+			ctx->tx_offset, buf_len);
 		k_work_submit(&ctx->tx_work);
 		return;
 	}
 
-	LOG_DBG("seg_tx: all segments confirmed");
+	LOG_DBG("seg_tx: indication confirmed, transfer complete total_len=%u", buf_len);
 
 	/* Snapshot callbacks before resetting state so tx_on_complete can re-arm. */
 	acs_seg_tx_on_complete_t cb = ctx->tx_on_complete;
@@ -315,6 +337,10 @@ static void acs_seg_tx_work_handler(struct k_work *work)
 	/* Build PDU in scratch buffer: [header][payload_chunk] */
 	ctx->tx_scratch[0] = seg_hdr_build(is_first, is_last, ctx->tx_counter);
 	memcpy(&ctx->tx_scratch[1], ctx->buf->data + ctx->tx_offset, chunk);
+
+	LOG_DBG("seg_tx: send first=%u last=%u counter=%u chunk=%u offset=%u/%u", is_first,
+		is_last, ctx->tx_counter, chunk, ctx->tx_offset, buf_len);
+	LOG_HEXDUMP_DBG(ctx->tx_scratch, chunk + ACS_SEG_HDR_SIZE, "seg_tx pdu");
 
 	memset(&ctx->ind_params, 0, sizeof(ctx->ind_params));
 	ctx->ind_params.attr = ctx->tx_attr;
