@@ -18,7 +18,7 @@ LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
 /* Build a segmentation header byte. */
 static inline uint8_t seg_hdr_build(bool first, bool last, uint8_t counter)
 {
-	return (first ? ACS_SEG_FIRST_MASK : 0U) | (last ? ACS_SEG_LAST_MASK : 0U) |
+	return (first ? BIT(ACS_SEG_FIRST_SEGMENT_BIT) : 0U) | (last ? BIT(ACS_SEG_LAST_SEGMENT_BIT) : 0U) |
 	       FIELD_PREP(ACS_SEG_COUNTER_MASK, counter);
 }
 
@@ -124,8 +124,8 @@ enum acs_seg_rx_result acs_seg_rx_process(struct acs_seg_rx_ctx *ctx, const uint
 	}
 
 	seg_hdr = data[0];
-	is_first = (seg_hdr & ACS_SEG_FIRST_MASK) != 0;
-	is_last = (seg_hdr & ACS_SEG_LAST_MASK) != 0;
+	is_first = IS_BIT_SET(seg_hdr, ACS_SEG_FIRST_SEGMENT_BIT);
+	is_last  = IS_BIT_SET(seg_hdr, ACS_SEG_LAST_SEGMENT_BIT);
 	counter = FIELD_GET(ACS_SEG_COUNTER_MASK, seg_hdr);
 	payload = &data[1];
 	payload_len = len - 1;
@@ -158,7 +158,7 @@ enum acs_seg_rx_result acs_seg_rx_process(struct acs_seg_rx_ctx *ctx, const uint
 		ctx->rx_deadline = sys_timepoint_calc(ACS_SEG_RX_TIMEOUT);
 		LOG_DBG("seg_rx: started reassembly total_len=%u next_counter=%u", ctx->buf->len,
 			ctx->rx_counter);
-		return ACS_SEG_RX_FRAGMENT;
+		return ACS_SEG_RX_PENDING;
 	}
 
 	if (!ctx->rx_in_progress) {
@@ -203,7 +203,7 @@ enum acs_seg_rx_result acs_seg_rx_process(struct acs_seg_rx_ctx *ctx, const uint
 	ctx->rx_deadline = sys_timepoint_calc(ACS_SEG_RX_TIMEOUT);
 	LOG_DBG("seg_rx: appended fragment total_len=%u next_counter=%u", ctx->buf->len,
 		ctx->rx_counter);
-	return ACS_SEG_RX_FRAGMENT;
+	return ACS_SEG_RX_PENDING;
 }
 
 /* Forward declaration */

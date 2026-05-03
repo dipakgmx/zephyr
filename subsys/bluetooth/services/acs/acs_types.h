@@ -115,6 +115,19 @@ enum acs_reply_channel {
 };
 
 /**
+ * @brief Canonical transport defaults for a logical ACS reply.
+ *
+ * Derived once from the dispatch path, then reused by handlers when staging
+ * and sending replies so call sites do not have to re-encode channel /
+ * encryption / confirm policy inline.
+ */
+struct acs_reply_mode {
+	enum acs_reply_channel channel;
+	bool encrypted;
+	bool needs_confirm;
+};
+
+/**
  * @brief Logical outbound message produced by a domain handler.
  *
  * Built by the CP-domain or service-adapter handlers and consumed by the
@@ -508,6 +521,23 @@ acs_exec_owner_protected(struct bt_acs_prot_resource_req *req)
 static inline bool acs_owner_is_plain_cp(const struct acs_exec_owner *owner)
 {
 	return owner && owner->kind == ACS_EXEC_OWNER_PLAIN_CP;
+}
+
+/**
+ * @brief Derive the canonical reply transport mode for @p owner.
+ *
+ * Plain CP replies travel as unencrypted CP indications; protected CP replies
+ * travel as encrypted DOI indications. Both are confirmed paths.
+ */
+static inline struct acs_reply_mode acs_owner_reply_mode(const struct acs_exec_owner *owner)
+{
+	__ASSERT_NO_MSG(owner != NULL);
+
+	return (struct acs_reply_mode){
+		.channel = acs_owner_is_plain_cp(owner) ? ACS_REPLY_CP : ACS_REPLY_DOI,
+		.encrypted = owner->kind == ACS_EXEC_OWNER_PROTECTED_REQ,
+		.needs_confirm = true,
+	};
 }
 
 /**

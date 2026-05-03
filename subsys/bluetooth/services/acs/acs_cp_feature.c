@@ -132,6 +132,7 @@ static const struct bt_acs_feature_rsp acs_features = {
 void acs_cp_handle_get_feature(const struct acs_exec_owner *owner, struct net_buf_simple *buf)
 {
 	struct net_buf *rsp_buf;
+	struct acs_reply_mode reply_mode = acs_owner_reply_mode(owner);
 	int err;
 
 	if (buf->len != 0) {
@@ -143,7 +144,7 @@ void acs_cp_handle_get_feature(const struct acs_exec_owner *owner, struct net_bu
 	LOG_DBG("get_feature: feat=0x%02x prot=0x%02x", acs_features.features,
 		acs_features.protection_methods);
 
-	rsp_buf = acs_cp_prepare_reply_buf(owner);
+	rsp_buf = acs_prepare_reply_buf(owner, reply_mode.channel, reply_mode.encrypted);
 	if (!rsp_buf) {
 		acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_GET_FEATURE,
 				  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
@@ -162,9 +163,10 @@ void acs_cp_handle_get_feature(const struct acs_exec_owner *owner, struct net_bu
 void acs_cp_handle_att_mtu(const struct acs_exec_owner *owner)
 {
 	struct net_buf *rsp_buf;
+	struct acs_reply_mode reply_mode = acs_owner_reply_mode(owner);
 	uint16_t mtu;
 
-	rsp_buf = acs_cp_prepare_reply_buf(owner);
+	rsp_buf = acs_prepare_reply_buf(owner, reply_mode.channel, reply_mode.encrypted);
 	if (!rsp_buf) {
 		acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_ATT_MTU,
 				  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);

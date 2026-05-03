@@ -42,7 +42,7 @@ void acs_cp_handle_get_isc_descriptor(const struct acs_exec_owner *owner, struct
 
 #if IS_ENABLED(CONFIG_BT_ACS_ANY_KEY_EXCHANGE)
 /** @brief Handle Get Key Descriptor CP request (§4.4.3.8).
- *  Parses the Key_ID operand from @p buf and sends a Key_Descriptor indication via @p ctx. */
+ *  Parses the Key_ID operand from @p buf and sends a Key_Descriptor indication via @p owner. */
 void acs_cp_handle_get_key_descriptor(const struct acs_exec_owner *owner, struct net_buf_simple *buf);
 
 /** @brief Handle Get Current Key List CP request (§4.4.3.9). */

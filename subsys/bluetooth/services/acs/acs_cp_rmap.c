@@ -22,9 +22,10 @@ LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
 void acs_cp_handle_get_restriction_map_id_list(const struct acs_exec_owner *owner)
 {
 	struct net_buf *rsp_buf;
+	struct acs_reply_mode reply_mode = acs_owner_reply_mode(owner);
 	int build_err;
 
-	rsp_buf = acs_cp_prepare_reply_buf(owner);
+	rsp_buf = acs_prepare_reply_buf(owner, reply_mode.channel, reply_mode.encrypted);
 	if (!rsp_buf) {
 		acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_GET_RESTRICTION_MAP_ID_LIST,
 				  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
@@ -50,6 +51,7 @@ void acs_cp_handle_get_restriction_map_descriptor(const struct acs_exec_owner *o
 {
 	struct acs_rmap_get_descriptor_req desc_req;
 	struct net_buf *rsp_buf;
+	struct acs_reply_mode reply_mode = acs_owner_reply_mode(owner);
 	int build_err;
 
 	if (buf->len != sizeof(struct acs_rmap_get_descriptor_req)) {
@@ -62,7 +64,7 @@ void acs_cp_handle_get_restriction_map_descriptor(const struct acs_exec_owner *o
 	desc_req.map_id = net_buf_simple_pull_le16(buf);
 	desc_req.resource_handle_filter = net_buf_simple_pull_le16(buf);
 
-	rsp_buf = acs_cp_prepare_reply_buf(owner);
+	rsp_buf = acs_prepare_reply_buf(owner, reply_mode.channel, reply_mode.encrypted);
 	if (!rsp_buf) {
 		LOG_WRN("buffer pool exhausted");
 		acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_GET_RESTRICTION_MAP_DESCRIPTOR,

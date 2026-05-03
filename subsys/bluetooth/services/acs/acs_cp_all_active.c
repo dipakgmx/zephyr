@@ -42,8 +42,9 @@ static int all_active_step_isc(struct acs_cp_step_ctx *ctx)
 	static const uint8_t filter[2] = {0xFF, 0xFF};
 	struct net_buf *buf;
 	struct net_buf_simple operand;
+	struct acs_reply_mode reply_mode = acs_owner_reply_mode(owner);
 
-	buf = acs_cp_prepare_reply_buf(owner);
+	buf = acs_prepare_reply_buf(owner, reply_mode.channel, reply_mode.encrypted);
 	if (!buf) {
 		return -ENOMEM;
 	}
@@ -68,9 +69,10 @@ static int all_active_step_key(struct acs_cp_step_ctx *ctx)
 	static const uint8_t filter[2] = {0xFF, 0xFF};
 	struct net_buf *buf;
 	struct net_buf_simple operand;
+	struct acs_reply_mode reply_mode = acs_owner_reply_mode(owner);
 	int err;
 
-	buf = acs_cp_prepare_reply_buf(owner);
+	buf = acs_prepare_reply_buf(owner, reply_mode.channel, reply_mode.encrypted);
 	if (!buf) {
 		return -ENOMEM;
 	}
@@ -134,9 +136,10 @@ void acs_cp_all_active_get(const struct acs_exec_owner *owner)
 {
 	struct net_buf *buf;
 	struct acs_rmap_get_descriptor_req rm_operand;
+	struct acs_reply_mode reply_mode = acs_owner_reply_mode(owner);
 	int err;
 
-	buf = acs_cp_prepare_reply_buf(owner);
+	buf = acs_prepare_reply_buf(owner, reply_mode.channel, reply_mode.encrypted);
 	if (buf == NULL) {
 		acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_GET_ALL_ACTIVE_DESCRIPTORS,
 				  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);

@@ -25,6 +25,7 @@ void acs_cp_kex_get_current_key_list(const struct acs_exec_owner *owner)
 {
 	/* count(1 byte) + up to ACS_KEY_ID_COUNT x Key_ID(2 bytes) */
 	uint8_t buf[sizeof(uint8_t) + ACS_KEY_ID_COUNT * sizeof(uint16_t)];
+	struct acs_reply_mode reply_mode = acs_owner_reply_mode(owner);
 	uint8_t count = 0;
 	uint16_t pos = sizeof(uint8_t); /* byte 0 reserved for count */
 
@@ -55,7 +56,8 @@ void acs_cp_kex_get_current_key_list(const struct acs_exec_owner *owner)
 	buf[0] = count;
 
 	{
-		struct net_buf *rsp_buf = acs_cp_prepare_reply_buf(owner);
+		struct net_buf *rsp_buf =
+			acs_prepare_reply_buf(owner, reply_mode.channel, reply_mode.encrypted);
 
 		if (!rsp_buf) {
 			LOG_WRN("buffer pool exhausted");
@@ -77,6 +79,7 @@ static int kex_step_success_response(struct acs_cp_step_ctx *ctx)
 {
 	const struct acs_exec_owner *owner = &ctx->owner;
 	struct bt_acs_conn *acs_conn = owner->acs_conn;
+	struct acs_reply_mode reply_mode = acs_owner_reply_mode(owner);
 	uint8_t payload[3];
 	uint16_t key_id;
 
@@ -89,7 +92,8 @@ static int kex_step_success_response(struct acs_cp_step_ctx *ctx)
 	sys_put_le16(key_id, &payload[0]);
 	payload[2] = 0x00;
 
-	struct net_buf *buf = acs_cp_prepare_reply_buf(owner);
+	struct net_buf *buf =
+		acs_prepare_reply_buf(owner, reply_mode.channel, reply_mode.encrypted);
 
 	if (!buf) {
 		return -ENOMEM;
@@ -194,6 +198,7 @@ static int kex_step_fail_response(struct acs_cp_step_ctx *ctx)
 {
 	const struct acs_exec_owner *owner = &ctx->owner;
 	struct bt_acs_conn *acs_conn = owner->acs_conn;
+	struct acs_reply_mode reply_mode = acs_owner_reply_mode(owner);
 	uint8_t payload[3];
 	uint16_t key_id;
 
@@ -205,7 +210,8 @@ static int kex_step_fail_response(struct acs_cp_step_ctx *ctx)
 	sys_put_le16(key_id, &payload[0]);
 	payload[2] = 0x01;
 
-	struct net_buf *buf = acs_cp_prepare_reply_buf(owner);
+	struct net_buf *buf =
+		acs_prepare_reply_buf(owner, reply_mode.channel, reply_mode.encrypted);
 
 	if (!buf) {
 		return -ENOMEM;
@@ -243,6 +249,7 @@ void acs_cp_kex_exchange_kdf(const struct acs_exec_owner *owner, struct net_buf_
 	struct acs_kdf_req req_data;
 	uint16_t key_id;
 	struct net_buf *rsp_buf;
+	struct acs_reply_mode reply_mode = acs_owner_reply_mode(owner);
 	int err;
 	int arm_err;
 
@@ -269,7 +276,7 @@ void acs_cp_kex_exchange_kdf(const struct acs_exec_owner *owner, struct net_buf_
 		return;
 	}
 
-	rsp_buf = acs_cp_prepare_reply_buf(owner);
+	rsp_buf = acs_prepare_reply_buf(owner, reply_mode.channel, reply_mode.encrypted);
 	if (!rsp_buf) {
 		acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_KEY_EXCHANGE_KDF,
 				  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
@@ -512,8 +519,7 @@ void acs_cp_kex_start(const struct acs_exec_owner *owner, struct net_buf_simple 
 	}
 
 	if (!acs_conn->kex) {
-		acs_conn->kex = acs_kex_alloc();
-		if (!acs_conn->kex) {
+		if (acs_kex_alloc(acs_conn) != 0) {
 			LOG_ERR("No free KEX context");
 			acs_conn->key_state = BT_ACS_KEY_EXCHANGE_IDLE;
 			acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_START_KEY_EXCHANGE,
@@ -639,7 +645,9 @@ void acs_cp_kex_exchange_ecdh(const struct acs_exec_owner *owner, struct net_buf
 	       sizeof(acs_conn->kex->client_pubkey));
 
 	{
-		struct net_buf *rsp_buf = acs_cp_prepare_reply_buf(owner);
+		struct acs_reply_mode reply_mode = acs_owner_reply_mode(owner);
+		struct net_buf *rsp_buf =
+			acs_prepare_reply_buf(owner, reply_mode.channel, reply_mode.encrypted);
 
 		if (!rsp_buf) {
 			acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH,
@@ -683,6 +691,7 @@ void acs_cp_kex_ecdh_confirm_code(const struct acs_exec_owner *owner, struct net
 	struct acs_cp_ecdh_confirm_code_req req_data;
 	uint16_t key_id;
 	struct net_buf *rsp_buf;
+	struct acs_reply_mode reply_mode = acs_owner_reply_mode(owner);
 	int err;
 
 	if (acs_conn->key_state != BT_ACS_KEY_EXCHANGE_PUBKEY_EXCHANGED &&
@@ -715,7 +724,7 @@ void acs_cp_kex_ecdh_confirm_code(const struct acs_exec_owner *owner, struct net
 
 	memcpy(acs_conn->kex->client_confirm, req_data.confirm_code, ACS_HMAC_SHA256_SIZE);
 
-	rsp_buf = acs_cp_prepare_reply_buf(owner);
+	rsp_buf = acs_prepare_reply_buf(owner, reply_mode.channel, reply_mode.encrypted);
 	if (!rsp_buf) {
 		acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_ECDH_CONFIRM_CODE,
 				  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
@@ -744,6 +753,7 @@ void acs_cp_kex_ecdh_confirm_rand(const struct acs_exec_owner *owner, struct net
 	struct bt_acs_conn *acs_conn = owner->acs_conn;
 	struct acs_cp_ecdh_confirm_rand_req req_data;
 	struct net_buf *rsp_buf;
+	struct acs_reply_mode reply_mode = acs_owner_reply_mode(owner);
 	int err;
 
 	if (acs_conn->key_state != BT_ACS_KEY_EXCHANGE_CONFIRM_CODE) {
@@ -776,7 +786,7 @@ void acs_cp_kex_ecdh_confirm_rand(const struct acs_exec_owner *owner, struct net
 
 	memcpy(acs_conn->kex->client_random, req_data.random, ACS_HMAC_SHA256_SIZE);
 
-	rsp_buf = acs_cp_prepare_reply_buf(owner);
+	rsp_buf = acs_prepare_reply_buf(owner, reply_mode.channel, reply_mode.encrypted);
 	if (!rsp_buf) {
 		acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_ECDH_CONFIRM_RAND,
 				  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);

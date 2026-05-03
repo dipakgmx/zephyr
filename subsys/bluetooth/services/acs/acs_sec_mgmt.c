@@ -437,7 +437,9 @@ void acs_sec_mgmt_get_key_uri(const struct acs_exec_owner *owner, struct net_buf
 	}
 
 	{
-		struct net_buf *nbuf = acs_cp_prepare_reply_buf(owner);
+		struct acs_reply_mode reply_mode = acs_owner_reply_mode(owner);
+		struct net_buf *nbuf =
+			acs_prepare_reply_buf(owner, reply_mode.channel, reply_mode.encrypted);
 
 		if (!nbuf) {
 			acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_GET_KEY_URI,

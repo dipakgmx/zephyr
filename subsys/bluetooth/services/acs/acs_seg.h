@@ -36,14 +36,14 @@ extern "C" {
  *   Bit 1: Last Segment
  *   Bits 2-7: Rolling Segment Counter (0-63, wraps)
  */
-#define ACS_SEG_FIRST_MASK   BIT(0)
-#define ACS_SEG_LAST_MASK    BIT(1)
+#define ACS_SEG_FIRST_SEGMENT_BIT   0
+#define ACS_SEG_LAST_SEGMENT_BIT    1
 #define ACS_SEG_COUNTER_MASK GENMASK(7, 2)
 /* (1U << 6): counter occupies 6 bits (GENMASK(7,2)); wraps at 64. */
 #define ACS_SEG_COUNTER_MAX  64
 
 /** Single-segment (complete) PDU header: First=1, Last=1, Counter=0 */
-#define ACS_SEG_SINGLE_PDU (ACS_SEG_FIRST_MASK | ACS_SEG_LAST_MASK)
+#define ACS_SEG_SINGLE_PDU (BIT(ACS_SEG_FIRST_SEGMENT_BIT) | BIT(ACS_SEG_LAST_SEGMENT_BIT))
 
 /** @brief Spec §3.6.2: timeout between segments of a multi-segment write (30 s). */
 #define ACS_SEG_RX_TIMEOUT K_SECONDS(30)
@@ -70,7 +70,7 @@ typedef void (*acs_seg_tx_on_complete_t)(struct bt_conn *conn, const struct bt_g
  */
 enum acs_seg_rx_result {
 	ACS_SEG_RX_COMPLETE = 0,      /**< Payload fully reassembled in ctx->buf */
-	ACS_SEG_RX_FRAGMENT = 1,      /**< Mid-stream segment buffered; not yet complete */
+	ACS_SEG_RX_PENDING = 1,      /**< Mid-stream segment buffered; not yet complete */
 	ACS_SEG_RX_ERR_COUNTER = -1,  /**< Invalid rolling counter */
 	ACS_SEG_RX_ERR_OVERFLOW = -2, /**< Segment too large for buffer */
 	ACS_SEG_RX_ERR_ORPHAN = -3,   /**< Last/continuation without preceding First */

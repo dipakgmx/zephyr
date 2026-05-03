@@ -149,7 +149,7 @@ struct bt_acs_prot_resource_req *acs_prot_resource_req_alloc(struct bt_acs_conn 
 	req->data_offset = data_offset;
 
 	/* Response buffer is allocated lazily in acs_prepare_reply_buf
-	 * (called from CP handlers via acs_cp_prepare_reply_buf, or from
+	 * (called directly from CP / DOI / DON reply builders, or from
 	 * acs_auto_respond).
 	 */
 	req->response = NULL;

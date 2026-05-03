@@ -239,7 +239,7 @@ ssize_t acs_cp_write(struct bt_conn *conn, const struct bt_gatt_attr *attr, cons
 		acs_seg_rx_reset(&acs_conn->cp_rx);
 		break;
 	}
-	case ACS_SEG_RX_FRAGMENT:
+	case ACS_SEG_RX_PENDING:
 		break;
 	case ACS_SEG_RX_ERR_COUNTER:
 		LOG_WRN("CP RX: invalid segment counter (out-of-sequence PDU)");
@@ -359,7 +359,7 @@ ssize_t acs_data_in_write(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 		}
 		break;
 	}
-	case ACS_SEG_RX_FRAGMENT:
+	case ACS_SEG_RX_PENDING:
 		break;
 	case ACS_SEG_RX_ERR_COUNTER:
 		return BT_GATT_ERR(BT_ACS_ATT_ERR_INVALID_SEG_COUNTER);

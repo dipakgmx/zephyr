@@ -29,21 +29,22 @@ void acs_cp_on_indicate_done(struct bt_conn *conn, const struct bt_gatt_attr *at
 void acs_cp_build_reply(const struct acs_exec_owner *owner, struct acs_reply *reply)
 {
 	acs_procedure *proc;
+	struct acs_reply_mode reply_mode;
 
 	__ASSERT_NO_MSG(owner != NULL);
 	__ASSERT_NO_MSG(reply != NULL);
 
 	proc = acs_owner_proc(owner);
+	reply_mode = acs_owner_reply_mode(owner);
 	__ASSERT_NO_MSG(proc != NULL);
 	__ASSERT_NO_MSG(proc->response != NULL);
 	__ASSERT_NO_MSG(proc->response->len > 0);
 
 	*reply = (struct acs_reply){
-		.channel = (owner->kind == ACS_EXEC_OWNER_PLAIN_CP) ? ACS_REPLY_CP
-								    : ACS_REPLY_DOI,
+		.channel = reply_mode.channel,
 		.plaintext = proc->response,
-		.encrypted = owner->kind == ACS_EXEC_OWNER_PROTECTED_REQ,
-		.needs_confirm = true,
+		.encrypted = reply_mode.encrypted,
+		.needs_confirm = reply_mode.needs_confirm,
 	};
 }
 

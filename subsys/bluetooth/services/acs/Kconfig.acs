@@ -191,9 +191,6 @@ config BT_ACS_KDF_SESSION_KEY
 	  The Get Current Key List response includes the KDF key only after the
 	  peer has completed the KDF exchange for the current connection.
 
-	  Both modes are spec-compliant. The server is permitted to expire keys
-	  at its discretion (spec §3.4); session-only lifetime is one such policy.
-
 endif # BT_ACS_KEY_EXCHANGE_KDF
 
 # KDF buffer sizes — always present so C code compiles when KDF is off.
@@ -589,16 +586,6 @@ config BT_ACS_CP_BUF_SIZE
 	range 64 1024
 	help
 	  Defines the memory pool size of the Control Point response buffer allocated in bytes.
-
-config BT_ACS_MAX_CONCURRENT_CONN
-	int "Maximum simultaneous ACS transient contexts"
-	default BT_MAX_CONN
-	range 1 BT_MAX_CONN
-	help
-	  Number of connections that may simultaneously hold ACS transient working
-	  state. This single limit sizes both the key-exchange context pool and the
-	  large ACS I/O working-set pool (segmentation buffers, CP/DOI TX state, and
-	  crypto scratch storage).
 
 config BT_ACS_MAX_INFLIGHT_REQ_PER_CONN
 	int "Maximum in-flight ACS requests per connection"

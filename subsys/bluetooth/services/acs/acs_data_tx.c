@@ -366,37 +366,23 @@ struct net_buf *acs_prepare_reply_buf(const struct acs_exec_owner *owner,
 	return buf;
 }
 
-struct net_buf *acs_cp_prepare_reply_buf(const struct acs_exec_owner *owner)
-{
-	enum acs_reply_channel channel;
-	bool encrypted;
-
-	__ASSERT_NO_MSG(owner != NULL);
-
-	if (owner->kind == ACS_EXEC_OWNER_PLAIN_CP) {
-		channel = ACS_REPLY_CP;
-		encrypted = false;
-	} else {
-		channel = ACS_REPLY_DOI;
-		encrypted = true;
-	}
-
-	return acs_prepare_reply_buf(owner, channel, encrypted);
-}
-
 int acs_cp_rsp_status(const struct acs_exec_owner *owner, uint8_t req_opcode, uint8_t code)
 {
 	struct net_buf *buf;
 	struct acs_reply reply;
+	struct acs_reply_mode reply_mode;
+	bool plain_cp;
 	int err;
 
 	__ASSERT_NO_MSG(owner != NULL);
 	__ASSERT_NO_MSG(owner->acs_conn != NULL);
 
-	buf = acs_cp_prepare_reply_buf(owner);
+	reply_mode = acs_owner_reply_mode(owner);
+	plain_cp = acs_owner_is_plain_cp(owner);
+	buf = acs_prepare_reply_buf(owner, reply_mode.channel, reply_mode.encrypted);
 	if (!buf) {
 		acs_seq_abort(owner);
-		if (owner->kind == ACS_EXEC_OWNER_PLAIN_CP) {
+		if (plain_cp) {
 			atomic_set(&owner->acs_conn->plain_cp_proc.locked, 0);
 		}
 		return -ENOMEM;

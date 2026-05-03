@@ -18,7 +18,7 @@ LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
 
 static inline bool acs_channel_rx_is_first(const uint8_t *data)
 {
-	return (data[0] & ACS_SEG_FIRST_MASK) != 0;
+	return IS_BIT_SET(data[0], ACS_SEG_FIRST_SEGMENT_BIT);
 }
 
 enum acs_seg_rx_result acs_channel_rx_feed(struct acs_seg_rx_ctx *rx_ctx, const uint8_t *data,
@@ -30,7 +30,7 @@ enum acs_seg_rx_result acs_channel_rx_feed(struct acs_seg_rx_ctx *rx_ctx, const 
 		return ACS_SEG_RX_ERR_LEN;
 	}
 
-	if (acs_channel_rx_is_first(data) && !rx_ctx->buf) {
+	if (IS_BIT_SET(data[0], ACS_SEG_FIRST_SEGMENT_BIT) && !rx_ctx->buf) {
 		struct net_buf *rx_buf = acs_buf_alloc(K_NO_WAIT);
 
 		if (!rx_buf) {
@@ -47,7 +47,7 @@ enum acs_seg_rx_result acs_channel_rx_feed(struct acs_seg_rx_ctx *rx_ctx, const 
 
 	res = acs_seg_rx_process(rx_ctx, data, len);
 
-	if (res != ACS_SEG_RX_COMPLETE && res != ACS_SEG_RX_FRAGMENT) {
+	if (res != ACS_SEG_RX_COMPLETE && res != ACS_SEG_RX_PENDING) {
 		acs_seg_rx_reset(rx_ctx);
 	}
 

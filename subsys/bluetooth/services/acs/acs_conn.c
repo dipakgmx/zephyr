@@ -31,7 +31,7 @@ NET_BUF_POOL_FIXED_DEFINE(acs_buf_pool, ACS_BUF_COUNT, ACS_BUF_SIZE, 0, NULL);
 /** Per-connection ACS persistent state, indexed by connection slot. */
 static struct bt_acs_conn acs_conn_state[CONFIG_BT_MAX_CONN];
 /** Pool of transient key-exchange contexts (released on handshake completion) */
-static struct bt_acs_kex_ctx acs_kex_pool[CONFIG_BT_ACS_MAX_CONCURRENT_CONN];
+static struct bt_acs_kex_ctx acs_kex_pool[CONFIG_BT_MAX_CONN];
 
 struct net_buf *acs_buf_alloc(k_timeout_t timeout)
 {
@@ -60,16 +60,18 @@ struct bt_acs_conn *acs_conn_by_index(uint8_t index)
 	return &acs_conn_state[index];
 }
 
-struct bt_acs_kex_ctx *acs_kex_alloc(void)
+int acs_kex_alloc(struct bt_acs_conn *acs_conn)
 {
-	for (int i = 0; i < CONFIG_BT_ACS_MAX_CONCURRENT_CONN; i++) {
-		if (!acs_kex_pool[i].in_use) {
-			memset(&acs_kex_pool[i], 0, sizeof(acs_kex_pool[i]));
-			acs_kex_pool[i].in_use = true;
-			return &acs_kex_pool[i];
-		}
+	uint8_t idx = bt_conn_index(acs_conn->conn);
+	struct bt_acs_kex_ctx *kex = &acs_kex_pool[idx];
+
+	if (kex->in_use) {
+		return -EBUSY;
 	}
-	return NULL;
+	memset(kex, 0, sizeof(*kex));
+	kex->in_use = true;
+	acs_conn->kex = kex;
+	return 0;
 }
 
 void acs_kex_free(struct bt_acs_kex_ctx *kex)
@@ -115,29 +117,18 @@ static void acs_cp_proc_cleanup(struct bt_acs_conn *acs_conn)
 
 struct bt_acs_conn *acs_conn_lookup(struct bt_conn *conn)
 {
-	uint8_t index = bt_conn_index(conn);
-	struct bt_acs_conn *acs_conn = acs_conn_by_index(index);
+	struct bt_acs_conn *acs_conn = &acs_conn_state[bt_conn_index(conn)];
 
-	if (!acs_conn) {
-		LOG_ERR("ACS connect lookup failed: %d", index);
-		return NULL;
-	}
-
-	if (acs_conn->conn == conn) {
-		return acs_conn;
-	}
-
-	return NULL;
+	return (acs_conn->conn == conn) ? acs_conn : NULL;
 }
 
 struct bt_acs_conn *acs_conn_alloc(struct bt_conn *conn)
 {
-	uint8_t index = bt_conn_index(conn);
-	struct bt_acs_conn *acs_conn = acs_conn_by_index(index);
-
-	if (!acs_conn) {
+	if (!conn) {
 		return NULL;
 	}
+
+	struct bt_acs_conn *acs_conn = &acs_conn_state[bt_conn_index(conn)];
 
 #if IS_ENABLED(CONFIG_BT_ACS_HAS_NONCE_FIXED)
 	{

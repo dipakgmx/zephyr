@@ -25,9 +25,10 @@ LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
 void acs_cp_handle_get_key_descriptor(const struct acs_exec_owner *owner, struct net_buf_simple *buf)
 {
 	struct net_buf *rsp_buf;
+	struct acs_reply_mode reply_mode = acs_owner_reply_mode(owner);
 	int build_err;
 
-	rsp_buf = acs_cp_prepare_reply_buf(owner);
+	rsp_buf = acs_prepare_reply_buf(owner, reply_mode.channel, reply_mode.encrypted);
 	if (!rsp_buf) {
 		acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_GET_KEY_DESCRIPTOR,
 				  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
@@ -63,9 +64,10 @@ void acs_cp_handle_get_key_descriptor(const struct acs_exec_owner *owner, struct
 void acs_cp_handle_get_isc_descriptor(const struct acs_exec_owner *owner, struct net_buf_simple *buf)
 {
 	struct net_buf *rsp_buf;
+	struct acs_reply_mode reply_mode = acs_owner_reply_mode(owner);
 	int build_err;
 
-	rsp_buf = acs_cp_prepare_reply_buf(owner);
+	rsp_buf = acs_prepare_reply_buf(owner, reply_mode.channel, reply_mode.encrypted);
 	if (!rsp_buf) {
 		acs_cp_rsp_status(
 			owner, BT_ACS_CP_OPCODE_GET_INFORMATION_SECURITY_CONFIGURATION_DESCRIPTOR,
@@ -95,9 +97,10 @@ void acs_cp_handle_get_isc_descriptor(const struct acs_exec_owner *owner, struct
 void acs_cp_handle_get_resource_handle_uuid_map(const struct acs_exec_owner *owner)
 {
 	struct net_buf *rsp_buf;
+	struct acs_reply_mode reply_mode = acs_owner_reply_mode(owner);
 	int build_err;
 
-	rsp_buf = acs_cp_prepare_reply_buf(owner);
+	rsp_buf = acs_prepare_reply_buf(owner, reply_mode.channel, reply_mode.encrypted);
 	if (!rsp_buf) {
 		acs_cp_rsp_status(owner, BT_ACS_CP_OPCODE_GET_RESOURCE_HANDLE_UUID_MAP,
 				  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
@@ -123,6 +126,7 @@ void acs_cp_handle_get_svc_char_uuids(const struct acs_exec_owner *owner, struct
 {
 	uint16_t resource_handle;
 	struct net_buf *rsp_buf;
+	struct acs_reply_mode reply_mode = acs_owner_reply_mode(owner);
 	int err;
 
 	if (buf->len < 2) {
@@ -134,7 +138,7 @@ void acs_cp_handle_get_svc_char_uuids(const struct acs_exec_owner *owner, struct
 
 	resource_handle = net_buf_simple_pull_le16(buf);
 
-	rsp_buf = acs_cp_prepare_reply_buf(owner);
+	rsp_buf = acs_prepare_reply_buf(owner, reply_mode.channel, reply_mode.encrypted);
 	if (!rsp_buf) {
 		acs_cp_rsp_status(
 			owner, BT_ACS_CP_OPCODE_GET_SERVICE_CHARACTERISTIC_UUIDS_CHAR_RESOURCE_HANDLE,

@@ -261,18 +261,6 @@ struct net_buf *acs_prepare_reply_buf(const struct acs_exec_owner *owner,
 				      enum acs_reply_channel channel, bool encrypted);
 
 /**
- * @brief Convenience wrapper that picks the CP-canonical reply mode for @p owner.
- *
- * Plain CP    → @ref ACS_REPLY_CP, encrypted=false.
- * Protected CP → @ref ACS_REPLY_DOI, encrypted=true.
- *
- * Use in CP handlers that always reply on the canonical channel for their
- * dispatch path; for explicit overrides (e.g. DON), call
- * @ref acs_prepare_reply_buf directly.
- */
-struct net_buf *acs_cp_prepare_reply_buf(const struct acs_exec_owner *owner);
-
-/**
  * @brief Build a logical CP reply from an owner.
  *
  * Resolves the active procedure via the owner, validates its staged response
@@ -425,7 +413,7 @@ int acs_crypto_decrypt(struct bt_acs_conn *acs_conn, uint16_t isc_id, const uint
 		       const uint8_t *aad, uint16_t aad_len);
 
 /** @brief Allocate a transient key-exchange context. Returns NULL if pool exhausted. */
-struct bt_acs_kex_ctx *acs_kex_alloc(void);
+int acs_kex_alloc(struct bt_acs_conn *acs_conn);
 
 /** @brief Return a key-exchange context to the pool. */
 void acs_kex_free(struct bt_acs_kex_ctx *kex);
