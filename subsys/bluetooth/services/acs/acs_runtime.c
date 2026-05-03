@@ -58,7 +58,7 @@ int acs_runtime_dispatch_protected_cp_frame(struct acs_frame *frame, struct bt_a
 		frame->resource_handle);
 
 	data_offset = (uint16_t)(frame->payload - acs_conn->data_rx.buf->data);
-	req_ctx = acs_prot_resource_req_alloc(acs_conn, frame->resource_handle, frame->isc_id,
+	req_ctx = acs_procedure_alloc(acs_conn, frame->resource_handle, frame->isc_id,
 					      data_offset, frame->payload_len);
 	if (!req_ctx) {
 		LOG_WRN("Data In: no free CP request context for handle 0x%04x",
@@ -67,7 +67,6 @@ int acs_runtime_dispatch_protected_cp_frame(struct acs_frame *frame, struct bt_a
 	}
 
 	req_ctx->decrypted_request = acs_conn->data_rx.buf;
-	req_ctx->input_owned = true;
 	acs_conn->data_rx.buf = NULL;
 
 	(void)acs_runtime_dispatch_cp_frame(frame, acs_conn, req_ctx);
@@ -77,7 +76,7 @@ int acs_runtime_dispatch_protected_cp_frame(struct acs_frame *frame, struct bt_a
 	 * here — the single response is already queued or completed.
 	 */
 	if (!req_ctx->reply_seq.desc) {
-		acs_prot_resource_req_release_owner(req_ctx);
+		acs_procedure_release_owner(req_ctx);
 	}
 	return 0;
 }
@@ -107,7 +106,7 @@ int acs_runtime_dispatch_protected_char_frame(struct acs_frame *frame,
 	}
 
 	data_offset = (uint16_t)(frame->payload - acs_conn->data_rx.buf->data);
-	req_ctx = acs_prot_resource_req_alloc(acs_conn, frame->resource_handle, frame->isc_id,
+	req_ctx = acs_procedure_alloc(acs_conn, frame->resource_handle, frame->isc_id,
 					      data_offset, frame->payload_len);
 	if (!req_ctx) {
 		LOG_WRN("Data In: no free request context for handle 0x%04x",
@@ -116,7 +115,6 @@ int acs_runtime_dispatch_protected_char_frame(struct acs_frame *frame,
 	}
 
 	req_ctx->decrypted_request = acs_conn->data_rx.buf;
-	req_ctx->input_owned = true;
 	acs_conn->data_rx.buf = NULL;
 
 	k_work_submit(&req_ctx->work);

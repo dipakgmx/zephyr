@@ -185,7 +185,7 @@ static void try_send_next(struct bt_acs_conn *acs_conn)
 		}
 		atomic_ptr_cas(&acs_conn->active_indication, req, NULL);
 		LOG_WRN("DOI seg_tx_send failed: %d (handle 0x%04x)", err, req->resource_handle);
-		acs_prot_resource_req_tx_done(req);
+		acs_procedure_tx_done(req);
 	}
 #else
 	ARG_UNUSED(acs_conn);
@@ -211,17 +211,27 @@ static void acs_seq_continue_work_handler(struct k_work *work)
 		CONTAINER_OF(work, struct bt_acs_prot_resource_req, work);
 	struct bt_acs_conn *acs_conn = req->acs_conn;
 	struct bt_conn *conn = acs_conn ? acs_conn->conn : NULL;
-	const struct bt_gatt_attr *attr = acs_conn ? acs_conn->attr_doi : NULL;
 
 	if (!conn || !req->reply_seq.desc) {
 		/* Sequence was aborted or connection lost — the ALLOC ref was
 		 * deferred from acs_runtime_dispatch_protected_cp_frame(), release it here.
 		 */
-		acs_prot_resource_req_release_owner(req);
+		acs_procedure_release_owner(req);
 		goto drain;
 	}
 
-	acs_seq_on_req_confirm(req, conn, attr);
+	{
+		struct acs_exec_owner owner = acs_exec_owner_protected(req);
+
+		/* req->acs_conn may be NULL post-disconnect; preserve the legacy
+		 * fallback so the seq engine can still resolve the conn slot.
+		 */
+		if (!owner.acs_conn) {
+			owner.acs_conn = acs_conn_lookup(conn);
+		}
+
+		acs_seq_on_owner_confirm(&owner);
+	}
 
 drain:
 	if (acs_conn) {
@@ -253,7 +263,7 @@ static void acs_data_out_on_indicate_done(struct bt_conn *conn, const struct bt_
 #endif /* CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION */
 
 	/* Drop the TX reference before the next step can acquire a new one. */
-	acs_prot_resource_req_tx_done(req);
+	acs_procedure_tx_done(req);
 
 	if (continue_reply_seq) {
 		if (!err) {
@@ -281,7 +291,7 @@ static void acs_data_out_on_indicate_done(struct bt_conn *conn, const struct bt_
 	}
 }
 
-int acs_prot_resource_rsp_notify(struct bt_acs_prot_resource_req *req, struct net_buf *plaintext)
+int acs_procedure_send_notify(struct bt_acs_prot_resource_req *req, struct net_buf *plaintext)
 {
 #if !IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_NOTIFICATION)
 	ARG_UNUSED(req);
@@ -299,12 +309,11 @@ int acs_prot_resource_rsp_notify(struct bt_acs_prot_resource_req *req, struct ne
 	__ASSERT_NO_MSG(plaintext == req->response);
 
 	acs_conn = req->acs_conn;
-	req->send_method = ACS_PROT_RESOURCE_SEND_NOTIFY;
 
 	err = acs_data_out_encrypt_in_place(acs_conn, req->isc_id, plaintext);
 	if (err) {
 		LOG_WRN("DON encrypt failed for handle 0x%04x: %d", req->resource_handle, err);
-		acs_prot_resource_req_tx_done(req);
+		acs_procedure_tx_done(req);
 		return err;
 	}
 
@@ -313,7 +322,7 @@ int acs_prot_resource_rsp_notify(struct bt_acs_prot_resource_req *req, struct ne
 		LOG_WRN("DON send failed for handle 0x%04x: %d", req->resource_handle, err);
 	}
 
-	acs_prot_resource_req_tx_done(req);
+	acs_procedure_tx_done(req);
 	return err;
 #endif /* CONFIG_BT_ACS_PROTECTED_RESOURCE_NOTIFICATION */
 }
@@ -370,19 +379,17 @@ int acs_cp_rsp_status(const struct acs_exec_owner *owner, uint8_t req_opcode, ui
 {
 	struct net_buf *buf;
 	struct acs_reply reply;
-	struct acs_reply_mode reply_mode;
-	bool plain_cp;
+	struct acs_reply_mode mode;
 	int err;
 
 	__ASSERT_NO_MSG(owner != NULL);
 	__ASSERT_NO_MSG(owner->acs_conn != NULL);
 
-	reply_mode = acs_owner_reply_mode(owner);
-	plain_cp = acs_owner_is_plain_cp(owner);
-	buf = acs_prepare_reply_buf(owner, reply_mode.channel, reply_mode.encrypted);
+	mode = acs_owner_reply_mode(owner);
+	buf = acs_prepare_reply_buf(owner, mode.channel, mode.encrypted);
 	if (!buf) {
 		acs_seq_abort(owner);
-		if (plain_cp) {
+		if (acs_owner_is_plain_cp(owner)) {
 			atomic_set(&owner->acs_conn->plain_cp_proc.locked, 0);
 		}
 		return -ENOMEM;
@@ -392,7 +399,12 @@ int acs_cp_rsp_status(const struct acs_exec_owner *owner, uint8_t req_opcode, ui
 	net_buf_add_u8(buf, req_opcode);
 	net_buf_add_u8(buf, code);
 
-	acs_cp_build_reply(owner, &reply);
+	reply = (struct acs_reply){
+		.channel = mode.channel,
+		.plaintext = buf,
+		.encrypted = mode.encrypted,
+		.needs_confirm = mode.needs_confirm,
+	};
 
 	err = acs_tx_submit(owner, &reply);
 	if (err) {
@@ -474,7 +486,7 @@ int acs_tx_submit(const struct acs_exec_owner *owner, const struct acs_reply *re
 		__ASSERT(reply->encrypted, "ACS_REPLY_DON must be encrypted");
 		__ASSERT(!reply->needs_confirm,
 			 "ACS_REPLY_DON is unconfirmed (notification)");
-		return acs_prot_resource_rsp_notify(owner->req, reply->plaintext);
+		return acs_procedure_send_notify(owner->req, reply->plaintext);
 	case ACS_REPLY_DOI:
 		__ASSERT(owner->kind == ACS_EXEC_OWNER_PROTECTED_REQ,
 			 "ACS_REPLY_DOI requires protected-request owner");
@@ -484,7 +496,7 @@ int acs_tx_submit(const struct acs_exec_owner *owner, const struct acs_reply *re
 		__ASSERT(reply->encrypted, "ACS_REPLY_DOI must be encrypted");
 		__ASSERT(reply->needs_confirm,
 			 "ACS_REPLY_DOI is always confirmed (segmented indication)");
-		return acs_prot_resource_rsp_indicate(owner->req, reply->plaintext);
+		return acs_procedure_send_indicate(owner->req, reply->plaintext);
 	default:
 		LOG_ERR("acs_tx_submit: invalid channel %d", (int)reply->channel);
 		return -EINVAL;
@@ -492,7 +504,7 @@ int acs_tx_submit(const struct acs_exec_owner *owner, const struct acs_reply *re
 }
 
 
-int acs_prot_resource_rsp_indicate(struct bt_acs_prot_resource_req *req, struct net_buf *plaintext)
+int acs_procedure_send_indicate(struct bt_acs_prot_resource_req *req, struct net_buf *plaintext)
 {
 #if !IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION)
 	ARG_UNUSED(req);
@@ -510,7 +522,6 @@ int acs_prot_resource_rsp_indicate(struct bt_acs_prot_resource_req *req, struct 
 	__ASSERT_NO_MSG(plaintext == req->response);
 
 	acs_conn = req->acs_conn;
-	req->send_method = ACS_PROT_RESOURCE_SEND_INDICATE;
 
 	err = acs_data_out_encrypt_in_place(acs_conn, req->isc_id, plaintext);
 	if (err) {
@@ -518,7 +529,7 @@ int acs_prot_resource_rsp_indicate(struct bt_acs_prot_resource_req *req, struct 
 		return err;
 	}
 
-	acs_prot_resource_req_ref(req, PROT_RESOURCE_REF_TX);
+	acs_procedure_ref(req, ACS_PROCEDURE_REF_TX);
 	k_fifo_put(&acs_conn->indicate_fifo, req);
 	try_send_next(acs_conn);
 	return 0;

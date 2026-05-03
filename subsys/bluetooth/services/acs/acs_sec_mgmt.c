@@ -55,9 +55,8 @@ static inline bool is_active_key_id(uint16_t key_id)
 	return false;
 }
 
-static int invalidate_self_step(struct acs_cp_step_ctx *ctx)
+static int invalidate_self_step(const struct acs_exec_owner *owner)
 {
-	const struct acs_exec_owner *owner = &ctx->owner;
 
 	acs_seq_clear(owner);
 	bt_acs_invalidate_security(owner->acs_conn->conn);
@@ -344,7 +343,7 @@ void acs_sec_mgmt_abort(const struct acs_exec_owner *owner)
 
 	/* Drain any pending protected-resource requests. */
 	if (data_ops_pending) {
-		acs_prot_resource_req_abort_all(acs_conn);
+		acs_procedure_abort_all(acs_conn);
 	}
 
 	/* Send success response — lock released on confirm as usual. */

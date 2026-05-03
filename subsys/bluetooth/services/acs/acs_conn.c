@@ -83,38 +83,6 @@ void acs_kex_free(struct bt_acs_kex_ctx *kex)
 	kex->in_use = false;
 }
 
-static void acs_cp_proc_init(struct bt_acs_conn *acs_conn)
-{
-	/* Reset the embedded plain-CP procedure singleton. The conn's own memset
-	 * has already zeroed the memory; mark it as a singleton so the slab/refcount
-	 * paths skip it if anything ever drives it through them.
-	 */
-	acs_conn->plain_cp_proc.is_singleton = true;
-	acs_conn->plain_cp_proc.acs_conn = acs_conn;
-	atomic_set(&acs_conn->plain_cp_proc.locked, 0);
-	acs_conn->plain_cp_proc.response = NULL;
-	acs_conn->plain_cp_proc.abort_pending = false;
-	acs_seg_tx_init(&acs_conn->cp_tx);
-#if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION)
-	acs_seg_tx_init(&acs_conn->indicate_tx);
-#endif /* CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION */
-}
-
-static void acs_cp_proc_cleanup(struct bt_acs_conn *acs_conn)
-{
-	atomic_set(&acs_conn->plain_cp_proc.locked, 0);
-	acs_conn->plain_cp_proc.abort_pending = false;
-	if (acs_conn->plain_cp_proc.response) {
-		acs_buf_free(acs_conn->plain_cp_proc.response);
-		acs_conn->plain_cp_proc.response = NULL;
-	}
-	acs_seg_tx_reset(&acs_conn->cp_tx);
-
-#if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION)
-	acs_seg_tx_reset(&acs_conn->indicate_tx);
-#endif /* CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION */
-}
-
 struct bt_acs_conn *acs_conn_lookup(struct bt_conn *conn)
 {
 	struct bt_acs_conn *acs_conn = &acs_conn_state[bt_conn_index(conn)];
@@ -165,7 +133,17 @@ struct bt_acs_conn *acs_conn_alloc(struct bt_conn *conn)
 #if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION)
 	k_fifo_init(&acs_conn->indicate_fifo);
 #endif /* CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION */
-	acs_cp_proc_init(acs_conn);
+
+	/* Wire up the embedded plain-CP procedure singleton. The conn's own
+	 * memset has already zeroed the memory; mark it as a singleton so the
+	 * slab/refcount paths skip it if anything ever drives it through them.
+	 */
+	acs_conn->plain_cp_proc.is_singleton = true;
+	acs_conn->plain_cp_proc.acs_conn = acs_conn;
+	acs_seg_tx_init(&acs_conn->cp_tx);
+#if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION)
+	acs_seg_tx_init(&acs_conn->indicate_tx);
+#endif
 
 	/* Initialise RX reassembly contexts */
 	acs_seg_rx_init(&acs_conn->cp_rx);
@@ -229,9 +207,19 @@ void acs_conn_cleanup(struct bt_acs_conn *acs_conn)
 	/* Abort request contexts before freeing the shared I/O slot so queued/in-flight
 	 * ACS Data Out activity cannot outlive the buffers it references.
 	 */
-	acs_prot_resource_req_abort_all(acs_conn);
+	acs_procedure_abort_all(acs_conn);
 
-	acs_cp_proc_cleanup(acs_conn);
+	/* Reset the plain-CP procedure singleton. */
+	atomic_set(&acs_conn->plain_cp_proc.locked, 0);
+	acs_conn->plain_cp_proc.abort_pending = false;
+	if (acs_conn->plain_cp_proc.response) {
+		acs_buf_free(acs_conn->plain_cp_proc.response);
+		acs_conn->plain_cp_proc.response = NULL;
+	}
+	acs_seg_tx_reset(&acs_conn->cp_tx);
+#if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION)
+	acs_seg_tx_reset(&acs_conn->indicate_tx);
+#endif
 
 	/* Reset and release buffers from RX reassembly contexts */
 	acs_seg_rx_reset(&acs_conn->cp_rx);

@@ -26,37 +26,28 @@ LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
 void acs_cp_on_indicate_done(struct bt_conn *conn, const struct bt_gatt_attr *attr, int err,
 			     void *user_data);
 
-void acs_cp_build_reply(const struct acs_exec_owner *owner, struct acs_reply *reply)
-{
-	acs_procedure *proc;
-	struct acs_reply_mode reply_mode;
-
-	__ASSERT_NO_MSG(owner != NULL);
-	__ASSERT_NO_MSG(reply != NULL);
-
-	proc = acs_owner_proc(owner);
-	reply_mode = acs_owner_reply_mode(owner);
-	__ASSERT_NO_MSG(proc != NULL);
-	__ASSERT_NO_MSG(proc->response != NULL);
-	__ASSERT_NO_MSG(proc->response->len > 0);
-
-	*reply = (struct acs_reply){
-		.channel = reply_mode.channel,
-		.plaintext = proc->response,
-		.encrypted = reply_mode.encrypted,
-		.needs_confirm = reply_mode.needs_confirm,
-	};
-}
-
 int acs_cp_send_reply(const struct acs_exec_owner *owner)
 {
+	acs_procedure *proc;
+	struct acs_reply_mode mode;
 	struct acs_reply reply;
 	int err;
 
 	__ASSERT_NO_MSG(owner != NULL);
 	__ASSERT_NO_MSG(owner->acs_conn != NULL);
 
-	acs_cp_build_reply(owner, &reply);
+	proc = acs_owner_proc(owner);
+	mode = acs_owner_reply_mode(owner);
+	__ASSERT_NO_MSG(proc != NULL);
+	__ASSERT_NO_MSG(proc->response != NULL);
+	__ASSERT_NO_MSG(proc->response->len > 0);
+
+	reply = (struct acs_reply){
+		.channel = mode.channel,
+		.plaintext = proc->response,
+		.encrypted = mode.encrypted,
+		.needs_confirm = mode.needs_confirm,
+	};
 
 	err = acs_tx_submit(owner, &reply);
 	if (err) {
@@ -134,7 +125,7 @@ void acs_cp_on_indicate_done(struct bt_conn *conn, const struct bt_gatt_attr *at
 		}
 
 		/* Drain pending protected-resource requests. */
-		acs_prot_resource_req_abort_all(acs_conn);
+		acs_procedure_abort_all(acs_conn);
 
 		LOG_DBG("Deferred abort committed — sending ABORT SUCCESS");
 		/* Lock stays held — ABORT now owns it; released on confirm. */
@@ -142,7 +133,11 @@ void acs_cp_on_indicate_done(struct bt_conn *conn, const struct bt_gatt_attr *at
 		return;
 	}
 
-	acs_seq_on_cp_confirm(conn, attr);
+	{
+		struct acs_exec_owner owner = acs_exec_owner_plain(acs_conn);
+
+		acs_seq_on_owner_confirm(&owner);
+	}
 
 	if (acs_conn->plain_cp_proc.reply_seq.desc == NULL) {
 		atomic_set(&acs_conn->plain_cp_proc.locked, 0);

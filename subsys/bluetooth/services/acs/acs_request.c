@@ -56,15 +56,15 @@ static uint8_t acs_find_char_attrs_cb(const struct bt_gatt_attr *attr, uint16_t 
 	return BT_GATT_ITER_CONTINUE;
 }
 
-void acs_prot_resource_req_ref(struct bt_acs_prot_resource_req *req,
-			       enum acs_prot_resource_ref_who who)
+void acs_procedure_ref(struct bt_acs_prot_resource_req *req,
+			       enum acs_procedure_ref_who who)
 {
 	if (!req) {
 		return;
 	}
 
 	__ASSERT(!atomic_test_bit(req->ref_flags, who),
-		 "acs_prot_resource_req_ref: double-ref who=%d", who);
+		 "acs_procedure_ref: double-ref who=%d", who);
 	atomic_set_bit(req->ref_flags, who);
 	atomic_inc(&req->ref_count);
 }
@@ -74,8 +74,10 @@ void acs_prot_resource_req_ref(struct bt_acs_prot_resource_req *req,
  */
 static void acs_req_free(struct bt_acs_prot_resource_req *req)
 {
-	/* Release borrowed input buffer ref if we own it */
-	if (req->input_owned && req->decrypted_request) {
+	/* Release the request-input buffer; always owned by the request once
+	 * the protected dispatcher transferred it from acs_conn->data_rx.buf.
+	 */
+	if (req->decrypted_request) {
 		acs_buf_free(req->decrypted_request);
 	}
 
@@ -87,15 +89,15 @@ static void acs_req_free(struct bt_acs_prot_resource_req *req)
 	k_mem_slab_free(&acs_req_ctx_slab, req);
 }
 
-void acs_prot_resource_req_unref(struct bt_acs_prot_resource_req *req,
-				 enum acs_prot_resource_ref_who who)
+void acs_procedure_unref(struct bt_acs_prot_resource_req *req,
+				 enum acs_procedure_ref_who who)
 {
 	if (!req) {
 		return;
 	}
 
 	__ASSERT(atomic_test_bit(req->ref_flags, who),
-		 "acs_prot_resource_req_unref: double-release who=%d", who);
+		 "acs_procedure_unref: double-release who=%d", who);
 	atomic_clear_bit(req->ref_flags, who);
 
 	if (atomic_dec(&req->ref_count) != 1) {
@@ -109,7 +111,7 @@ void acs_prot_resource_req_unref(struct bt_acs_prot_resource_req *req,
 	acs_req_free(req);
 }
 
-struct bt_conn *acs_prot_resource_req_conn(const struct bt_acs_prot_resource_req *req)
+struct bt_conn *acs_procedure_conn(const struct bt_acs_prot_resource_req *req)
 {
 	if (!req || !req->acs_conn) {
 		return NULL;
@@ -118,12 +120,12 @@ struct bt_conn *acs_prot_resource_req_conn(const struct bt_acs_prot_resource_req
 	return req->acs_conn->conn;
 }
 
-uint16_t acs_prot_resource_req_handle(const struct bt_acs_prot_resource_req *req)
+uint16_t acs_procedure_resource_handle(const struct bt_acs_prot_resource_req *req)
 {
 	return req ? req->resource_handle : 0U;
 }
 
-struct bt_acs_prot_resource_req *acs_prot_resource_req_alloc(struct bt_acs_conn *acs_conn,
+struct bt_acs_prot_resource_req *acs_procedure_alloc(struct bt_acs_conn *acs_conn,
 							     uint16_t resource_handle,
 							     uint16_t isc_id, uint16_t data_offset,
 							     uint16_t data_length)
@@ -140,7 +142,7 @@ struct bt_acs_prot_resource_req *acs_prot_resource_req_alloc(struct bt_acs_conn 
 
 	memset(req, 0, sizeof(*req));
 	atomic_set(&req->ref_count, 1);
-	atomic_set_bit(req->ref_flags, PROT_RESOURCE_REF_ALLOC);
+	atomic_set_bit(req->ref_flags, ACS_PROCEDURE_REF_ALLOC);
 	k_work_init(&req->work, acs_req_work_handler);
 	req->acs_conn = acs_conn;
 	req->resource_handle = resource_handle;
@@ -168,36 +170,35 @@ struct bt_acs_prot_resource_req *acs_prot_resource_req_alloc(struct bt_acs_conn 
 	return NULL;
 }
 
-void acs_prot_resource_req_release_owner(struct bt_acs_prot_resource_req *req)
+void acs_procedure_release_owner(struct bt_acs_prot_resource_req *req)
 {
 	if (!req) {
 		return;
 	}
 
-	if (atomic_test_bit(req->ref_flags, PROT_RESOURCE_REF_ALLOC)) {
-		acs_prot_resource_req_unref(req, PROT_RESOURCE_REF_ALLOC);
+	if (atomic_test_bit(req->ref_flags, ACS_PROCEDURE_REF_ALLOC)) {
+		acs_procedure_unref(req, ACS_PROCEDURE_REF_ALLOC);
 	}
 }
 
-void acs_prot_resource_req_release_tx(struct bt_acs_prot_resource_req *req)
+void acs_procedure_release_tx(struct bt_acs_prot_resource_req *req)
 {
 	if (!req) {
 		return;
 	}
 
-	if (atomic_test_bit(req->ref_flags, PROT_RESOURCE_REF_TX)) {
-		acs_prot_resource_req_unref(req, PROT_RESOURCE_REF_TX);
+	if (atomic_test_bit(req->ref_flags, ACS_PROCEDURE_REF_TX)) {
+		acs_procedure_unref(req, ACS_PROCEDURE_REF_TX);
 	}
 }
 
-void acs_prot_resource_req_tx_done(struct bt_acs_prot_resource_req *req)
+void acs_procedure_tx_done(struct bt_acs_prot_resource_req *req)
 {
 	if (!req) {
 		return;
 	}
 
-	req->send_method = ACS_PROT_RESOURCE_SEND_NONE;
-	acs_prot_resource_req_release_tx(req);
+	acs_procedure_release_tx(req);
 }
 
 /* Auto-respond to a secure request when no application handler is registered. */
@@ -208,8 +209,8 @@ static int acs_auto_respond(struct bt_acs_prot_resource_req *req)
 	uint16_t len = req->data_length;
 	ssize_t n;
 	uint8_t props = 0;
-	struct bt_conn *conn = acs_prot_resource_req_conn(req);
-	uint16_t resource_handle = acs_prot_resource_req_handle(req);
+	struct bt_conn *conn = acs_procedure_conn(req);
+	uint16_t resource_handle = acs_procedure_resource_handle(req);
 	struct acs_attr_ctx ctx = {
 		.value_handle = resource_handle,
 		.decl = NULL,
@@ -291,7 +292,7 @@ static int acs_auto_respond(struct bt_acs_prot_resource_req *req)
 	}
 }
 
-void acs_prot_resource_req_abort_all(struct bt_acs_conn *acs_conn)
+void acs_procedure_abort_all(struct bt_acs_conn *acs_conn)
 {
 	struct bt_acs_prot_resource_req *req;
 	uint16_t req_count = 0U;
@@ -313,7 +314,7 @@ void acs_prot_resource_req_abort_all(struct bt_acs_conn *acs_conn)
 			struct bt_acs_prot_resource_req *queued =
 				CONTAINER_OF(snode, struct bt_acs_prot_resource_req, node);
 
-			acs_prot_resource_req_tx_done(queued);
+			acs_procedure_tx_done(queued);
 			queued_count++;
 		}
 	}
@@ -331,11 +332,11 @@ void acs_prot_resource_req_abort_all(struct bt_acs_conn *acs_conn)
 		req->acs_conn = NULL;
 
 		/* Drop each held reference using the unified API */
-		if (atomic_test_bit(req->ref_flags, PROT_RESOURCE_REF_ALLOC)) {
-			acs_prot_resource_req_unref(req, PROT_RESOURCE_REF_ALLOC);
+		if (atomic_test_bit(req->ref_flags, ACS_PROCEDURE_REF_ALLOC)) {
+			acs_procedure_unref(req, ACS_PROCEDURE_REF_ALLOC);
 		}
-		if (atomic_test_bit(req->ref_flags, PROT_RESOURCE_REF_TX)) {
-			acs_prot_resource_req_unref(req, PROT_RESOURCE_REF_TX);
+		if (atomic_test_bit(req->ref_flags, ACS_PROCEDURE_REF_TX)) {
+			acs_procedure_unref(req, ACS_PROCEDURE_REF_TX);
 		}
 	}
 
@@ -349,13 +350,13 @@ static void acs_req_work_handler(struct k_work *work)
 {
 	struct bt_acs_prot_resource_req *req =
 		CONTAINER_OF(work, struct bt_acs_prot_resource_req, work);
-	struct bt_conn const *conn = acs_prot_resource_req_conn(req);
+	struct bt_conn const *conn = acs_procedure_conn(req);
 	bool handled = false;
 	int err = 0;
 	uint16_t h;
 
 	if (!conn || !req->acs_conn) {
-		acs_prot_resource_req_release_owner(req);
+		acs_procedure_release_owner(req);
 		return;
 	}
 
@@ -380,5 +381,5 @@ static void acs_req_work_handler(struct k_work *work)
 		}
 	}
 
-	acs_prot_resource_req_release_owner(req);
+	acs_procedure_release_owner(req);
 }

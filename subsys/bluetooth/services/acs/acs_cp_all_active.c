@@ -30,15 +30,10 @@ LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
  *
  * acs_cp_all_active_get sends RMAP first, then the table-driven sequence
  * advances ISC → KEY → RC on each confirm until the sequence completes.
- *
- * Step functions still take @c struct acs_cp_step_ctx — they are the inner
- * sequence-engine contract — but their bodies always alias @c owner = &ctx->owner
- * and use the owner-first helpers from there on.
  */
 
-static int all_active_step_isc(struct acs_cp_step_ctx *ctx)
+static int all_active_step_isc(const struct acs_exec_owner *owner)
 {
-	const struct acs_exec_owner *owner = &ctx->owner;
 	static const uint8_t filter[2] = {0xFF, 0xFF};
 	struct net_buf *buf;
 	struct net_buf_simple operand;
@@ -63,9 +58,8 @@ static int all_active_step_isc(struct acs_cp_step_ctx *ctx)
 	return acs_cp_send_reply(owner);
 }
 
-static int all_active_step_key(struct acs_cp_step_ctx *ctx)
+static int all_active_step_key(const struct acs_exec_owner *owner)
 {
-	const struct acs_exec_owner *owner = &ctx->owner;
 	static const uint8_t filter[2] = {0xFF, 0xFF};
 	struct net_buf *buf;
 	struct net_buf_simple operand;
@@ -106,9 +100,8 @@ static int all_active_step_key(struct acs_cp_step_ctx *ctx)
 	return acs_cp_send_reply(owner);
 }
 
-static int all_active_step_rc(struct acs_cp_step_ctx *ctx)
+static int all_active_step_rc(const struct acs_exec_owner *owner)
 {
-	const struct acs_exec_owner *owner = &ctx->owner;
 	/* Send the terminal Response Code first — acs_cp_send_reply adds a TX
 	 * ref that keeps the request alive.  Clear the sequence afterwards so
 	 * the indication-complete callback sees reply_seq.desc == NULL and

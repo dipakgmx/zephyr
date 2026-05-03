@@ -75,9 +75,8 @@ void acs_cp_kex_get_current_key_list(const struct acs_exec_owner *owner)
 
 /* --- Key exchange success sequence steps --- */
 
-static int kex_step_success_response(struct acs_cp_step_ctx *ctx)
+static int kex_step_success_response(const struct acs_exec_owner *owner)
 {
-	const struct acs_exec_owner *owner = &ctx->owner;
 	struct bt_acs_conn *acs_conn = owner->acs_conn;
 	struct acs_reply_mode reply_mode = acs_owner_reply_mode(owner);
 	uint8_t payload[3];
@@ -103,9 +102,8 @@ static int kex_step_success_response(struct acs_cp_step_ctx *ctx)
 	return acs_cp_send_reply(owner);
 }
 
-static int kex_step_status(struct acs_cp_step_ctx *ctx)
+static int kex_step_status(const struct acs_exec_owner *owner)
 {
-	const struct acs_exec_owner *owner = &ctx->owner;
 	struct bt_acs_conn *acs_conn = owner->acs_conn;
 
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
@@ -194,9 +192,8 @@ static const struct acs_seq_desc kex_success_seq = {
 
 /* --- Key exchange failure sequence steps --- */
 
-static int kex_step_fail_response(struct acs_cp_step_ctx *ctx)
+static int kex_step_fail_response(const struct acs_exec_owner *owner)
 {
-	const struct acs_exec_owner *owner = &ctx->owner;
 	struct bt_acs_conn *acs_conn = owner->acs_conn;
 	struct acs_reply_mode reply_mode = acs_owner_reply_mode(owner);
 	uint8_t payload[3];
@@ -221,9 +218,8 @@ static int kex_step_fail_response(struct acs_cp_step_ctx *ctx)
 	return acs_cp_send_reply(owner);
 }
 
-static int kex_step_fail_cleanup(struct acs_cp_step_ctx *ctx)
+static int kex_step_fail_cleanup(const struct acs_exec_owner *owner)
 {
-	const struct acs_exec_owner *owner = &ctx->owner;
 	struct bt_acs_conn *acs_conn = owner->acs_conn;
 
 	acs_kex_free(acs_conn->kex);

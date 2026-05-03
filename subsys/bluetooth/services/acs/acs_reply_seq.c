@@ -31,26 +31,22 @@ static struct acs_reply_seq_state *acs_seq_state(const struct acs_exec_owner *ow
 /**
  * @brief Advance to the next step in the active reply sequence.
  *
- * Step functions still take @c struct acs_cp_step_ctx — they are the inner
- * sequence-engine contract — so this helper is the only place that bridges
- * owner-centric drive and ctx-centric step invocation.
- *
  * @return 0 on success or sequence complete, negative errno from the step
  *         function on failure.
  */
-static int acs_seq_continue(struct acs_cp_step_ctx *ctx)
+static int acs_seq_continue(const struct acs_exec_owner *owner)
 {
-	struct acs_reply_seq_state *seq = acs_seq_state(&ctx->owner);
+	struct acs_reply_seq_state *seq = acs_seq_state(owner);
 
 	if (!seq || !seq->desc || seq->step >= seq->desc->step_count) {
-		acs_seq_clear(&ctx->owner);
+		acs_seq_clear(owner);
 		return 0;
 	}
 
 	acs_seq_step_fn fn = seq->desc->steps[seq->step];
 	seq->step++;
 
-	return fn(ctx);
+	return fn(owner);
 }
 
 bool acs_seq_active(const struct acs_exec_owner *owner)
@@ -93,7 +89,7 @@ void acs_seq_clear(const struct acs_exec_owner *owner)
 	 * sequence is done.
 	 */
 	if (was_active && owner->kind == ACS_EXEC_OWNER_PROTECTED_REQ && owner->req != NULL) {
-		acs_prot_resource_req_release_owner(owner->req);
+		acs_procedure_release_owner(owner->req);
 	}
 }
 
@@ -108,10 +104,8 @@ void acs_seq_abort(const struct acs_exec_owner *owner)
 	acs_seq_clear(owner);
 }
 
-void acs_seq_on_owner_confirm(const struct acs_exec_owner *owner, struct bt_conn *conn,
-			      const struct bt_gatt_attr *attr)
+void acs_seq_on_owner_confirm(const struct acs_exec_owner *owner)
 {
-	struct acs_cp_step_ctx ctx;
 	int err;
 
 	if (!owner || !owner->acs_conn) {
@@ -126,13 +120,7 @@ void acs_seq_on_owner_confirm(const struct acs_exec_owner *owner, struct bt_conn
 		return;
 	}
 
-	ctx = (struct acs_cp_step_ctx){
-		.owner = *owner,
-		.conn = conn,
-		.attr = attr,
-	};
-
-	err = acs_seq_continue(&ctx);
+	err = acs_seq_continue(owner);
 	if (err) {
 		if (owner->kind == ACS_EXEC_OWNER_PROTECTED_REQ) {
 			LOG_WRN("Protected CP reply sequence advance failed for handle 0x%04x: %d",
@@ -140,37 +128,6 @@ void acs_seq_on_owner_confirm(const struct acs_exec_owner *owner, struct bt_conn
 		} else {
 			LOG_WRN("Plain CP reply sequence advance failed: %d", err);
 		}
-		acs_seq_abort(&ctx.owner);
+		acs_seq_abort(owner);
 	}
-}
-
-void acs_seq_on_cp_confirm(struct bt_conn *conn, const struct bt_gatt_attr *attr)
-{
-	struct bt_acs_conn *acs_conn = acs_conn_lookup(conn);
-	struct acs_exec_owner owner;
-
-	if (!acs_conn) {
-		return;
-	}
-
-	owner = acs_exec_owner_plain(acs_conn);
-	acs_seq_on_owner_confirm(&owner, conn, attr);
-}
-
-void acs_seq_on_req_confirm(struct bt_acs_prot_resource_req *req, struct bt_conn *conn,
-			    const struct bt_gatt_attr *attr)
-{
-	struct acs_exec_owner owner;
-
-	if (!req) {
-		return;
-	}
-
-	owner = acs_exec_owner_protected(req);
-	/* req->acs_conn may be NULL post-disconnect; preserve the legacy fallback. */
-	if (!owner.acs_conn) {
-		owner.acs_conn = acs_conn_lookup(conn);
-	}
-
-	acs_seq_on_owner_confirm(&owner, conn, attr);
 }

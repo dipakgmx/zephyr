@@ -172,7 +172,7 @@ void acs_seg_rx_begin(struct acs_seg_rx_ctx *ctx, struct net_buf *buf);
  * @param data     Raw ATT write buffer (segmentation header at [0]).
  * @param len      Length of @p data.
  *
- * @return ACS_SEG_RX_COMPLETE, ACS_SEG_RX_FRAGMENT, or a negative error code.
+ * @return ACS_SEG_RX_COMPLETE, ACS_SEG_RX_PENDING, or a negative error code.
  */
 enum acs_seg_rx_result acs_seg_rx_process(struct acs_seg_rx_ctx *ctx, const uint8_t *data,
 					  uint16_t len);

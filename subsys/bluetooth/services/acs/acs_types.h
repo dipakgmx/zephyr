@@ -34,7 +34,6 @@ extern "C" {
 
 struct bt_acs_prot_resource_req; /**< Defined below; forward-declared for bt_acs_conn */
 struct bt_acs_conn;  /**< Defined below; forward-declared for bt_acs_prot_resource_req */
-struct acs_cp_step_ctx; /**< Defined below; forward-declared for callback typedefs */
 struct acs_exec_owner;  /**< Defined below; forward-declared for callback typedefs */
 struct acs_seq_desc; /**< Defined below; forward-declared for acs_reply_seq_state */
 
@@ -152,7 +151,7 @@ struct acs_reply {
  * Return 0 on success (framework waits for confirm, then calls next step).
  * Return negative errno to abort the sequence.
  */
-typedef int (*acs_seq_step_fn)(struct acs_cp_step_ctx *ctx);
+typedef int (*acs_seq_step_fn)(const struct acs_exec_owner *owner);
 
 /**
  * @brief Internal request-aware ACS handler callback type.
@@ -177,20 +176,11 @@ enum bt_acs_key_exchange_state {
 };
 
 /**
- * @brief Response transport path for a protected resource request.
- */
-enum acs_prot_resource_send_method {
-	ACS_PROT_RESOURCE_SEND_NONE = 0, /**< No response path selected */
-	ACS_PROT_RESOURCE_SEND_NOTIFY,   /**< Response via Data Out Notify */
-	ACS_PROT_RESOURCE_SEND_INDICATE, /**< Response via Data Out Indicate */
-};
-
-/**
  * @brief Discriminator for which caller holds a reference on a request context.
  */
-enum acs_prot_resource_ref_who {
-	PROT_RESOURCE_REF_ALLOC = 0, /**< Owner reference (dispatch / work-handler / reply seq) */
-	PROT_RESOURCE_REF_TX = 1,    /**< TX path reference (queued/in-flight) */
+enum acs_procedure_ref_who {
+	ACS_PROCEDURE_REF_ALLOC = 0, /**< Owner reference (dispatch / work-handler / reply seq) */
+	ACS_PROCEDURE_REF_TX = 1,    /**< TX path reference (queued/in-flight) */
 };
 
 /**
@@ -358,13 +348,12 @@ struct bt_acs_prot_resource_req {
 	ATOMIC_DEFINE(ref_flags, 2);       /**< Per-caller bitmask (debug: catch double-release) */
 	struct k_work work;                /**< Deferred dispatch work item */
 	struct acs_reply_seq_state reply_seq; /**< Multi-indication reply-sequence state */
-	enum acs_prot_resource_send_method send_method; /**< Selected response transport */
 	uint16_t resource_handle; /**< Protected resource handle (0 for plain CP singleton) */
 	uint16_t isc_id;          /**< ISC_ID associated with this request (0 for plain CP) */
 	uint16_t data_offset;     /**< Offset within decrypted_request->data where payload starts */
 	uint16_t data_length;     /**< Plaintext request payload length */
 	uint8_t req_slot;         /**< Index in acs_conn->pending_reqs[] (unused if singleton) */
-	bool input_owned;         /**< True when decrypted_request ownership was transferred */
+	/* (decrypted_request ownership: implicit — non-NULL ⇒ owned, freed in acs_req_free.) */
 	/* Plain-CP singleton fields (unused for slab-allocated protected procedures): */
 	bool is_singleton;        /**< True for the embedded plain-CP procedure */
 	atomic_t locked;          /**< Plain-CP busy gate: 1 while a procedure is active */
@@ -553,26 +542,6 @@ static inline acs_procedure *acs_owner_proc(const struct acs_exec_owner *owner)
 	}
 	return owner->kind == ACS_EXEC_OWNER_PLAIN_CP ? owner->plain_cp : owner->req;
 }
-
-/**
- * @brief Per-step CP execution context.
- *
- * Threaded into every CP handler and reply-sequence step. @c owner is the
- * canonical view of which procedure is executing this step — read
- * @c owner.req for the protected-request slot or @c owner.plain_cp for the
- * connection's plain-CP singleton. The legacy @c prot_req / @c acs_conn
- * fields are gone; access them through @c owner so the canonical and view
- * representations cannot drift.
- *
- * @c conn and @c attr are explicit transport inputs (the BT connection and
- * the CP characteristic attribute) so handlers do not need to reach back
- * into @c owner.acs_conn for them.
- */
-struct acs_cp_step_ctx {
-	struct acs_exec_owner owner;     /**< Canonical owner view */
-	struct bt_conn *conn;            /**< Underlying BT connection */
-	const struct bt_gatt_attr *attr; /**< CP GATT attribute (plain indication routing) */
-};
 
 #ifdef __cplusplus
 }
