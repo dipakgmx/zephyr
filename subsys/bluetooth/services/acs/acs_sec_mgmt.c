@@ -55,7 +55,7 @@ static inline bool is_active_key_id(uint16_t key_id)
 	return false;
 }
 
-static int invalidate_self_step(acs_procedure *proc)
+static int invalidate_self_step(struct acs_procedure *proc)
 {
 
 	acs_seq_clear(proc);
@@ -72,7 +72,7 @@ static const struct acs_seq_desc invalidate_self_seq = {
 	.step_count = ARRAY_SIZE(invalidate_self_steps),
 };
 
-void acs_sec_mgmt_invalidate_all(acs_procedure *proc)
+void acs_sec_mgmt_invalidate_all(struct acs_procedure *proc)
 {
 	struct bt_acs_conn const *acs_conn = proc->acs_conn;
 	uint8_t req_idx;
@@ -143,7 +143,7 @@ static void invalidate_kdf_child(struct bt_acs_conn *acs_conn)
 }
 #endif
 
-void acs_sec_mgmt_invalidate_key(acs_procedure *proc, struct net_buf_simple *buf)
+void acs_sec_mgmt_invalidate_key(struct acs_procedure *proc, struct net_buf_simple *buf)
 {
 	struct acs_cp_invalidate_key_req invalidate_req;
 	uint16_t key_id;
@@ -260,7 +260,7 @@ void acs_sec_mgmt_invalidate_key(acs_procedure *proc, struct net_buf_simple *buf
  * able to preempt an in-progress procedure), so this handler also owns the
  * lock bookkeeping for its own response.
  */
-void acs_sec_mgmt_abort(acs_procedure *proc)
+void acs_sec_mgmt_abort(struct acs_procedure *proc)
 {
 	struct bt_acs_conn *acs_conn = proc->acs_conn;
 	struct k_work_sync sync;
@@ -354,7 +354,7 @@ void acs_sec_mgmt_abort(acs_procedure *proc)
 
 #if IS_ENABLED(CONFIG_BT_ACS_SET_SECURITY_CONTROLS_SWITCH)
 
-void acs_sec_mgmt_set_security_switch(acs_procedure *proc, struct net_buf_simple *buf)
+void acs_sec_mgmt_set_security_switch(struct acs_procedure *proc, struct net_buf_simple *buf)
 {
 	struct acs_cp_sec_switch_req switch_req;
 	uint8_t switch_state;
@@ -395,7 +395,7 @@ void acs_sec_mgmt_set_security_switch(acs_procedure *proc, struct net_buf_simple
 
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_URI)
 
-void acs_sec_mgmt_get_key_uri(acs_procedure *proc, struct net_buf_simple *buf)
+void acs_sec_mgmt_get_key_uri(struct acs_procedure *proc, struct net_buf_simple *buf)
 {
 	struct acs_cp_get_key_uri_req key_uri_req;
 	struct acs_cp_key_uri_rsp_hdr *hdr;
@@ -480,7 +480,7 @@ void acs_sec_mgmt_get_key_uri(acs_procedure *proc, struct net_buf_simple *buf)
 
 #if IS_ENABLED(CONFIG_BT_ACS_INITIATE_PAIRING)
 
-void acs_sec_mgmt_initiate_pairing(acs_procedure *proc)
+void acs_sec_mgmt_initiate_pairing(struct acs_procedure *proc)
 {
 	int err;
 

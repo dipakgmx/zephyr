@@ -19,14 +19,6 @@
 #include <zephyr/logging/log.h>
 LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
 
-/**
- * @brief Recover a request context from its k_fifo snode linkage.
- */
-static inline struct bt_acs_prot_resource_req *acs_req_from_node(sys_snode_t *snode)
-{
-	return CONTAINER_OF(snode, struct bt_acs_prot_resource_req, node);
-}
-
 static void acs_put_nonce_var(uint8_t *secure_data, uint8_t nonce_var_size, uint32_t tx_counter)
 {
 	memset(secure_data, 0, nonce_var_size);
@@ -150,7 +142,7 @@ static void try_send_next(struct bt_acs_conn *acs_conn)
 {
 #if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION)
 	sys_snode_t *snode;
-	struct bt_acs_prot_resource_req *req;
+	struct acs_procedure *req;
 	int err;
 
 	if (!acs_conn || !acs_conn->conn) {
@@ -167,7 +159,7 @@ static void try_send_next(struct bt_acs_conn *acs_conn)
 			return;
 		}
 
-		req = acs_req_from_node(snode);
+		req = CONTAINER_OF(snode, struct acs_procedure, node);
 
 		if (!atomic_ptr_cas(&acs_conn->active_indication, NULL, req)) {
 			k_fifo_put(&acs_conn->indicate_fifo, req);
@@ -207,8 +199,8 @@ static void try_send_next(struct bt_acs_conn *acs_conn)
  */
 static void acs_seq_continue_work_handler(struct k_work *work)
 {
-	struct bt_acs_prot_resource_req *req =
-		CONTAINER_OF(work, struct bt_acs_prot_resource_req, work);
+	struct acs_procedure *req =
+		CONTAINER_OF(work, struct acs_procedure, work);
 	struct bt_acs_conn *acs_conn = req->acs_conn;
 	struct bt_conn *conn = acs_conn ? acs_conn->conn : NULL;
 
@@ -239,7 +231,7 @@ drain:
 static void acs_data_out_on_indicate_done(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 					  int err, void *user_data)
 {
-	struct bt_acs_prot_resource_req *req = user_data;
+	struct acs_procedure *req = user_data;
 	struct bt_acs_conn *acs_conn = req ? req->acs_conn : NULL;
 	bool continue_reply_seq = req && req->reply_seq.desc != NULL;
 
@@ -270,7 +262,7 @@ static void acs_data_out_on_indicate_done(struct bt_conn *conn, const struct bt_
 	}
 }
 
-int acs_procedure_send_notify(struct bt_acs_prot_resource_req *req, struct net_buf *plaintext)
+int acs_procedure_send_notify(struct acs_procedure *req, struct net_buf *plaintext)
 {
 #if !IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_NOTIFICATION)
 	ARG_UNUSED(req);
@@ -306,7 +298,7 @@ int acs_procedure_send_notify(struct bt_acs_prot_resource_req *req, struct net_b
 #endif /* CONFIG_BT_ACS_PROTECTED_RESOURCE_NOTIFICATION */
 }
 
-struct net_buf *acs_prepare_reply_buf(acs_procedure *proc,
+struct net_buf *acs_prepare_reply_buf(struct acs_procedure *proc,
 				      enum acs_reply_channel channel, bool encrypted)
 {
 	struct net_buf **slot;
@@ -354,7 +346,7 @@ struct net_buf *acs_prepare_reply_buf(acs_procedure *proc,
 	return buf;
 }
 
-int acs_cp_rsp_status(acs_procedure *proc, uint8_t req_opcode, uint8_t code)
+int acs_cp_rsp_status(struct acs_procedure *proc, uint8_t req_opcode, uint8_t code)
 {
 	struct net_buf *buf;
 	struct acs_reply reply;
@@ -406,7 +398,7 @@ int acs_cp_rsp_status(acs_procedure *proc, uint8_t req_opcode, uint8_t code)
 }
 
 /* Plain-CP final-mile send. Caller must already hold the busy gate. */
-static int acs_tx_submit_plain_cp(acs_procedure *proc,
+static int acs_tx_submit_plain_cp(struct acs_procedure *proc,
 				  const struct acs_reply *reply)
 {
 	struct bt_acs_conn *acs_conn = proc->acs_conn;
@@ -435,7 +427,7 @@ static int acs_tx_submit_plain_cp(acs_procedure *proc,
 	return err;
 }
 
-int acs_tx_submit(acs_procedure *proc, const struct acs_reply *reply)
+int acs_tx_submit(struct acs_procedure *proc, const struct acs_reply *reply)
 {
 	if (!proc || !reply || !reply->plaintext) {
 		return -EINVAL;
@@ -483,7 +475,7 @@ int acs_tx_submit(acs_procedure *proc, const struct acs_reply *reply)
 }
 
 
-int acs_procedure_send_indicate(struct bt_acs_prot_resource_req *req, struct net_buf *plaintext)
+int acs_procedure_send_indicate(struct acs_procedure *req, struct net_buf *plaintext)
 {
 #if !IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION)
 	ARG_UNUSED(req);

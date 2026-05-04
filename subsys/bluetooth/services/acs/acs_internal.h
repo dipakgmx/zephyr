@@ -48,7 +48,7 @@ void acs_buf_free(struct net_buf *buf);
  * @param prot_req  NULL for plain CP, non-NULL for protected Data In path.
  */
 void acs_cp_dispatch(struct acs_frame *frame, struct bt_acs_conn *acs_conn,
-		     struct bt_acs_prot_resource_req *prot_req);
+		     struct acs_procedure *prot_req);
 
 /**
  * @brief GATT write handler for the ACS Control Point characteristic.
@@ -83,10 +83,10 @@ int acs_crypto_get_server_nonce_fixed(struct bt_acs_conn *acs_conn, uint8_t *non
  *
  * @return 0 on success, negative errno on failure.
  */
-int acs_cp_rsp_status(acs_procedure *proc, uint8_t req_opcode, uint8_t code);
+int acs_cp_rsp_status(struct acs_procedure *proc, uint8_t req_opcode, uint8_t code);
 
 /** @brief Return true if a multi-step reply sequence is active on @p proc. */
-bool acs_seq_active(acs_procedure *proc);
+bool acs_seq_active(struct acs_procedure *proc);
 
 /**
  * @brief Start a multi-step reply sequence on @p proc.
@@ -94,13 +94,13 @@ bool acs_seq_active(acs_procedure *proc);
  * @param proc Active execution proc.
  * @param desc  Sequence descriptor (step table + metadata).
  */
-void acs_seq_begin(acs_procedure *proc, const struct acs_seq_desc *desc);
+void acs_seq_begin(struct acs_procedure *proc, const struct acs_seq_desc *desc);
 
 /** @brief Mark the active reply sequence as complete and release state. */
-void acs_seq_clear(acs_procedure *proc);
+void acs_seq_clear(struct acs_procedure *proc);
 
 /** @brief Abort the active reply sequence, invoking on_abort if set. */
-void acs_seq_abort(acs_procedure *proc);
+void acs_seq_abort(struct acs_procedure *proc);
 
 const struct bt_gatt_attr *acs_attr_status(void);
 const struct bt_gatt_attr *acs_attr_cp(void);
@@ -184,7 +184,7 @@ int acs_runtime_dispatch_frame(struct acs_frame *frame, struct bt_acs_conn *acs_
  * already-allocated request context owning the decrypted input buffer.
  */
 int acs_runtime_dispatch_cp_frame(struct acs_frame *frame, struct bt_acs_conn *acs_conn,
-				  struct bt_acs_prot_resource_req *prot_req);
+				  struct acs_procedure *prot_req);
 
 /**
  * @brief Dispatch a Data-In frame that targets a protected service CP.
@@ -234,7 +234,7 @@ int acs_require_data_out_subscription(struct bt_conn *conn, uint16_t resource_ha
  *
  * @return 0 on success, negative errno on failure.
  */
-int acs_tx_submit(acs_procedure *proc, const struct acs_reply *reply);
+int acs_tx_submit(struct acs_procedure *proc, const struct acs_reply *reply);
 
 /**
  * @brief Lazy-allocate or reset the response staging buffer for @p proc.
@@ -253,7 +253,7 @@ int acs_tx_submit(acs_procedure *proc, const struct acs_reply *reply);
  *                  the headroom requirement).
  * @return Buffer to append response bytes into, or NULL on pool exhaustion.
  */
-struct net_buf *acs_prepare_reply_buf(acs_procedure *proc,
+struct net_buf *acs_prepare_reply_buf(struct acs_procedure *proc,
 				      enum acs_reply_channel channel, bool encrypted);
 
 /**
@@ -266,7 +266,7 @@ struct net_buf *acs_prepare_reply_buf(acs_procedure *proc,
  *
  * @return 0 on success, negative errno on failure.
  */
-int acs_cp_send_reply(acs_procedure *proc);
+int acs_cp_send_reply(struct acs_procedure *proc);
 
 /**
  * @brief Owner-centric reply-sequence advance.
@@ -275,7 +275,7 @@ int acs_cp_send_reply(acs_procedure *proc);
  * step of any active reply sequence; aborts the sequence on step failure.
  * No-op if no sequence is active.
  */
-void acs_seq_on_confirm(acs_procedure *proc);
+void acs_seq_on_confirm(struct acs_procedure *proc);
 
 /**
  * @brief Plain-CP indication-confirmation callback (defined in acs_cp.c).
@@ -287,18 +287,18 @@ void acs_cp_on_indicate_done(struct bt_conn *conn, const struct bt_gatt_attr *at
 			     void *user_data);
 
 /** @brief Increment @p req reference count for caller @p who. */
-void acs_procedure_ref(struct bt_acs_prot_resource_req *req,
+void acs_procedure_ref(struct acs_procedure *req,
 			       enum acs_procedure_ref_who who);
 
 /** @brief Decrement @p req reference count for caller @p who; frees at zero. */
-void acs_procedure_unref(struct bt_acs_prot_resource_req *req,
+void acs_procedure_unref(struct acs_procedure *req,
 				 enum acs_procedure_ref_who who);
 
 /** @brief Return the connection for @p req, or NULL after disconnect. */
-struct bt_conn *acs_procedure_conn(const struct bt_acs_prot_resource_req *req);
+struct bt_conn *acs_procedure_conn(const struct acs_procedure *req);
 
 /** @brief Return the protected resource ATT handle from @p req. */
-uint16_t acs_procedure_resource_handle(const struct bt_acs_prot_resource_req *req);
+uint16_t acs_procedure_resource_handle(const struct acs_procedure *req);
 
 /**
  * @brief Allocate a protected resource request from the per-connection pool.
@@ -310,19 +310,19 @@ uint16_t acs_procedure_resource_handle(const struct bt_acs_prot_resource_req *re
  * @param data_length     Plaintext payload length.
  * @return Allocated request, or NULL if no slot is free.
  */
-struct bt_acs_prot_resource_req *acs_procedure_alloc(struct bt_acs_conn *acs_conn,
+struct acs_procedure *acs_procedure_alloc(struct bt_acs_conn *acs_conn,
 							     uint16_t resource_handle,
 							     uint16_t isc_id, uint16_t data_offset,
 							     uint16_t data_length);
 
 /** @brief Drop the proc (allocation) reference on @p req. */
-void acs_procedure_release_owner(struct bt_acs_prot_resource_req *req);
+void acs_procedure_release_owner(struct acs_procedure *req);
 
 /** @brief Drop the TX-path reference on @p req. */
-void acs_procedure_release_tx(struct bt_acs_prot_resource_req *req);
+void acs_procedure_release_tx(struct acs_procedure *req);
 
 /** @brief Mark response transmission complete and release the TX reference. */
-void acs_procedure_tx_done(struct bt_acs_prot_resource_req *req);
+void acs_procedure_tx_done(struct acs_procedure *req);
 
 /** @brief Abort all in-flight protected resource requests on @p acs_conn. */
 void acs_procedure_abort_all(struct bt_acs_conn *acs_conn);
@@ -337,7 +337,7 @@ void acs_procedure_abort_all(struct bt_acs_conn *acs_conn);
  *
  * @return 0 on success, negative errno on failure.
  */
-int acs_procedure_send_notify(struct bt_acs_prot_resource_req *req, struct net_buf *plaintext);
+int acs_procedure_send_notify(struct acs_procedure *req, struct net_buf *plaintext);
 
 /**
  * @brief Encrypt and queue @p plaintext for Data Out Indicate on @p req's connection.
@@ -346,7 +346,7 @@ int acs_procedure_send_notify(struct bt_acs_prot_resource_req *req, struct net_b
  *
  * @return 0 on success, negative errno on failure.
  */
-int acs_procedure_send_indicate(struct bt_acs_prot_resource_req *req, struct net_buf *plaintext);
+int acs_procedure_send_indicate(struct acs_procedure *req, struct net_buf *plaintext);
 
 /**
  * @brief Derive the session key from the completed key exchange.

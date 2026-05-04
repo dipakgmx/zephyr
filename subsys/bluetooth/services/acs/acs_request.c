@@ -23,8 +23,8 @@ LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
 
 #define ACS_REQ_CTX_COUNT (CONFIG_BT_MAX_CONN * CONFIG_BT_ACS_MAX_INFLIGHT_REQ_PER_CONN)
 
-K_MEM_SLAB_DEFINE_STATIC(acs_req_ctx_slab, sizeof(struct bt_acs_prot_resource_req),
-			 ACS_REQ_CTX_COUNT, __alignof__(struct bt_acs_prot_resource_req));
+K_MEM_SLAB_DEFINE_STATIC(acs_req_ctx_slab, sizeof(struct acs_procedure),
+			 ACS_REQ_CTX_COUNT, __alignof__(struct acs_procedure));
 
 STRUCT_SECTION_ITERABLE(bt_acs_prot_resource_handler_entry, acs_req_handler_sentinel) = {
 	.char_uuid = NULL,
@@ -56,7 +56,7 @@ static uint8_t acs_find_char_attrs_cb(const struct bt_gatt_attr *attr, uint16_t 
 	return BT_GATT_ITER_CONTINUE;
 }
 
-void acs_procedure_ref(struct bt_acs_prot_resource_req *req,
+void acs_procedure_ref(struct acs_procedure *req,
 			       enum acs_procedure_ref_who who)
 {
 	if (!req) {
@@ -72,7 +72,7 @@ void acs_procedure_ref(struct bt_acs_prot_resource_req *req,
 /**
  * @brief Return a request context to the correct slab once all references are gone.
  */
-static void acs_req_free(struct bt_acs_prot_resource_req *req)
+static void acs_req_free(struct acs_procedure *req)
 {
 	/* Release the request-input buffer; always owned by the request once
 	 * the protected dispatcher transferred it from acs_conn->data_rx.buf.
@@ -89,7 +89,7 @@ static void acs_req_free(struct bt_acs_prot_resource_req *req)
 	k_mem_slab_free(&acs_req_ctx_slab, req);
 }
 
-void acs_procedure_unref(struct bt_acs_prot_resource_req *req,
+void acs_procedure_unref(struct acs_procedure *req,
 				 enum acs_procedure_ref_who who)
 {
 	if (!req) {
@@ -111,7 +111,7 @@ void acs_procedure_unref(struct bt_acs_prot_resource_req *req,
 	acs_req_free(req);
 }
 
-struct bt_conn *acs_procedure_conn(const struct bt_acs_prot_resource_req *req)
+struct bt_conn *acs_procedure_conn(const struct acs_procedure *req)
 {
 	if (!req || !req->acs_conn) {
 		return NULL;
@@ -120,17 +120,17 @@ struct bt_conn *acs_procedure_conn(const struct bt_acs_prot_resource_req *req)
 	return req->acs_conn->conn;
 }
 
-uint16_t acs_procedure_resource_handle(const struct bt_acs_prot_resource_req *req)
+uint16_t acs_procedure_resource_handle(const struct acs_procedure *req)
 {
 	return req ? req->resource_handle : 0U;
 }
 
-struct bt_acs_prot_resource_req *acs_procedure_alloc(struct bt_acs_conn *acs_conn,
+struct acs_procedure *acs_procedure_alloc(struct bt_acs_conn *acs_conn,
 							     uint16_t resource_handle,
 							     uint16_t isc_id, uint16_t data_offset,
 							     uint16_t data_length)
 {
-	struct bt_acs_prot_resource_req *req;
+	struct acs_procedure *req;
 
 	__ASSERT_NO_MSG(acs_conn != NULL);
 
@@ -170,7 +170,7 @@ struct bt_acs_prot_resource_req *acs_procedure_alloc(struct bt_acs_conn *acs_con
 	return NULL;
 }
 
-void acs_procedure_release_owner(struct bt_acs_prot_resource_req *req)
+void acs_procedure_release_owner(struct acs_procedure *req)
 {
 	if (!req) {
 		return;
@@ -181,7 +181,7 @@ void acs_procedure_release_owner(struct bt_acs_prot_resource_req *req)
 	}
 }
 
-void acs_procedure_release_tx(struct bt_acs_prot_resource_req *req)
+void acs_procedure_release_tx(struct acs_procedure *req)
 {
 	if (!req) {
 		return;
@@ -192,7 +192,7 @@ void acs_procedure_release_tx(struct bt_acs_prot_resource_req *req)
 	}
 }
 
-void acs_procedure_tx_done(struct bt_acs_prot_resource_req *req)
+void acs_procedure_tx_done(struct acs_procedure *req)
 {
 	if (!req) {
 		return;
@@ -202,7 +202,7 @@ void acs_procedure_tx_done(struct bt_acs_prot_resource_req *req)
 }
 
 /* Auto-respond to a secure request when no application handler is registered. */
-static int acs_auto_respond(struct bt_acs_prot_resource_req *req)
+static int acs_auto_respond(struct acs_procedure *req)
 {
 	const uint8_t *data =
 		req->decrypted_request ? req->decrypted_request->data + req->data_offset : NULL;
@@ -293,7 +293,7 @@ static int acs_auto_respond(struct bt_acs_prot_resource_req *req)
 
 void acs_procedure_abort_all(struct bt_acs_conn *acs_conn)
 {
-	struct bt_acs_prot_resource_req *req;
+	struct acs_procedure *req;
 	uint16_t req_count = 0U;
 	struct k_work_sync req_sync;
 	uint16_t queued_count = 0U;
@@ -310,8 +310,8 @@ void acs_procedure_abort_all(struct bt_acs_conn *acs_conn)
 		sys_snode_t *snode;
 
 		while ((snode = k_fifo_get(&acs_conn->indicate_fifo, K_NO_WAIT)) != NULL) {
-			struct bt_acs_prot_resource_req *queued =
-				CONTAINER_OF(snode, struct bt_acs_prot_resource_req, node);
+			struct acs_procedure *queued =
+				CONTAINER_OF(snode, struct acs_procedure, node);
 
 			acs_procedure_tx_done(queued);
 			queued_count++;
@@ -347,8 +347,8 @@ void acs_procedure_abort_all(struct bt_acs_conn *acs_conn)
 
 static void acs_req_work_handler(struct k_work *work)
 {
-	struct bt_acs_prot_resource_req *req =
-		CONTAINER_OF(work, struct bt_acs_prot_resource_req, work);
+	struct acs_procedure *req =
+		CONTAINER_OF(work, struct acs_procedure, work);
 	struct bt_conn const *conn = acs_procedure_conn(req);
 	bool handled = false;
 	int err = 0;

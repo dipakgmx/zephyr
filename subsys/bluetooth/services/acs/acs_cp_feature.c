@@ -129,7 +129,7 @@ static const struct bt_acs_feature_rsp acs_features = {
 			  : 0)),
 };
 
-void acs_cp_handle_get_feature(acs_procedure *proc, struct net_buf_simple *buf)
+void acs_cp_handle_get_feature(struct acs_procedure *proc, struct net_buf_simple *buf)
 {
 	struct net_buf *rsp_buf;
 	struct acs_reply_mode reply_mode = acs_proc_reply_mode(proc);
@@ -160,7 +160,7 @@ void acs_cp_handle_get_feature(acs_procedure *proc, struct net_buf_simple *buf)
 }
 
 #if IS_ENABLED(CONFIG_BT_ACS_ATT_MTU)
-void acs_cp_handle_att_mtu(acs_procedure *proc)
+void acs_cp_handle_att_mtu(struct acs_procedure *proc)
 {
 	struct net_buf *rsp_buf;
 	struct acs_reply_mode reply_mode = acs_proc_reply_mode(proc);
@@ -180,7 +180,7 @@ void acs_cp_handle_att_mtu(acs_procedure *proc)
 #endif /* CONFIG_BT_ACS_ATT_MTU */
 
 #if IS_ENABLED(CONFIG_BT_ACS_HAS_NONCE_FIXED)
-void acs_cp_handle_set_client_nonce_fixed(acs_procedure *proc, struct net_buf_simple *buf)
+void acs_cp_handle_set_client_nonce_fixed(struct acs_procedure *proc, struct net_buf_simple *buf)
 {
 	struct bt_acs_conn *acs_conn = proc->acs_conn;
 	struct acs_cp_set_client_nonce_req req_data;

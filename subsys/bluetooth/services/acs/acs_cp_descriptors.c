@@ -22,7 +22,7 @@
 LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
 
 #if IS_ENABLED(CONFIG_BT_ACS_ANY_KEY_EXCHANGE)
-void acs_cp_handle_get_key_descriptor(acs_procedure *proc, struct net_buf_simple *buf)
+void acs_cp_handle_get_key_descriptor(struct acs_procedure *proc, struct net_buf_simple *buf)
 {
 	struct net_buf *rsp_buf;
 	struct acs_reply_mode reply_mode = acs_proc_reply_mode(proc);
@@ -61,7 +61,7 @@ void acs_cp_handle_get_key_descriptor(acs_procedure *proc, struct net_buf_simple
 #endif /* CONFIG_BT_ACS_ANY_KEY_EXCHANGE */
 
 #if IS_ENABLED(CONFIG_BT_ACS_FEAT_AUTHENTICATION)
-void acs_cp_handle_get_isc_descriptor(acs_procedure *proc, struct net_buf_simple *buf)
+void acs_cp_handle_get_isc_descriptor(struct acs_procedure *proc, struct net_buf_simple *buf)
 {
 	struct net_buf *rsp_buf;
 	struct acs_reply_mode reply_mode = acs_proc_reply_mode(proc);
@@ -94,7 +94,7 @@ void acs_cp_handle_get_isc_descriptor(acs_procedure *proc, struct net_buf_simple
 #endif /* CONFIG_BT_ACS_FEAT_AUTHENTICATION */
 
 #if IS_ENABLED(CONFIG_BT_ACS_RESOURCE_HANDLE_UUID_MAP)
-void acs_cp_handle_get_resource_handle_uuid_map(acs_procedure *proc)
+void acs_cp_handle_get_resource_handle_uuid_map(struct acs_procedure *proc)
 {
 	struct net_buf *rsp_buf;
 	struct acs_reply_mode reply_mode = acs_proc_reply_mode(proc);
@@ -122,7 +122,7 @@ void acs_cp_handle_get_resource_handle_uuid_map(acs_procedure *proc)
 }
 #endif /* CONFIG_BT_ACS_RESOURCE_HANDLE_UUID_MAP */
 
-void acs_cp_handle_get_svc_char_uuids(acs_procedure *proc, struct net_buf_simple *buf)
+void acs_cp_handle_get_svc_char_uuids(struct acs_procedure *proc, struct net_buf_simple *buf)
 {
 	uint16_t resource_handle;
 	struct net_buf *rsp_buf;

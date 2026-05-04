@@ -21,7 +21,7 @@
 LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
 
 int acs_runtime_dispatch_cp_frame(struct acs_frame *frame, struct bt_acs_conn *acs_conn,
-				  struct bt_acs_prot_resource_req *prot_req)
+				  struct acs_procedure *prot_req)
 {
 	__ASSERT_NO_MSG(frame != NULL);
 	__ASSERT_NO_MSG(acs_conn != NULL);
@@ -33,7 +33,7 @@ int acs_runtime_dispatch_cp_frame(struct acs_frame *frame, struct bt_acs_conn *a
 #if IS_ENABLED(CONFIG_BT_ACS_FEAT_AUTHENTICATION)
 int acs_runtime_dispatch_protected_cp_frame(struct acs_frame *frame, struct bt_acs_conn *acs_conn)
 {
-	struct bt_acs_prot_resource_req *req_ctx;
+	struct acs_procedure *req_ctx;
 	uint16_t data_offset;
 	int sub_err;
 
@@ -94,7 +94,7 @@ int acs_runtime_dispatch_protected_cp_frame(struct acs_frame *frame, struct bt_a
 int acs_runtime_dispatch_protected_char_frame(struct acs_frame *frame,
 					      struct bt_acs_conn *acs_conn)
 {
-	struct bt_acs_prot_resource_req *req_ctx;
+	struct acs_procedure *req_ctx;
 	uint16_t data_offset;
 	int sub_err;
 

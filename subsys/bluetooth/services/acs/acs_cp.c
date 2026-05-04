@@ -26,7 +26,7 @@ LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
 void acs_cp_on_indicate_done(struct bt_conn *conn, const struct bt_gatt_attr *attr, int err,
 			     void *user_data);
 
-int acs_cp_send_reply(acs_procedure *proc)
+int acs_cp_send_reply(struct acs_procedure *proc)
 {
 	struct acs_reply_mode mode;
 	struct acs_reply reply;
@@ -83,10 +83,8 @@ void acs_cp_on_indicate_done(struct bt_conn *conn, const struct bt_gatt_attr *at
 	__ASSERT_NO_MSG(acs_conn != NULL);
 
 	if (err) {
-		acs_procedure *proc = &acs_conn->plain_cp_proc;
-
 		LOG_WRN("Plain CP indication failed: %d", err);
-		acs_seq_abort(proc);
+		acs_seq_abort(&acs_conn->plain_cp_proc);
 		acs_conn->plain_cp_proc.abort_pending = false;
 		atomic_set(&acs_conn->plain_cp_proc.locked, 0);
 		return;
@@ -96,13 +94,12 @@ void acs_cp_on_indicate_done(struct bt_conn *conn, const struct bt_gatt_attr *at
 	 * in-flight.  The TX channel is now free (tx_in_flight cleared before
 	 * this callback), so tear down the procedure and send ABORT SUCCESS. */
 	if (acs_conn->plain_cp_proc.abort_pending) {
-		acs_procedure *proc = &acs_conn->plain_cp_proc;
 		struct k_work_sync sync;
 
 		acs_conn->plain_cp_proc.abort_pending = false;
 
 		k_work_cancel_sync(&acs_conn->cp_tx.tx_work, &sync);
-		acs_seq_clear(proc);
+		acs_seq_clear(&acs_conn->plain_cp_proc);
 		if (acs_conn->plain_cp_proc.response) {
 			acs_buf_free(acs_conn->plain_cp_proc.response);
 			acs_conn->plain_cp_proc.response = NULL;
@@ -126,7 +123,8 @@ void acs_cp_on_indicate_done(struct bt_conn *conn, const struct bt_gatt_attr *at
 
 		LOG_DBG("Deferred abort committed — sending ABORT SUCCESS");
 		/* Lock stays held — ABORT now owns it; released on confirm. */
-		acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_ABORT, BT_ACS_CP_RESPONSE_SUCCESS);
+		acs_cp_rsp_status(&acs_conn->plain_cp_proc, BT_ACS_CP_OPCODE_ABORT,
+				  BT_ACS_CP_RESPONSE_SUCCESS);
 		return;
 	}
 
@@ -139,9 +137,9 @@ void acs_cp_on_indicate_done(struct bt_conn *conn, const struct bt_gatt_attr *at
 
 /* Dispatch reassembled CP payload: frame->payload[0]=opcode, [1..]=operand. */
 void acs_cp_dispatch(struct acs_frame *frame, struct bt_acs_conn *acs_conn,
-		     struct bt_acs_prot_resource_req *prot_req)
+		     struct acs_procedure *prot_req)
 {
-	acs_procedure *proc;
+	struct acs_procedure *proc;
 	struct net_buf_simple payload_simple;
 	struct net_buf_simple *payload = &payload_simple;
 	uint8_t opcode;

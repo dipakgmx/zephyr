@@ -8,7 +8,7 @@
  * @file acs_types.h
  * @brief ACS internal data structures, enumerations, and forward declarations.
  *
- * All core ACS types live here to keep the circular bt_acs_prot_resource_req <-> bt_acs_conn
+ * All core ACS types live here to keep the circular acs_procedure <-> bt_acs_conn
  * dependency resolved in one place. Included transitively via acs_internal.h.
  */
 
@@ -32,8 +32,8 @@
 extern "C" {
 #endif
 
-struct bt_acs_prot_resource_req; /**< Defined below; forward-declared for bt_acs_conn */
-struct bt_acs_conn;  /**< Defined below; forward-declared for bt_acs_prot_resource_req */
+struct acs_procedure; /**< Defined below; forward-declared for bt_acs_conn */
+struct bt_acs_conn;  /**< Defined below; forward-declared for struct acs_procedure */
 struct acs_seq_desc; /**< Defined below; forward-declared for acs_reply_seq_state */
 
 /**
@@ -150,12 +150,12 @@ struct acs_reply {
  * Return 0 on success (framework waits for confirm, then calls next step).
  * Return negative errno to abort the sequence.
  */
-typedef int (*acs_seq_step_fn)(struct bt_acs_prot_resource_req *proc);
+typedef int (*acs_seq_step_fn)(struct acs_procedure *proc);
 
 /**
  * @brief Internal request-aware ACS handler callback type.
  */
-typedef void (*bt_acs_prot_resource_handler_t)(struct bt_acs_prot_resource_req *req);
+typedef void (*bt_acs_prot_resource_handler_t)(struct acs_procedure *req);
 
 /**
  * @brief ACS key exchange states.
@@ -189,7 +189,7 @@ struct acs_seq_desc {
 	const acs_seq_step_fn *steps;
 	uint8_t step_count;
 	/** Optional hook invoked by acs_seq_abort before the sequence state is cleared. */
-	void (*on_abort)(struct bt_acs_prot_resource_req *proc);
+	void (*on_abort)(struct acs_procedure *proc);
 };
 
 /**
@@ -333,12 +333,12 @@ struct bt_acs_kex_ctx {
  * Both flavours share a single @c reply_seq state, so the multi-indication
  * reply-sequence engine has one home regardless of dispatch path.
  *
- * The legacy public name @c bt_acs_prot_resource_req is retained as the struct
+ * The legacy public name @c acs_procedure is retained as the struct
  * tag so existing handler signatures (@ref bt_acs_prot_resource_handler_t and
  * @ref ACS_PROT_RESOURCE_HANDLER_DEFINE) keep working unchanged. The typedef
  * @c acs_procedure below is the conceptual name used by new internal code.
  */
-struct bt_acs_prot_resource_req {
+struct acs_procedure {
 	sys_snode_t node;                  /**< k_fifo linkage for send queue (DOI) */
 	struct bt_acs_conn *acs_conn;      /**< Owning ACS connection; NULL after disconnect */
 	struct net_buf *response;          /**< Pool buffer for plaintext response staging */
@@ -358,15 +358,6 @@ struct bt_acs_prot_resource_req {
 	atomic_t locked;          /**< Plain-CP busy gate: 1 while a procedure is active */
 	bool abort_pending;       /**< Plain-CP deferred-abort flag (indication in flight) */
 };
-
-/**
- * @brief Conceptual alias for the unified procedure object.
- *
- * Equivalent to @c struct bt_acs_prot_resource_req. New internal code should
- * spell the type as @c acs_procedure to match the migration model; the legacy
- * struct tag is kept for downstream-handler-API compatibility.
- */
-typedef struct bt_acs_prot_resource_req acs_procedure;
 
 /**
  * @brief Per-connection ACS state.
@@ -407,7 +398,7 @@ struct bt_acs_conn {
 	struct bt_acs_kex_ctx *kex;          /**< Transient key exchange context */
 	uint8_t status_data[3];              /**< Embedded status indication payload */
 	struct bt_gatt_indicate_params status_indicate_params; /**< Status indication params */
-	struct bt_acs_prot_resource_req plain_cp_proc; /**< Singleton plain-CP procedure
+	struct acs_procedure plain_cp_proc; /**< Singleton plain-CP procedure
 							 *  (is_singleton=true; not slab-managed)
 							 */
 	struct acs_seg_tx_ctx cp_tx;    /**< Plain CP indication transport context */
@@ -456,7 +447,7 @@ struct bt_acs_prot_resource_handler_entry {
  * Plain CP replies travel as unencrypted CP indications; protected CP replies
  * travel as encrypted DOI indications. Both are confirmed paths.
  */
-static inline struct acs_reply_mode acs_proc_reply_mode(const acs_procedure *proc)
+static inline struct acs_reply_mode acs_proc_reply_mode(const struct acs_procedure *proc)
 {
 	__ASSERT_NO_MSG(proc != NULL);
 

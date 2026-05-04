@@ -16,11 +16,6 @@
 #include <zephyr/logging/log.h>
 LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
 
-static inline bool acs_channel_rx_is_first(const uint8_t *data)
-{
-	return IS_BIT_SET(data[0], ACS_SEG_FIRST_SEGMENT_BIT);
-}
-
 enum acs_seg_rx_result acs_channel_rx_feed(struct acs_seg_rx_ctx *rx_ctx, const uint8_t *data,
 					   uint16_t len)
 {

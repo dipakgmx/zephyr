@@ -21,7 +21,7 @@
 #include <zephyr/logging/log.h>
 LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
 
-void acs_cp_kex_get_current_key_list(acs_procedure *proc)
+void acs_cp_kex_get_current_key_list(struct acs_procedure *proc)
 {
 	/* count(1 byte) + up to ACS_KEY_ID_COUNT x Key_ID(2 bytes) */
 	uint8_t buf[sizeof(uint8_t) + ACS_KEY_ID_COUNT * sizeof(uint16_t)];
@@ -75,7 +75,7 @@ void acs_cp_kex_get_current_key_list(acs_procedure *proc)
 
 /* --- Key exchange success sequence steps --- */
 
-static int kex_step_success_response(acs_procedure *proc)
+static int kex_step_success_response(struct acs_procedure *proc)
 {
 	struct bt_acs_conn *acs_conn = proc->acs_conn;
 	struct acs_reply_mode reply_mode = acs_proc_reply_mode(proc);
@@ -102,7 +102,7 @@ static int kex_step_success_response(acs_procedure *proc)
 	return acs_cp_send_reply(proc);
 }
 
-static int kex_step_status(acs_procedure *proc)
+static int kex_step_status(struct acs_procedure *proc)
 {
 	struct bt_acs_conn *acs_conn = proc->acs_conn;
 
@@ -163,7 +163,7 @@ static int kex_step_status(acs_procedure *proc)
 	return 0;
 }
 
-static void kex_on_abort(acs_procedure *proc)
+static void kex_on_abort(struct acs_procedure *proc)
 {
 	struct bt_acs_conn *acs_conn = proc ? proc->acs_conn : NULL;
 
@@ -192,7 +192,7 @@ static const struct acs_seq_desc kex_success_seq = {
 
 /* --- Key exchange failure sequence steps --- */
 
-static int kex_step_fail_response(acs_procedure *proc)
+static int kex_step_fail_response(struct acs_procedure *proc)
 {
 	struct bt_acs_conn *acs_conn = proc->acs_conn;
 	struct acs_reply_mode reply_mode = acs_proc_reply_mode(proc);
@@ -218,7 +218,7 @@ static int kex_step_fail_response(acs_procedure *proc)
 	return acs_cp_send_reply(proc);
 }
 
-static int kex_step_fail_cleanup(acs_procedure *proc)
+static int kex_step_fail_cleanup(struct acs_procedure *proc)
 {
 	struct bt_acs_conn *acs_conn = proc->acs_conn;
 
@@ -239,7 +239,7 @@ static const struct acs_seq_desc kex_fail_seq = {
 	.on_abort = kex_on_abort,
 };
 
-void acs_cp_kex_exchange_kdf(acs_procedure *proc, struct net_buf_simple *buf)
+void acs_cp_kex_exchange_kdf(struct acs_procedure *proc, struct net_buf_simple *buf)
 {
 	struct bt_acs_conn *acs_conn = proc->acs_conn;
 	struct acs_kdf_req req_data;
@@ -364,7 +364,7 @@ void acs_cp_kex_exchange_kdf(acs_procedure *proc, struct net_buf_simple *buf)
 }
 #endif /* CONFIG_BT_ACS_KEY_EXCHANGE_KDF || CONFIG_BT_ACS_KEY_EXCHANGE_ECDH */
 
-void acs_cp_kex_start(acs_procedure *proc, struct net_buf_simple *buf)
+void acs_cp_kex_start(struct acs_procedure *proc, struct net_buf_simple *buf)
 {
 	struct bt_acs_conn *acs_conn = proc->acs_conn;
 	struct acs_cp_start_key_exchange_req req_data;
@@ -574,7 +574,7 @@ void acs_cp_kex_start(acs_procedure *proc, struct net_buf_simple *buf)
 }
 
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_ECDH)
-void acs_cp_kex_exchange_ecdh(acs_procedure *proc, struct net_buf_simple *buf)
+void acs_cp_kex_exchange_ecdh(struct acs_procedure *proc, struct net_buf_simple *buf)
 {
 	struct bt_acs_conn *acs_conn = proc->acs_conn;
 	uint16_t key_id;
@@ -681,7 +681,7 @@ void acs_cp_kex_exchange_ecdh(acs_procedure *proc, struct net_buf_simple *buf)
 	}
 }
 
-void acs_cp_kex_ecdh_confirm_code(acs_procedure *proc, struct net_buf_simple *buf)
+void acs_cp_kex_ecdh_confirm_code(struct acs_procedure *proc, struct net_buf_simple *buf)
 {
 	struct bt_acs_conn *acs_conn = proc->acs_conn;
 	struct acs_cp_ecdh_confirm_code_req req_data;
@@ -744,7 +744,7 @@ void acs_cp_kex_ecdh_confirm_code(acs_procedure *proc, struct net_buf_simple *bu
 	}
 }
 
-void acs_cp_kex_ecdh_confirm_rand(acs_procedure *proc, struct net_buf_simple *buf)
+void acs_cp_kex_ecdh_confirm_rand(struct acs_procedure *proc, struct net_buf_simple *buf)
 {
 	struct bt_acs_conn *acs_conn = proc->acs_conn;
 	struct acs_cp_ecdh_confirm_rand_req req_data;

@@ -19,7 +19,7 @@
 #include <zephyr/logging/log.h>
 LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
 
-void acs_cp_handle_get_restriction_map_id_list(acs_procedure *proc)
+void acs_cp_handle_get_restriction_map_id_list(struct acs_procedure *proc)
 {
 	struct net_buf *rsp_buf;
 	struct acs_reply_mode reply_mode = acs_proc_reply_mode(proc);
@@ -46,7 +46,7 @@ void acs_cp_handle_get_restriction_map_id_list(acs_procedure *proc)
 	}
 }
 
-void acs_cp_handle_get_restriction_map_descriptor(acs_procedure *proc,
+void acs_cp_handle_get_restriction_map_descriptor(struct acs_procedure *proc,
 						  struct net_buf_simple *buf)
 {
 	struct acs_rmap_get_descriptor_req desc_req;
@@ -87,7 +87,7 @@ void acs_cp_handle_get_restriction_map_descriptor(acs_procedure *proc,
 	}
 }
 
-void acs_cp_handle_activate_restriction_map(acs_procedure *proc, struct net_buf_simple *buf)
+void acs_cp_handle_activate_restriction_map(struct acs_procedure *proc, struct net_buf_simple *buf)
 {
 	uint16_t map_id;
 	struct bt_acs_restriction_map map;

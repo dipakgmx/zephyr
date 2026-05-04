@@ -17,7 +17,7 @@ LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
  * Both plain-CP and protected procedures share the same @c reply_seq home on
  * the unified @c acs_procedure object — single source of truth.
  */
-static struct acs_reply_seq_state *acs_seq_state(acs_procedure *proc)
+static struct acs_reply_seq_state *acs_seq_state(struct acs_procedure *proc)
 {
 	return proc ? &proc->reply_seq : NULL;
 }
@@ -28,7 +28,7 @@ static struct acs_reply_seq_state *acs_seq_state(acs_procedure *proc)
  * @return 0 on success or sequence complete, negative errno from the step
  *         function on failure.
  */
-static int acs_seq_continue(acs_procedure *proc)
+static int acs_seq_continue(struct acs_procedure *proc)
 {
 	struct acs_reply_seq_state *seq = acs_seq_state(proc);
 
@@ -43,14 +43,14 @@ static int acs_seq_continue(acs_procedure *proc)
 	return fn(proc);
 }
 
-bool acs_seq_active(acs_procedure *proc)
+bool acs_seq_active(struct acs_procedure *proc)
 {
 	struct acs_reply_seq_state const *seq = acs_seq_state(proc);
 
 	return seq && seq->desc != NULL;
 }
 
-void acs_seq_begin(acs_procedure *proc, const struct acs_seq_desc *desc)
+void acs_seq_begin(struct acs_procedure *proc, const struct acs_seq_desc *desc)
 {
 	struct acs_reply_seq_state *seq = acs_seq_state(proc);
 
@@ -66,7 +66,7 @@ void acs_seq_begin(acs_procedure *proc, const struct acs_seq_desc *desc)
 	seq->step = 0;
 }
 
-void acs_seq_clear(acs_procedure *proc)
+void acs_seq_clear(struct acs_procedure *proc)
 {
 	struct acs_reply_seq_state *seq = acs_seq_state(proc);
 	bool was_active;
@@ -88,7 +88,7 @@ void acs_seq_clear(acs_procedure *proc)
 	}
 }
 
-void acs_seq_abort(acs_procedure *proc)
+void acs_seq_abort(struct acs_procedure *proc)
 {
 	struct acs_reply_seq_state const *seq = acs_seq_state(proc);
 
@@ -99,7 +99,7 @@ void acs_seq_abort(acs_procedure *proc)
 	acs_seq_clear(proc);
 }
 
-void acs_seq_on_confirm(acs_procedure *proc)
+void acs_seq_on_confirm(struct acs_procedure *proc)
 {
 	int err;
 

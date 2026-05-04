@@ -32,7 +32,7 @@ LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
  * advances ISC → KEY → RC on each confirm until the sequence completes.
  */
 
-static int all_active_step_isc(acs_procedure *proc)
+static int all_active_step_isc(struct acs_procedure *proc)
 {
 	static const uint8_t filter[2] = {0xFF, 0xFF};
 	struct net_buf *buf;
@@ -58,7 +58,7 @@ static int all_active_step_isc(acs_procedure *proc)
 	return acs_cp_send_reply(proc);
 }
 
-static int all_active_step_key(acs_procedure *proc)
+static int all_active_step_key(struct acs_procedure *proc)
 {
 	static const uint8_t filter[2] = {0xFF, 0xFF};
 	struct net_buf *buf;
@@ -100,7 +100,7 @@ static int all_active_step_key(acs_procedure *proc)
 	return acs_cp_send_reply(proc);
 }
 
-static int all_active_step_rc(acs_procedure *proc)
+static int all_active_step_rc(struct acs_procedure *proc)
 {
 	/* Send the terminal Response Code first — acs_cp_send_reply adds a TX
 	 * ref that keeps the request alive.  Clear the sequence afterwards so
@@ -125,7 +125,7 @@ static const struct acs_seq_desc all_active_seq = {
 	.step_count = ARRAY_SIZE(all_active_steps),
 };
 
-void acs_cp_all_active_get(acs_procedure *proc)
+void acs_cp_all_active_get(struct acs_procedure *proc)
 {
 	struct net_buf *buf;
 	struct acs_rmap_get_descriptor_req rm_operand;
