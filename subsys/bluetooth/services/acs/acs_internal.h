@@ -74,8 +74,8 @@ int acs_crypto_get_server_nonce_fixed(struct bt_acs_conn *acs_conn, uint8_t *non
 /**
  * @brief Send a 3-byte Response Code indication on the active CP channel.
  *
- * Stages a fresh response buffer for @p owner via @ref acs_prepare_reply_buf
- * with the mode from @ref acs_owner_reply_mode, fills
+ * Stages a fresh response buffer for @p proc via @ref acs_prepare_reply_buf
+ * with the mode from @ref acs_proc_reply_mode, fills
  * [BT_ACS_CP_OPCODE_RESPONSE_CODE | req_opcode | code], and submits via
  * @ref acs_tx_submit. Mirrors @ref acs_cp_send_reply on submit failure
  * (acs_seq_abort + log); on prep failure additionally releases the plain-CP
@@ -83,24 +83,24 @@ int acs_crypto_get_server_nonce_fixed(struct bt_acs_conn *acs_conn, uint8_t *non
  *
  * @return 0 on success, negative errno on failure.
  */
-int acs_cp_rsp_status(const struct acs_exec_owner *owner, uint8_t req_opcode, uint8_t code);
+int acs_cp_rsp_status(acs_procedure *proc, uint8_t req_opcode, uint8_t code);
 
-/** @brief Return true if a multi-step reply sequence is active on @p owner. */
-bool acs_seq_active(const struct acs_exec_owner *owner);
+/** @brief Return true if a multi-step reply sequence is active on @p proc. */
+bool acs_seq_active(acs_procedure *proc);
 
 /**
- * @brief Start a multi-step reply sequence on @p owner.
+ * @brief Start a multi-step reply sequence on @p proc.
  *
- * @param owner Active execution owner.
+ * @param proc Active execution proc.
  * @param desc  Sequence descriptor (step table + metadata).
  */
-void acs_seq_begin(const struct acs_exec_owner *owner, const struct acs_seq_desc *desc);
+void acs_seq_begin(acs_procedure *proc, const struct acs_seq_desc *desc);
 
 /** @brief Mark the active reply sequence as complete and release state. */
-void acs_seq_clear(const struct acs_exec_owner *owner);
+void acs_seq_clear(acs_procedure *proc);
 
 /** @brief Abort the active reply sequence, invoking on_abort if set. */
-void acs_seq_abort(const struct acs_exec_owner *owner);
+void acs_seq_abort(acs_procedure *proc);
 
 const struct bt_gatt_attr *acs_attr_status(void);
 const struct bt_gatt_attr *acs_attr_cp(void);
@@ -191,7 +191,7 @@ int acs_runtime_dispatch_cp_frame(struct acs_frame *frame, struct bt_acs_conn *a
  *
  * Performs the DOI CCC check, allocates a request context, transfers ownership
  * of @c acs_conn->data_rx.buf into the context, then forwards to
- * @ref acs_runtime_dispatch_cp_frame. Drops the owner reference here unless a
+ * @ref acs_runtime_dispatch_cp_frame. Drops the proc reference here unless a
  * multi-step reply sequence took it over.
  */
 int acs_runtime_dispatch_protected_cp_frame(struct acs_frame *frame, struct bt_acs_conn *acs_conn);
@@ -221,23 +221,23 @@ int acs_require_data_out_subscription(struct bt_conn *conn, uint16_t resource_ha
  *
  * Decides the transport family from @p reply->channel:
  *   - @ref ACS_REPLY_CP  — plain segmented CP indication on @c acs_conn->cp_tx,
- *     completion via @ref acs_cp_on_indicate_done. @p owner must be the plain-CP
+ *     completion via @ref acs_cp_on_indicate_done. @p proc must be the plain-CP
  *     singleton.
  *   - @ref ACS_REPLY_DOI — encrypts in place, queues on @c indicate_fifo with
  *     @ref try_send_next, completion via @ref acs_data_out_on_indicate_done.
- *     @p owner must be a protected request.
+ *     @p proc must be a protected request.
  *   - @ref ACS_REPLY_DON — encrypts in place, sends an unconfirmed segmented
- *     notification. @p owner must be a protected request.
+ *     notification. @p proc must be a protected request.
  *
  * Domain code should produce a buffer + reply and call this. The send seam
  * picks segmentation, queueing, encryption, and the completion callback.
  *
  * @return 0 on success, negative errno on failure.
  */
-int acs_tx_submit(const struct acs_exec_owner *owner, const struct acs_reply *reply);
+int acs_tx_submit(acs_procedure *proc, const struct acs_reply *reply);
 
 /**
- * @brief Lazy-allocate or reset the response staging buffer for @p owner.
+ * @brief Lazy-allocate or reset the response staging buffer for @p proc.
  *
  * Plain CP: returns the singleton @c plain_cp_proc.response, no headroom,
  * no payload prefix.
@@ -246,27 +246,27 @@ int acs_tx_submit(const struct acs_exec_owner *owner, const struct acs_reply *re
  * @ref ACS_CRYPTO_HEADROOM reserved and the protected-resource handle prefix
  * already pushed, so the handler can append its body bytes directly.
  *
- * @param owner     Active owner.
+ * @param proc     Active proc.
  * @param channel   Reply channel — selects whether the resource_handle prefix
  *                  is seeded (DON / DOI for protected paths).
  * @param encrypted True when the reply will go through AEAD encryption (drives
  *                  the headroom requirement).
  * @return Buffer to append response bytes into, or NULL on pool exhaustion.
  */
-struct net_buf *acs_prepare_reply_buf(const struct acs_exec_owner *owner,
+struct net_buf *acs_prepare_reply_buf(acs_procedure *proc,
 				      enum acs_reply_channel channel, bool encrypted);
 
 /**
- * @brief Send the staged CP reply assembled from @p owner.
+ * @brief Send the staged CP reply assembled from @p proc.
  *
  * Reads the active procedure's staged response buffer, builds an @ref acs_reply
- * using @ref acs_owner_reply_mode for the canonical channel/encrypted/needs_confirm
+ * using @ref acs_proc_reply_mode for the canonical channel/encrypted/needs_confirm
  * defaults, and submits via @ref acs_tx_submit. Aborts any active reply sequence
  * on submit failure and logs the failure.
  *
  * @return 0 on success, negative errno on failure.
  */
-int acs_cp_send_reply(const struct acs_exec_owner *owner);
+int acs_cp_send_reply(acs_procedure *proc);
 
 /**
  * @brief Owner-centric reply-sequence advance.
@@ -275,7 +275,7 @@ int acs_cp_send_reply(const struct acs_exec_owner *owner);
  * step of any active reply sequence; aborts the sequence on step failure.
  * No-op if no sequence is active.
  */
-void acs_seq_on_owner_confirm(const struct acs_exec_owner *owner);
+void acs_seq_on_confirm(acs_procedure *proc);
 
 /**
  * @brief Plain-CP indication-confirmation callback (defined in acs_cp.c).
@@ -315,7 +315,7 @@ struct bt_acs_prot_resource_req *acs_procedure_alloc(struct bt_acs_conn *acs_con
 							     uint16_t isc_id, uint16_t data_offset,
 							     uint16_t data_length);
 
-/** @brief Drop the owner (allocation) reference on @p req. */
+/** @brief Drop the proc (allocation) reference on @p req. */
 void acs_procedure_release_owner(struct bt_acs_prot_resource_req *req);
 
 /** @brief Drop the TX-path reference on @p req. */

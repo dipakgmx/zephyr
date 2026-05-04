@@ -251,8 +251,7 @@ static int acs_auto_respond(struct bt_acs_prot_resource_req *req)
 	{
 		enum acs_reply_channel channel = (props & BT_GATT_CHRC_INDICATE) ? ACS_REPLY_DOI
 									       : ACS_REPLY_DON;
-		struct acs_exec_owner owner = acs_exec_owner_protected(req);
-		struct net_buf *rsp_buf = acs_prepare_reply_buf(&owner, channel, true);
+		struct net_buf *rsp_buf = acs_prepare_reply_buf(req, channel, true);
 		struct acs_reply reply;
 
 		if (!rsp_buf) {
@@ -288,7 +287,7 @@ static int acs_auto_respond(struct bt_acs_prot_resource_req *req)
 			.needs_confirm = channel == ACS_REPLY_DOI,
 		};
 
-		return acs_tx_submit(&owner, &reply);
+		return acs_tx_submit(req, &reply);
 	}
 }
 
@@ -379,6 +378,16 @@ static void acs_req_work_handler(struct k_work *work)
 			LOG_WRN("ACS auto-response failed for handle 0x%04x: %d",
 				req->resource_handle, err);
 		}
+	}
+
+	/* The handler / auto_respond consumed the input bytes already.
+	 * Drop decrypted_request now so it returns to the pool while we wait
+	 * for the indication / notification to confirm — acs_req_free will see
+	 * NULL and skip the free at refcount-zero.
+	 */
+	if (req->decrypted_request) {
+		acs_buf_free(req->decrypted_request);
+		req->decrypted_request = NULL;
 	}
 
 	acs_procedure_release_owner(req);

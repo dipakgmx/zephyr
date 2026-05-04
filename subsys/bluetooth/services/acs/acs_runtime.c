@@ -71,6 +71,16 @@ int acs_runtime_dispatch_protected_cp_frame(struct acs_frame *frame, struct bt_a
 
 	(void)acs_runtime_dispatch_cp_frame(frame, acs_conn, req_ctx);
 
+	/* The CP handler ran synchronously and consumed the input bytes already.
+	 * Drop the decrypted_request buffer now so it returns to the pool while
+	 * we wait for the indication to confirm — acs_req_free will see NULL
+	 * and skip the free at refcount-zero.
+	 */
+	if (req_ctx->decrypted_request) {
+		acs_buf_free(req_ctx->decrypted_request);
+		req_ctx->decrypted_request = NULL;
+	}
+
 	/* If a multi-step reply sequence is active, the sequence now owns the
 	 * ALLOC ref and will release it in acs_seq_clear(). Otherwise, drop it
 	 * here — the single response is already queued or completed.

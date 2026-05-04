@@ -220,18 +220,7 @@ static void acs_seq_continue_work_handler(struct k_work *work)
 		goto drain;
 	}
 
-	{
-		struct acs_exec_owner owner = acs_exec_owner_protected(req);
-
-		/* req->acs_conn may be NULL post-disconnect; preserve the legacy
-		 * fallback so the seq engine can still resolve the conn slot.
-		 */
-		if (!owner.acs_conn) {
-			owner.acs_conn = acs_conn_lookup(conn);
-		}
-
-		acs_seq_on_owner_confirm(&owner);
-	}
+	acs_seq_on_confirm(req);
 
 drain:
 	if (acs_conn) {
@@ -272,18 +261,8 @@ static void acs_data_out_on_indicate_done(struct bt_conn *conn, const struct bt_
 			return;
 		}
 
-		struct acs_exec_owner owner = acs_exec_owner_protected(req);
-
-		/* req->acs_conn may be NULL post-disconnect; preserve the legacy
-		 * fallback so abort accounting still resolves the connection.
-		 */
-		if (!owner.acs_conn) {
-			owner.acs_conn = acs_conn ? acs_conn
-						  : (conn ? acs_conn_lookup(conn) : NULL);
-		}
-
 		LOG_WRN("Protected CP indication failed: %d", err);
-		acs_seq_abort(&owner);
+		acs_seq_abort(req);
 	}
 
 	if (acs_conn) {
@@ -327,26 +306,26 @@ int acs_procedure_send_notify(struct bt_acs_prot_resource_req *req, struct net_b
 #endif /* CONFIG_BT_ACS_PROTECTED_RESOURCE_NOTIFICATION */
 }
 
-struct net_buf *acs_prepare_reply_buf(const struct acs_exec_owner *owner,
+struct net_buf *acs_prepare_reply_buf(acs_procedure *proc,
 				      enum acs_reply_channel channel, bool encrypted)
 {
 	struct net_buf **slot;
 	struct net_buf *buf;
 	uint16_t resource_handle = 0U;
 
-	__ASSERT_NO_MSG(owner != NULL);
-	__ASSERT_NO_MSG(owner->acs_conn != NULL);
+	__ASSERT_NO_MSG(proc != NULL);
+	__ASSERT_NO_MSG(proc->acs_conn != NULL);
 
-	if (owner->kind == ACS_EXEC_OWNER_PLAIN_CP) {
+	if (proc->is_singleton) {
 		__ASSERT_NO_MSG(channel == ACS_REPLY_CP);
 		__ASSERT_NO_MSG(!encrypted);
-		__ASSERT_NO_MSG(owner->plain_cp != NULL);
-		slot = &owner->plain_cp->response;
+		__ASSERT_NO_MSG(proc != NULL);
+		slot = &proc->response;
 	} else {
 		__ASSERT_NO_MSG(channel == ACS_REPLY_DOI || channel == ACS_REPLY_DON);
-		__ASSERT_NO_MSG(owner->req != NULL);
-		slot = &owner->req->response;
-		resource_handle = owner->req->resource_handle;
+		__ASSERT_NO_MSG(proc != NULL);
+		slot = &proc->response;
+		resource_handle = proc->resource_handle;
 	}
 
 	if (!*slot) {
@@ -367,7 +346,7 @@ struct net_buf *acs_prepare_reply_buf(const struct acs_exec_owner *owner,
 		net_buf_reserve(buf, ACS_CRYPTO_HEADROOM);
 	}
 
-	if (owner->kind == ACS_EXEC_OWNER_PROTECTED_REQ) {
+	if (!proc->is_singleton) {
 		/* Protected wire format: inner [Resource_Handle | payload] */
 		net_buf_add_le16(buf, resource_handle);
 	}
@@ -375,22 +354,22 @@ struct net_buf *acs_prepare_reply_buf(const struct acs_exec_owner *owner,
 	return buf;
 }
 
-int acs_cp_rsp_status(const struct acs_exec_owner *owner, uint8_t req_opcode, uint8_t code)
+int acs_cp_rsp_status(acs_procedure *proc, uint8_t req_opcode, uint8_t code)
 {
 	struct net_buf *buf;
 	struct acs_reply reply;
 	struct acs_reply_mode mode;
 	int err;
 
-	__ASSERT_NO_MSG(owner != NULL);
-	__ASSERT_NO_MSG(owner->acs_conn != NULL);
+	__ASSERT_NO_MSG(proc != NULL);
+	__ASSERT_NO_MSG(proc->acs_conn != NULL);
 
-	mode = acs_owner_reply_mode(owner);
-	buf = acs_prepare_reply_buf(owner, mode.channel, mode.encrypted);
+	mode = acs_proc_reply_mode(proc);
+	buf = acs_prepare_reply_buf(proc, mode.channel, mode.encrypted);
 	if (!buf) {
-		acs_seq_abort(owner);
-		if (acs_owner_is_plain_cp(owner)) {
-			atomic_set(&owner->acs_conn->plain_cp_proc.locked, 0);
+		acs_seq_abort(proc);
+		if (proc->is_singleton) {
+			atomic_set(&proc->acs_conn->plain_cp_proc.locked, 0);
 		}
 		return -ENOMEM;
 	}
@@ -406,7 +385,7 @@ int acs_cp_rsp_status(const struct acs_exec_owner *owner, uint8_t req_opcode, ui
 		.needs_confirm = mode.needs_confirm,
 	};
 
-	err = acs_tx_submit(owner, &reply);
+	err = acs_tx_submit(proc, &reply);
 	if (err) {
 		/* Status replies are still replies — same failure contract as
 		 * acs_cp_send_reply: tear down any active sequence so we don't
@@ -414,10 +393,10 @@ int acs_cp_rsp_status(const struct acs_exec_owner *owner, uint8_t req_opcode, ui
 		 * The plain-CP busy-gate release for submit failure is handled
 		 * inside acs_tx_submit_plain_cp itself, so we don't double up.
 		 */
-		acs_seq_abort(owner);
-		if (owner->kind == ACS_EXEC_OWNER_PROTECTED_REQ) {
+		acs_seq_abort(proc);
+		if (!proc->is_singleton) {
 			LOG_WRN("Protected CP status indication failed for handle 0x%04x: %d",
-				owner->req->resource_handle, err);
+				proc->resource_handle, err);
 		} else {
 			LOG_WRN("Plain CP status indication failed: %d", err);
 		}
@@ -427,10 +406,10 @@ int acs_cp_rsp_status(const struct acs_exec_owner *owner, uint8_t req_opcode, ui
 }
 
 /* Plain-CP final-mile send. Caller must already hold the busy gate. */
-static int acs_tx_submit_plain_cp(const struct acs_exec_owner *owner,
+static int acs_tx_submit_plain_cp(acs_procedure *proc,
 				  const struct acs_reply *reply)
 {
-	struct bt_acs_conn *acs_conn = owner->acs_conn;
+	struct bt_acs_conn *acs_conn = proc->acs_conn;
 	struct net_buf *rsp_buf;
 	int err;
 
@@ -456,47 +435,47 @@ static int acs_tx_submit_plain_cp(const struct acs_exec_owner *owner,
 	return err;
 }
 
-int acs_tx_submit(const struct acs_exec_owner *owner, const struct acs_reply *reply)
+int acs_tx_submit(acs_procedure *proc, const struct acs_reply *reply)
 {
-	if (!owner || !reply || !reply->plaintext) {
+	if (!proc || !reply || !reply->plaintext) {
 		return -EINVAL;
 	}
 
 	/* Contract assertions — keep callers honest about every reply field, so
-	 * future call sites cannot drift channel/owner/encrypted/needs_confirm
+	 * future call sites cannot drift channel/proc/encrypted/needs_confirm
 	 * out of sync without immediately tripping a debug build.
 	 */
 	switch (reply->channel) {
 	case ACS_REPLY_CP:
-		__ASSERT(owner->kind == ACS_EXEC_OWNER_PLAIN_CP,
-			 "ACS_REPLY_CP requires plain-CP owner");
-		__ASSERT(owner->plain_cp != NULL, "plain-CP owner missing procedure");
-		__ASSERT(reply->plaintext == owner->plain_cp->response,
+		__ASSERT(proc->is_singleton,
+			 "ACS_REPLY_CP requires plain-CP proc");
+		__ASSERT(proc != NULL, "plain-CP proc missing procedure");
+		__ASSERT(reply->plaintext == proc->response,
 			 "ACS_REPLY_CP plaintext must be the staged plain_cp_proc.response");
 		__ASSERT(!reply->encrypted, "ACS_REPLY_CP must be unencrypted (plain transport)");
 		__ASSERT(reply->needs_confirm,
 			 "ACS_REPLY_CP is always confirmed (segmented indication)");
-		return acs_tx_submit_plain_cp(owner, reply);
+		return acs_tx_submit_plain_cp(proc, reply);
 	case ACS_REPLY_DON:
-		__ASSERT(owner->kind == ACS_EXEC_OWNER_PROTECTED_REQ,
-			 "ACS_REPLY_DON requires protected-request owner");
-		__ASSERT(owner->req != NULL, "protected-request owner missing req");
-		__ASSERT(reply->plaintext == owner->req->response,
+		__ASSERT(!proc->is_singleton,
+			 "ACS_REPLY_DON requires protected-request proc");
+		__ASSERT(proc != NULL, "protected-request proc missing req");
+		__ASSERT(reply->plaintext == proc->response,
 			 "ACS_REPLY_DON plaintext must be the staged req->response");
 		__ASSERT(reply->encrypted, "ACS_REPLY_DON must be encrypted");
 		__ASSERT(!reply->needs_confirm,
 			 "ACS_REPLY_DON is unconfirmed (notification)");
-		return acs_procedure_send_notify(owner->req, reply->plaintext);
+		return acs_procedure_send_notify(proc, reply->plaintext);
 	case ACS_REPLY_DOI:
-		__ASSERT(owner->kind == ACS_EXEC_OWNER_PROTECTED_REQ,
-			 "ACS_REPLY_DOI requires protected-request owner");
-		__ASSERT(owner->req != NULL, "protected-request owner missing req");
-		__ASSERT(reply->plaintext == owner->req->response,
+		__ASSERT(!proc->is_singleton,
+			 "ACS_REPLY_DOI requires protected-request proc");
+		__ASSERT(proc != NULL, "protected-request proc missing req");
+		__ASSERT(reply->plaintext == proc->response,
 			 "ACS_REPLY_DOI plaintext must be the staged req->response");
 		__ASSERT(reply->encrypted, "ACS_REPLY_DOI must be encrypted");
 		__ASSERT(reply->needs_confirm,
 			 "ACS_REPLY_DOI is always confirmed (segmented indication)");
-		return acs_procedure_send_indicate(owner->req, reply->plaintext);
+		return acs_procedure_send_indicate(proc, reply->plaintext);
 	default:
 		LOG_ERR("acs_tx_submit: invalid channel %d", (int)reply->channel);
 		return -EINVAL;

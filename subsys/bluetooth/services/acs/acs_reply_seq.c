@@ -12,19 +12,13 @@
 LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
 
 /**
- * @brief Resolve the reply-sequence state behind an owner view.
+ * @brief Resolve the reply-sequence state on a procedure.
  *
- * Single source of truth — both plain-CP and protected procedures share the
- * same @c reply_seq home on the unified @c acs_procedure object.
+ * Both plain-CP and protected procedures share the same @c reply_seq home on
+ * the unified @c acs_procedure object — single source of truth.
  */
-static struct acs_reply_seq_state *acs_seq_state(const struct acs_exec_owner *owner)
+static struct acs_reply_seq_state *acs_seq_state(acs_procedure *proc)
 {
-	acs_procedure *proc;
-
-	if (!owner) {
-		return NULL;
-	}
-	proc = acs_owner_proc(owner);
 	return proc ? &proc->reply_seq : NULL;
 }
 
@@ -34,47 +28,47 @@ static struct acs_reply_seq_state *acs_seq_state(const struct acs_exec_owner *ow
  * @return 0 on success or sequence complete, negative errno from the step
  *         function on failure.
  */
-static int acs_seq_continue(const struct acs_exec_owner *owner)
+static int acs_seq_continue(acs_procedure *proc)
 {
-	struct acs_reply_seq_state *seq = acs_seq_state(owner);
+	struct acs_reply_seq_state *seq = acs_seq_state(proc);
 
 	if (!seq || !seq->desc || seq->step >= seq->desc->step_count) {
-		acs_seq_clear(owner);
+		acs_seq_clear(proc);
 		return 0;
 	}
 
 	acs_seq_step_fn fn = seq->desc->steps[seq->step];
 	seq->step++;
 
-	return fn(owner);
+	return fn(proc);
 }
 
-bool acs_seq_active(const struct acs_exec_owner *owner)
+bool acs_seq_active(acs_procedure *proc)
 {
-	struct acs_reply_seq_state const *seq = acs_seq_state(owner);
+	struct acs_reply_seq_state const *seq = acs_seq_state(proc);
 
 	return seq && seq->desc != NULL;
 }
 
-void acs_seq_begin(const struct acs_exec_owner *owner, const struct acs_seq_desc *desc)
+void acs_seq_begin(acs_procedure *proc, const struct acs_seq_desc *desc)
 {
-	struct acs_reply_seq_state *seq = acs_seq_state(owner);
+	struct acs_reply_seq_state *seq = acs_seq_state(proc);
 
 	__ASSERT_NO_MSG(seq != NULL);
 
-	/* The ALLOC (owner) ref keeps the request alive for the full duration
-	 * of the reply sequence. acs_runtime_dispatch_protected_cp_frame()
-	 * defers release_owner() when it sees reply_seq.desc != NULL after
-	 * dispatch, and acs_seq_clear() calls release_owner() when the
-	 * sequence completes or aborts.
+	/* The ALLOC ref keeps the request alive for the full duration of the
+	 * reply sequence. acs_runtime_dispatch_protected_cp_frame() defers
+	 * release_owner() when it sees reply_seq.desc != NULL after dispatch,
+	 * and acs_seq_clear() calls release_owner() when the sequence completes
+	 * or aborts.
 	 */
 	seq->desc = desc;
 	seq->step = 0;
 }
 
-void acs_seq_clear(const struct acs_exec_owner *owner)
+void acs_seq_clear(acs_procedure *proc)
 {
-	struct acs_reply_seq_state *seq = acs_seq_state(owner);
+	struct acs_reply_seq_state *seq = acs_seq_state(proc);
 	bool was_active;
 
 	if (!seq) {
@@ -86,48 +80,49 @@ void acs_seq_clear(const struct acs_exec_owner *owner)
 
 	/* The sequence owned the ALLOC ref for its duration (deferred from
 	 * acs_runtime_dispatch_protected_cp_frame). Release it now that the
-	 * sequence is done.
+	 * sequence is done. Singleton plain-CP procedures don't carry an
+	 * ALLOC ref — only slab-allocated protected procedures do.
 	 */
-	if (was_active && owner->kind == ACS_EXEC_OWNER_PROTECTED_REQ && owner->req != NULL) {
-		acs_procedure_release_owner(owner->req);
+	if (was_active && !proc->is_singleton) {
+		acs_procedure_release_owner(proc);
 	}
 }
 
-void acs_seq_abort(const struct acs_exec_owner *owner)
+void acs_seq_abort(acs_procedure *proc)
 {
-	struct acs_reply_seq_state const *seq = acs_seq_state(owner);
+	struct acs_reply_seq_state const *seq = acs_seq_state(proc);
 
 	if (seq && seq->desc && seq->desc->on_abort) {
-		seq->desc->on_abort(owner);
+		seq->desc->on_abort(proc);
 	}
 
-	acs_seq_clear(owner);
+	acs_seq_clear(proc);
 }
 
-void acs_seq_on_owner_confirm(const struct acs_exec_owner *owner)
+void acs_seq_on_confirm(acs_procedure *proc)
 {
 	int err;
 
-	if (!owner || !owner->acs_conn) {
+	if (!proc || !proc->acs_conn) {
 		return;
 	}
 
-	/* Skip protected-side fast-out if there is nothing to advance. The plain-CP
-	 * path always tries to advance — acs_seq_continue clears stale state on no-op.
+	/* Protected-side fast-out: if no sequence is staged, nothing to advance.
+	 * Plain CP always falls through — acs_seq_continue clears stale state
+	 * cleanly when there's nothing to do.
 	 */
-	if (owner->kind == ACS_EXEC_OWNER_PROTECTED_REQ &&
-	    (!owner->req || !owner->req->reply_seq.desc)) {
+	if (!proc->is_singleton && !proc->reply_seq.desc) {
 		return;
 	}
 
-	err = acs_seq_continue(owner);
+	err = acs_seq_continue(proc);
 	if (err) {
-		if (owner->kind == ACS_EXEC_OWNER_PROTECTED_REQ) {
+		if (!proc->is_singleton) {
 			LOG_WRN("Protected CP reply sequence advance failed for handle 0x%04x: %d",
-				owner->req->resource_handle, err);
+				proc->resource_handle, err);
 		} else {
 			LOG_WRN("Plain CP reply sequence advance failed: %d", err);
 		}
-		acs_seq_abort(owner);
+		acs_seq_abort(proc);
 	}
 }

@@ -34,7 +34,6 @@ extern "C" {
 
 struct bt_acs_prot_resource_req; /**< Defined below; forward-declared for bt_acs_conn */
 struct bt_acs_conn;  /**< Defined below; forward-declared for bt_acs_prot_resource_req */
-struct acs_exec_owner;  /**< Defined below; forward-declared for callback typedefs */
 struct acs_seq_desc; /**< Defined below; forward-declared for acs_reply_seq_state */
 
 /**
@@ -151,7 +150,7 @@ struct acs_reply {
  * Return 0 on success (framework waits for confirm, then calls next step).
  * Return negative errno to abort the sequence.
  */
-typedef int (*acs_seq_step_fn)(const struct acs_exec_owner *owner);
+typedef int (*acs_seq_step_fn)(struct bt_acs_prot_resource_req *proc);
 
 /**
  * @brief Internal request-aware ACS handler callback type.
@@ -190,7 +189,7 @@ struct acs_seq_desc {
 	const acs_seq_step_fn *steps;
 	uint8_t step_count;
 	/** Optional hook invoked by acs_seq_abort before the sequence state is cleared. */
-	void (*on_abort)(const struct acs_exec_owner *owner);
+	void (*on_abort)(struct bt_acs_prot_resource_req *proc);
 };
 
 /**
@@ -452,95 +451,20 @@ struct bt_acs_prot_resource_handler_entry {
 #endif
 
 /**
- * @brief Discriminator for an @ref acs_exec_owner — which procedure flavour owns a step.
- */
-enum acs_exec_owner_kind {
-	ACS_EXEC_OWNER_PLAIN_CP = 0,    /**< Singleton plain-CP procedure on @c bt_acs_conn */
-	ACS_EXEC_OWNER_PROTECTED_REQ = 1, /**< Slab-allocated protected request context */
-};
-
-/**
- * @brief Tagged-pointer view of "the procedure that owns this in-flight step".
- *
- * Lets the runtime, send seam, and continuation logic reason about plain CP
- * and protected requests through one type without losing typed access. Exactly
- * one of @c plain_cp or @c req is non-NULL; @c kind tells you which.
- *
- * Conceptually a runtime view, not a heap object — typically built on the
- * stack by @ref acs_exec_owner_plain or @ref acs_exec_owner_protected and
- * passed around by const pointer.
- */
-struct acs_exec_owner {
-	enum acs_exec_owner_kind kind;
-	struct bt_acs_conn *acs_conn;                  /**< Always set */
-	acs_procedure *plain_cp;                       /**< Set iff kind == PLAIN_CP */
-	struct bt_acs_prot_resource_req *req;          /**< Set iff kind == PROTECTED_REQ */
-};
-
-/**
- * @brief Build an owner view for the connection's plain-CP singleton procedure.
- */
-static inline struct acs_exec_owner acs_exec_owner_plain(struct bt_acs_conn *acs_conn)
-{
-	return (struct acs_exec_owner){
-		.kind = ACS_EXEC_OWNER_PLAIN_CP,
-		.acs_conn = acs_conn,
-		.plain_cp = acs_conn ? &acs_conn->plain_cp_proc : NULL,
-		.req = NULL,
-	};
-}
-
-/**
- * @brief Build an owner view for a slab-allocated protected request context.
- */
-static inline struct acs_exec_owner
-acs_exec_owner_protected(struct bt_acs_prot_resource_req *req)
-{
-	return (struct acs_exec_owner){
-		.kind = ACS_EXEC_OWNER_PROTECTED_REQ,
-		.acs_conn = req ? req->acs_conn : NULL,
-		.plain_cp = NULL,
-		.req = req,
-	};
-}
-
-/**
- * @brief True if @p owner is the plain-CP singleton.
- */
-static inline bool acs_owner_is_plain_cp(const struct acs_exec_owner *owner)
-{
-	return owner && owner->kind == ACS_EXEC_OWNER_PLAIN_CP;
-}
-
-/**
- * @brief Derive the canonical reply transport mode for @p owner.
+ * @brief Derive the canonical reply transport mode for a procedure.
  *
  * Plain CP replies travel as unencrypted CP indications; protected CP replies
  * travel as encrypted DOI indications. Both are confirmed paths.
  */
-static inline struct acs_reply_mode acs_owner_reply_mode(const struct acs_exec_owner *owner)
+static inline struct acs_reply_mode acs_proc_reply_mode(const acs_procedure *proc)
 {
-	__ASSERT_NO_MSG(owner != NULL);
+	__ASSERT_NO_MSG(proc != NULL);
 
 	return (struct acs_reply_mode){
-		.channel = acs_owner_is_plain_cp(owner) ? ACS_REPLY_CP : ACS_REPLY_DOI,
-		.encrypted = owner->kind == ACS_EXEC_OWNER_PROTECTED_REQ,
+		.channel = proc->is_singleton ? ACS_REPLY_CP : ACS_REPLY_DOI,
+		.encrypted = !proc->is_singleton,
 		.needs_confirm = true,
 	};
-}
-
-/**
- * @brief Resolve the active procedure object behind an owner view.
- *
- * Convenience for code that just wants the @c acs_procedure regardless of
- * which flavour owns this step (e.g. to read @c reply_seq).
- */
-static inline acs_procedure *acs_owner_proc(const struct acs_exec_owner *owner)
-{
-	if (!owner) {
-		return NULL;
-	}
-	return owner->kind == ACS_EXEC_OWNER_PLAIN_CP ? owner->plain_cp : owner->req;
 }
 
 #ifdef __cplusplus

@@ -26,21 +26,18 @@ LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
 void acs_cp_on_indicate_done(struct bt_conn *conn, const struct bt_gatt_attr *attr, int err,
 			     void *user_data);
 
-int acs_cp_send_reply(const struct acs_exec_owner *owner)
+int acs_cp_send_reply(acs_procedure *proc)
 {
-	acs_procedure *proc;
 	struct acs_reply_mode mode;
 	struct acs_reply reply;
 	int err;
 
-	__ASSERT_NO_MSG(owner != NULL);
-	__ASSERT_NO_MSG(owner->acs_conn != NULL);
-
-	proc = acs_owner_proc(owner);
-	mode = acs_owner_reply_mode(owner);
 	__ASSERT_NO_MSG(proc != NULL);
+	__ASSERT_NO_MSG(proc->acs_conn != NULL);
 	__ASSERT_NO_MSG(proc->response != NULL);
 	__ASSERT_NO_MSG(proc->response->len > 0);
+
+	mode = acs_proc_reply_mode(proc);
 
 	reply = (struct acs_reply){
 		.channel = mode.channel,
@@ -49,12 +46,12 @@ int acs_cp_send_reply(const struct acs_exec_owner *owner)
 		.needs_confirm = mode.needs_confirm,
 	};
 
-	err = acs_tx_submit(owner, &reply);
+	err = acs_tx_submit(proc, &reply);
 	if (err) {
-		acs_seq_abort(owner);
-		if (owner->kind == ACS_EXEC_OWNER_PROTECTED_REQ) {
+		acs_seq_abort(proc);
+		if (!proc->is_singleton) {
 			LOG_WRN("Protected CP DOI queue failed for handle 0x%04x: %d",
-				owner->req->resource_handle, err);
+				proc->resource_handle, err);
 		} else {
 			LOG_WRN("Plain CP response indication failed: %d", err);
 		}
@@ -86,10 +83,10 @@ void acs_cp_on_indicate_done(struct bt_conn *conn, const struct bt_gatt_attr *at
 	__ASSERT_NO_MSG(acs_conn != NULL);
 
 	if (err) {
-		struct acs_exec_owner owner = acs_exec_owner_plain(acs_conn);
+		acs_procedure *proc = &acs_conn->plain_cp_proc;
 
 		LOG_WRN("Plain CP indication failed: %d", err);
-		acs_seq_abort(&owner);
+		acs_seq_abort(proc);
 		acs_conn->plain_cp_proc.abort_pending = false;
 		atomic_set(&acs_conn->plain_cp_proc.locked, 0);
 		return;
@@ -99,13 +96,13 @@ void acs_cp_on_indicate_done(struct bt_conn *conn, const struct bt_gatt_attr *at
 	 * in-flight.  The TX channel is now free (tx_in_flight cleared before
 	 * this callback), so tear down the procedure and send ABORT SUCCESS. */
 	if (acs_conn->plain_cp_proc.abort_pending) {
-		struct acs_exec_owner owner = acs_exec_owner_plain(acs_conn);
+		acs_procedure *proc = &acs_conn->plain_cp_proc;
 		struct k_work_sync sync;
 
 		acs_conn->plain_cp_proc.abort_pending = false;
 
 		k_work_cancel_sync(&acs_conn->cp_tx.tx_work, &sync);
-		acs_seq_clear(&owner);
+		acs_seq_clear(proc);
 		if (acs_conn->plain_cp_proc.response) {
 			acs_buf_free(acs_conn->plain_cp_proc.response);
 			acs_conn->plain_cp_proc.response = NULL;
@@ -129,15 +126,11 @@ void acs_cp_on_indicate_done(struct bt_conn *conn, const struct bt_gatt_attr *at
 
 		LOG_DBG("Deferred abort committed — sending ABORT SUCCESS");
 		/* Lock stays held — ABORT now owns it; released on confirm. */
-		acs_cp_rsp_status(&owner, BT_ACS_CP_OPCODE_ABORT, BT_ACS_CP_RESPONSE_SUCCESS);
+		acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_ABORT, BT_ACS_CP_RESPONSE_SUCCESS);
 		return;
 	}
 
-	{
-		struct acs_exec_owner owner = acs_exec_owner_plain(acs_conn);
-
-		acs_seq_on_owner_confirm(&owner);
-	}
+	acs_seq_on_confirm(&acs_conn->plain_cp_proc);
 
 	if (acs_conn->plain_cp_proc.reply_seq.desc == NULL) {
 		atomic_set(&acs_conn->plain_cp_proc.locked, 0);
@@ -148,7 +141,7 @@ void acs_cp_on_indicate_done(struct bt_conn *conn, const struct bt_gatt_attr *at
 void acs_cp_dispatch(struct acs_frame *frame, struct bt_acs_conn *acs_conn,
 		     struct bt_acs_prot_resource_req *prot_req)
 {
-	struct acs_exec_owner owner;
+	acs_procedure *proc;
 	struct net_buf_simple payload_simple;
 	struct net_buf_simple *payload = &payload_simple;
 	uint8_t opcode;
@@ -160,19 +153,19 @@ void acs_cp_dispatch(struct acs_frame *frame, struct bt_acs_conn *acs_conn,
 
 	net_buf_simple_init_with_data(&payload_simple, (void *)frame->payload, frame->payload_len);
 
-	owner = prot_req ? acs_exec_owner_protected(prot_req) : acs_exec_owner_plain(acs_conn);
+	proc = prot_req ? prot_req : &acs_conn->plain_cp_proc;
 
 	opcode = net_buf_simple_pull_u8(payload);
 	LOG_DBG("CP dispatch: opcode 0x%02x, operand len %u", opcode, payload->len);
 
 	switch (opcode) {
 	case BT_ACS_CP_OPCODE_GET_FEATURE:
-		acs_cp_handle_get_feature(&owner, payload);
+		acs_cp_handle_get_feature(proc, payload);
 		break;
 
 #if IS_ENABLED(CONFIG_BT_ACS_ATT_MTU)
 	case BT_ACS_CP_OPCODE_ATT_MTU:
-		acs_cp_handle_att_mtu(&owner);
+		acs_cp_handle_att_mtu(proc);
 		break;
 #endif /* CONFIG_BT_ACS_ATT_MTU */
 
@@ -181,119 +174,119 @@ void acs_cp_dispatch(struct acs_frame *frame, struct bt_acs_conn *acs_conn,
 	IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_GCM) ||                                       \
 	IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_GMAC)
 	case BT_ACS_CP_OPCODE_SET_CLIENT_NONCE_FIXED:
-		acs_cp_handle_set_client_nonce_fixed(&owner, payload);
+		acs_cp_handle_set_client_nonce_fixed(proc, payload);
 		break;
 #endif /* CCM with fixed nonce sequence or any GCM/GMAC */
 
 #if IS_ENABLED(CONFIG_BT_ACS_FEAT_AUTHORIZATION)
 	case BT_ACS_CP_OPCODE_GET_RESTRICTION_MAP_DESCRIPTOR:
-		acs_cp_handle_get_restriction_map_descriptor(&owner, payload);
+		acs_cp_handle_get_restriction_map_descriptor(proc, payload);
 		break;
 
 	case BT_ACS_CP_OPCODE_GET_RESTRICTION_MAP_ID_LIST:
-		acs_cp_handle_get_restriction_map_id_list(&owner);
+		acs_cp_handle_get_restriction_map_id_list(proc);
 		break;
 
 	case BT_ACS_CP_OPCODE_ACTIVATE_RESTRICTION_MAP:
-		acs_cp_handle_activate_restriction_map(&owner, payload);
+		acs_cp_handle_activate_restriction_map(proc, payload);
 		break;
 #endif /* CONFIG_BT_ACS_FEAT_AUTHORIZATION */
 
 #if IS_ENABLED(CONFIG_BT_ACS_ANY_KEY_EXCHANGE)
 	case BT_ACS_CP_OPCODE_GET_KEY_DESCRIPTOR:
-		acs_cp_handle_get_key_descriptor(&owner, payload);
+		acs_cp_handle_get_key_descriptor(proc, payload);
 		break;
 #endif /* CONFIG_BT_ACS_ANY_KEY_EXCHANGE */
 
 #if IS_ENABLED(CONFIG_BT_ACS_FEAT_AUTHENTICATION)
 	case BT_ACS_CP_OPCODE_GET_INFORMATION_SECURITY_CONFIGURATION_DESCRIPTOR:
-		acs_cp_handle_get_isc_descriptor(&owner, payload);
+		acs_cp_handle_get_isc_descriptor(proc, payload);
 		break;
 #endif /* CONFIG_BT_ACS_FEAT_AUTHENTICATION */
 
 #if IS_ENABLED(CONFIG_BT_ACS_RESOURCE_HANDLE_UUID_MAP)
 	case BT_ACS_CP_OPCODE_GET_RESOURCE_HANDLE_UUID_MAP:
-		acs_cp_handle_get_resource_handle_uuid_map(&owner);
+		acs_cp_handle_get_resource_handle_uuid_map(proc);
 		break;
 #endif /* CONFIG_BT_ACS_RESOURCE_HANDLE_UUID_MAP */
 
 	case BT_ACS_CP_OPCODE_GET_SERVICE_CHARACTERISTIC_UUIDS_CHAR_RESOURCE_HANDLE:
-		acs_cp_handle_get_svc_char_uuids(&owner, payload);
+		acs_cp_handle_get_svc_char_uuids(proc, payload);
 		break;
 
 #if IS_ENABLED(CONFIG_BT_ACS_FEAT_AUTHORIZATION) && IS_ENABLED(CONFIG_BT_ACS_DESCRIPTORS)
 	case BT_ACS_CP_OPCODE_GET_ALL_ACTIVE_DESCRIPTORS:
-		acs_cp_all_active_get(&owner);
+		acs_cp_all_active_get(proc);
 		break;
 #endif /* CONFIG_BT_ACS_FEAT_AUTHORIZATION && CONFIG_BT_ACS_DESCRIPTORS */
 
 #if IS_ENABLED(CONFIG_BT_ACS_ANY_KEY_EXCHANGE)
 	case BT_ACS_CP_OPCODE_GET_CURRENT_KEY_LIST:
-		acs_cp_kex_get_current_key_list(&owner);
+		acs_cp_kex_get_current_key_list(proc);
 		break;
 
 	case BT_ACS_CP_OPCODE_START_KEY_EXCHANGE:
-		acs_cp_kex_start(&owner, payload);
+		acs_cp_kex_start(proc, payload);
 		break;
 #endif /* CONFIG_BT_ACS_ANY_KEY_EXCHANGE */
 
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_ECDH)
 	case BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH:
-		acs_cp_kex_exchange_ecdh(&owner, payload);
+		acs_cp_kex_exchange_ecdh(proc, payload);
 		break;
 
 	case BT_ACS_CP_OPCODE_ECDH_CONFIRM_CODE:
-		acs_cp_kex_ecdh_confirm_code(&owner, payload);
+		acs_cp_kex_ecdh_confirm_code(proc, payload);
 		break;
 
 	case BT_ACS_CP_OPCODE_ECDH_CONFIRM_RAND:
-		acs_cp_kex_ecdh_confirm_rand(&owner, payload);
+		acs_cp_kex_ecdh_confirm_rand(proc, payload);
 		break;
 #endif /* CONFIG_BT_ACS_KEY_EXCHANGE_ECDH */
 
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF) || IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_ECDH)
 	case BT_ACS_CP_OPCODE_KEY_EXCHANGE_KDF:
-		acs_cp_kex_exchange_kdf(&owner, payload);
+		acs_cp_kex_exchange_kdf(proc, payload);
 		break;
 #endif /* CONFIG_BT_ACS_KEY_EXCHANGE_KDF || CONFIG_BT_ACS_KEY_EXCHANGE_ECDH */
 
 #if IS_ENABLED(CONFIG_BT_ACS_INVALIDATE_ESTABLISHED_SECURITY)
 	case BT_ACS_CP_OPCODE_INVALIDATE_ALL_ESTABLISHED_SECURITY:
-		acs_sec_mgmt_invalidate_all(&owner);
+		acs_sec_mgmt_invalidate_all(proc);
 		break;
 
 	case BT_ACS_CP_OPCODE_INVALIDATE_KEY:
-		acs_sec_mgmt_invalidate_key(&owner, payload);
+		acs_sec_mgmt_invalidate_key(proc, payload);
 		break;
 #endif /* CONFIG_BT_ACS_INVALIDATE_ESTABLISHED_SECURITY */
 
 #if IS_ENABLED(CONFIG_BT_ACS_ABORT)
 	case BT_ACS_CP_OPCODE_ABORT:
-		acs_sec_mgmt_abort(&owner);
+		acs_sec_mgmt_abort(proc);
 		break;
 #endif /* CONFIG_BT_ACS_ABORT */
 
 #if IS_ENABLED(CONFIG_BT_ACS_SET_SECURITY_CONTROLS_SWITCH)
 	case BT_ACS_CP_OPCODE_SET_SECURITY_CONTROLS_SWITCH:
-		acs_sec_mgmt_set_security_switch(&owner, payload);
+		acs_sec_mgmt_set_security_switch(proc, payload);
 		break;
 #endif /* CONFIG_BT_ACS_SET_SECURITY_CONTROLS_SWITCH */
 
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_URI)
 	case BT_ACS_CP_OPCODE_GET_KEY_URI:
-		acs_sec_mgmt_get_key_uri(&owner, payload);
+		acs_sec_mgmt_get_key_uri(proc, payload);
 		break;
 #endif /* CONFIG_BT_ACS_KEY_URI */
 
 #if IS_ENABLED(CONFIG_BT_ACS_INITIATE_PAIRING)
 	case BT_ACS_CP_OPCODE_INITIATE_PAIRING:
-		acs_sec_mgmt_initiate_pairing(&owner);
+		acs_sec_mgmt_initiate_pairing(proc);
 		break;
 #endif /* CONFIG_BT_ACS_INITIATE_PAIRING */
 
 	default:
 		LOG_WRN("Unsupported opcode: 0x%02x", opcode);
-		acs_cp_rsp_status(&owner, opcode, BT_ACS_CP_RESPONSE_OPCODE_NOT_SUPPORTED);
+		acs_cp_rsp_status(proc, opcode, BT_ACS_CP_RESPONSE_OPCODE_NOT_SUPPORTED);
 		break;
 	}
 }
