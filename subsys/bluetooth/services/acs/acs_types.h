@@ -183,6 +183,14 @@ enum acs_procedure_ref_who {
 };
 
 /**
+ * @brief Which flavour of ACS procedure this struct instance represents.
+ */
+enum acs_proc_kind {
+	ACS_PROC_KIND_PLAIN_CP = 0,      /**< Embedded per-connection plain Control Point proc */
+	ACS_PROC_KIND_PROTECTED_REQ = 1, /**< Slab-allocated protected request proc */
+};
+
+/**
  * @brief Descriptor for a multi-indication reply sequence.
  */
 struct acs_seq_desc {
@@ -320,11 +328,11 @@ struct bt_acs_kex_ctx {
  *  - **Slab-allocated protected procedure**: one per in-flight protected request
  *    (Data In path), allocated from the per-connection slab and tracked in
  *    @c acs_conn->pending_reqs[]. Lifetime is governed by @c ref_count;
- *    @c is_singleton is false.
+ *    @c kind is @ref ACS_PROC_KIND_PROTECTED_REQ.
  *
  *  - **Singleton plain-CP procedure**: embedded in @c bt_acs_conn::plain_cp_proc.
  *    Manages plain ACS Control Point flow on its connection. Lifetime is the
- *    connection's lifetime; @c is_singleton is true and the slab/refcount/slot
+ *    connection's lifetime; @c kind is @ref ACS_PROC_KIND_PLAIN_CP and the slab/refcount/slot
  *    bookkeeping fields are unused. Concurrency on the plain-CP path is gated
  *    by @c locked (single in-flight procedure per connection); the @c locked
  *    field is unused for slab-allocated protected procedures because the slot
@@ -341,9 +349,10 @@ struct bt_acs_kex_ctx {
 struct acs_procedure {
 	sys_snode_t node;                  /**< k_fifo linkage for send queue (DOI) */
 	struct bt_acs_conn *acs_conn;      /**< Owning ACS connection; NULL after disconnect */
+	enum acs_proc_kind kind;           /**< Plain CP singleton vs protected request */
 	struct net_buf *response;          /**< Pool buffer for plaintext response staging */
 	struct net_buf *decrypted_request; /**< Reference-counted buffer from pool (request data) */
-	atomic_t ref_count;                /**< Request lifetime refcount (unused if @c is_singleton) */
+	atomic_t ref_count;                /**< Request lifetime refcount (unused for plain CP) */
 	ATOMIC_DEFINE(ref_flags, 2);       /**< Per-caller bitmask (debug: catch double-release) */
 	struct k_work work;                /**< Deferred dispatch work item */
 	struct acs_reply_seq_state reply_seq; /**< Multi-indication reply-sequence state */
@@ -354,7 +363,6 @@ struct acs_procedure {
 	uint8_t req_slot;         /**< Index in acs_conn->pending_reqs[] (unused if singleton) */
 	/* (decrypted_request ownership: implicit — non-NULL ⇒ owned, freed in acs_req_free.) */
 	/* Plain-CP singleton fields (unused for slab-allocated protected procedures): */
-	bool is_singleton;        /**< True for the embedded plain-CP procedure */
 	atomic_t locked;          /**< Plain-CP busy gate: 1 while a procedure is active */
 	bool abort_pending;       /**< Plain-CP deferred-abort flag (indication in flight) */
 };
@@ -399,7 +407,7 @@ struct bt_acs_conn {
 	uint8_t status_data[3];              /**< Embedded status indication payload */
 	struct bt_gatt_indicate_params status_indicate_params; /**< Status indication params */
 	struct acs_procedure plain_cp_proc; /**< Singleton plain-CP procedure
-							 *  (is_singleton=true; not slab-managed)
+							 *  (kind=ACS_PROC_KIND_PLAIN_CP; not slab-managed)
 							 */
 	struct acs_seg_tx_ctx cp_tx;    /**< Plain CP indication transport context */
 #if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION)
@@ -452,8 +460,8 @@ static inline struct acs_reply_mode acs_proc_reply_mode(const struct acs_procedu
 	__ASSERT_NO_MSG(proc != NULL);
 
 	return (struct acs_reply_mode){
-		.channel = proc->is_singleton ? ACS_REPLY_CP : ACS_REPLY_DOI,
-		.encrypted = !proc->is_singleton,
+		.channel = (proc->kind == ACS_PROC_KIND_PLAIN_CP) ? ACS_REPLY_CP : ACS_REPLY_DOI,
+		.encrypted = (proc->kind == ACS_PROC_KIND_PROTECTED_REQ),
 		.needs_confirm = true,
 	};
 }

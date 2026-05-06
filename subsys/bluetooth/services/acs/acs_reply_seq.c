@@ -83,7 +83,7 @@ void acs_seq_clear(struct acs_procedure *proc)
 	 * sequence is done. Singleton plain-CP procedures don't carry an
 	 * ALLOC ref — only slab-allocated protected procedures do.
 	 */
-	if (was_active && !proc->is_singleton) {
+	if (was_active && proc->kind == ACS_PROC_KIND_PROTECTED_REQ) {
 		acs_procedure_release_owner(proc);
 	}
 }
@@ -111,13 +111,13 @@ void acs_seq_on_confirm(struct acs_procedure *proc)
 	 * Plain CP always falls through — acs_seq_continue clears stale state
 	 * cleanly when there's nothing to do.
 	 */
-	if (!proc->is_singleton && !proc->reply_seq.desc) {
+	if (proc->kind == ACS_PROC_KIND_PROTECTED_REQ && !proc->reply_seq.desc) {
 		return;
 	}
 
 	err = acs_seq_continue(proc);
 	if (err) {
-		if (!proc->is_singleton) {
+		if (proc->kind == ACS_PROC_KIND_PROTECTED_REQ) {
 			LOG_WRN("Protected CP reply sequence advance failed for handle 0x%04x: %d",
 				proc->resource_handle, err);
 		} else {

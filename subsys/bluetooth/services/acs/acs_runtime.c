@@ -20,16 +20,6 @@
 #include <zephyr/logging/log.h>
 LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
 
-int acs_runtime_dispatch_cp_frame(struct acs_frame *frame, struct bt_acs_conn *acs_conn,
-				  struct acs_procedure *prot_req)
-{
-	__ASSERT_NO_MSG(frame != NULL);
-	__ASSERT_NO_MSG(acs_conn != NULL);
-
-	acs_cp_dispatch(frame, acs_conn, prot_req);
-	return 0;
-}
-
 #if IS_ENABLED(CONFIG_BT_ACS_FEAT_AUTHENTICATION)
 int acs_runtime_dispatch_protected_cp_frame(struct acs_frame *frame, struct bt_acs_conn *acs_conn)
 {
@@ -69,7 +59,7 @@ int acs_runtime_dispatch_protected_cp_frame(struct acs_frame *frame, struct bt_a
 	req_ctx->decrypted_request = acs_conn->data_rx.buf;
 	acs_conn->data_rx.buf = NULL;
 
-	(void)acs_runtime_dispatch_cp_frame(frame, acs_conn, req_ctx);
+	sub_err = acs_cp_dispatch(frame, acs_conn, req_ctx);
 
 	/* The CP handler ran synchronously and consumed the input bytes already.
 	 * Drop the decrypted_request buffer now so it returns to the pool while
@@ -88,7 +78,7 @@ int acs_runtime_dispatch_protected_cp_frame(struct acs_frame *frame, struct bt_a
 	if (!req_ctx->reply_seq.desc) {
 		acs_procedure_release_owner(req_ctx);
 	}
-	return 0;
+	return sub_err;
 }
 
 int acs_runtime_dispatch_protected_char_frame(struct acs_frame *frame,
@@ -157,7 +147,7 @@ int acs_runtime_dispatch_frame(struct acs_frame *frame, struct bt_acs_conn *acs_
 
 	switch (route.kind) {
 	case ACS_ROUTE_ACS_CP:
-		return acs_runtime_dispatch_cp_frame(frame, acs_conn, NULL);
+		return acs_cp_dispatch(frame, acs_conn, NULL);
 #if IS_ENABLED(CONFIG_BT_ACS_FEAT_AUTHENTICATION)
 	case ACS_ROUTE_PROTECTED_SERVICE_CP:
 		return acs_runtime_dispatch_protected_cp_frame(frame, acs_conn);

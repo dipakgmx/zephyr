@@ -49,7 +49,7 @@ int acs_cp_send_reply(struct acs_procedure *proc)
 	err = acs_tx_submit(proc, &reply);
 	if (err) {
 		acs_seq_abort(proc);
-		if (!proc->is_singleton) {
+		if (proc->kind == ACS_PROC_KIND_PROTECTED_REQ) {
 			LOG_WRN("Protected CP DOI queue failed for handle 0x%04x: %d",
 				proc->resource_handle, err);
 		} else {
@@ -136,8 +136,8 @@ void acs_cp_on_indicate_done(struct bt_conn *conn, const struct bt_gatt_attr *at
 }
 
 /* Dispatch reassembled CP payload: frame->payload[0]=opcode, [1..]=operand. */
-void acs_cp_dispatch(struct acs_frame *frame, struct bt_acs_conn *acs_conn,
-		     struct acs_procedure *prot_req)
+int acs_cp_dispatch(struct acs_frame *frame, struct bt_acs_conn *acs_conn,
+		    struct acs_procedure *prot_req)
 {
 	struct acs_procedure *proc;
 	struct net_buf_simple payload_simple;
@@ -158,13 +158,11 @@ void acs_cp_dispatch(struct acs_frame *frame, struct bt_acs_conn *acs_conn,
 
 	switch (opcode) {
 	case BT_ACS_CP_OPCODE_GET_FEATURE:
-		acs_cp_handle_get_feature(proc, payload);
-		break;
+		return acs_cp_handle_get_feature(proc, payload);
 
 #if IS_ENABLED(CONFIG_BT_ACS_ATT_MTU)
 	case BT_ACS_CP_OPCODE_ATT_MTU:
-		acs_cp_handle_att_mtu(proc);
-		break;
+		return acs_cp_handle_att_mtu(proc);
 #endif /* CONFIG_BT_ACS_ATT_MTU */
 
 #if (IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_CCM) &&                                          \
@@ -172,119 +170,97 @@ void acs_cp_dispatch(struct acs_frame *frame, struct bt_acs_conn *acs_conn,
 	IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_GCM) ||                                       \
 	IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_GMAC)
 	case BT_ACS_CP_OPCODE_SET_CLIENT_NONCE_FIXED:
-		acs_cp_handle_set_client_nonce_fixed(proc, payload);
-		break;
+		return acs_cp_handle_set_client_nonce_fixed(proc, payload);
 #endif /* CCM with fixed nonce sequence or any GCM/GMAC */
 
 #if IS_ENABLED(CONFIG_BT_ACS_FEAT_AUTHORIZATION)
 	case BT_ACS_CP_OPCODE_GET_RESTRICTION_MAP_DESCRIPTOR:
-		acs_cp_handle_get_restriction_map_descriptor(proc, payload);
-		break;
+		return acs_cp_handle_get_restriction_map_descriptor(proc, payload);
 
 	case BT_ACS_CP_OPCODE_GET_RESTRICTION_MAP_ID_LIST:
-		acs_cp_handle_get_restriction_map_id_list(proc);
-		break;
+		return acs_cp_handle_get_restriction_map_id_list(proc);
 
 	case BT_ACS_CP_OPCODE_ACTIVATE_RESTRICTION_MAP:
-		acs_cp_handle_activate_restriction_map(proc, payload);
-		break;
+		return acs_cp_handle_activate_restriction_map(proc, payload);
 #endif /* CONFIG_BT_ACS_FEAT_AUTHORIZATION */
 
 #if IS_ENABLED(CONFIG_BT_ACS_ANY_KEY_EXCHANGE)
 	case BT_ACS_CP_OPCODE_GET_KEY_DESCRIPTOR:
-		acs_cp_handle_get_key_descriptor(proc, payload);
-		break;
+		return acs_cp_handle_get_key_descriptor(proc, payload);
 #endif /* CONFIG_BT_ACS_ANY_KEY_EXCHANGE */
 
 #if IS_ENABLED(CONFIG_BT_ACS_FEAT_AUTHENTICATION)
 	case BT_ACS_CP_OPCODE_GET_INFORMATION_SECURITY_CONFIGURATION_DESCRIPTOR:
-		acs_cp_handle_get_isc_descriptor(proc, payload);
-		break;
+		return acs_cp_handle_get_isc_descriptor(proc, payload);
 #endif /* CONFIG_BT_ACS_FEAT_AUTHENTICATION */
 
 #if IS_ENABLED(CONFIG_BT_ACS_RESOURCE_HANDLE_UUID_MAP)
 	case BT_ACS_CP_OPCODE_GET_RESOURCE_HANDLE_UUID_MAP:
-		acs_cp_handle_get_resource_handle_uuid_map(proc);
-		break;
+		return acs_cp_handle_get_resource_handle_uuid_map(proc);
 #endif /* CONFIG_BT_ACS_RESOURCE_HANDLE_UUID_MAP */
 
 	case BT_ACS_CP_OPCODE_GET_SERVICE_CHARACTERISTIC_UUIDS_CHAR_RESOURCE_HANDLE:
-		acs_cp_handle_get_svc_char_uuids(proc, payload);
-		break;
+		return acs_cp_handle_get_svc_char_uuids(proc, payload);
 
 #if IS_ENABLED(CONFIG_BT_ACS_FEAT_AUTHORIZATION) && IS_ENABLED(CONFIG_BT_ACS_DESCRIPTORS)
 	case BT_ACS_CP_OPCODE_GET_ALL_ACTIVE_DESCRIPTORS:
-		acs_cp_all_active_get(proc);
-		break;
+		return acs_cp_all_active_get(proc);
 #endif /* CONFIG_BT_ACS_FEAT_AUTHORIZATION && CONFIG_BT_ACS_DESCRIPTORS */
 
 #if IS_ENABLED(CONFIG_BT_ACS_ANY_KEY_EXCHANGE)
 	case BT_ACS_CP_OPCODE_GET_CURRENT_KEY_LIST:
-		acs_cp_kex_get_current_key_list(proc);
-		break;
+		return acs_cp_kex_get_current_key_list(proc);
 
 	case BT_ACS_CP_OPCODE_START_KEY_EXCHANGE:
-		acs_cp_kex_start(proc, payload);
-		break;
+		return acs_cp_kex_start(proc, payload);
 #endif /* CONFIG_BT_ACS_ANY_KEY_EXCHANGE */
 
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_ECDH)
 	case BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH:
-		acs_cp_kex_exchange_ecdh(proc, payload);
-		break;
+		return acs_cp_kex_exchange_ecdh(proc, payload);
 
 	case BT_ACS_CP_OPCODE_ECDH_CONFIRM_CODE:
-		acs_cp_kex_ecdh_confirm_code(proc, payload);
-		break;
+		return acs_cp_kex_ecdh_confirm_code(proc, payload);
 
 	case BT_ACS_CP_OPCODE_ECDH_CONFIRM_RAND:
-		acs_cp_kex_ecdh_confirm_rand(proc, payload);
-		break;
+		return acs_cp_kex_ecdh_confirm_rand(proc, payload);
 #endif /* CONFIG_BT_ACS_KEY_EXCHANGE_ECDH */
 
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF) || IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_ECDH)
 	case BT_ACS_CP_OPCODE_KEY_EXCHANGE_KDF:
-		acs_cp_kex_exchange_kdf(proc, payload);
-		break;
+		return acs_cp_kex_exchange_kdf(proc, payload);
 #endif /* CONFIG_BT_ACS_KEY_EXCHANGE_KDF || CONFIG_BT_ACS_KEY_EXCHANGE_ECDH */
 
 #if IS_ENABLED(CONFIG_BT_ACS_INVALIDATE_ESTABLISHED_SECURITY)
 	case BT_ACS_CP_OPCODE_INVALIDATE_ALL_ESTABLISHED_SECURITY:
-		acs_sec_mgmt_invalidate_all(proc);
-		break;
+		return acs_sec_mgmt_invalidate_all(proc);
 
 	case BT_ACS_CP_OPCODE_INVALIDATE_KEY:
-		acs_sec_mgmt_invalidate_key(proc, payload);
-		break;
+		return acs_sec_mgmt_invalidate_key(proc, payload);
 #endif /* CONFIG_BT_ACS_INVALIDATE_ESTABLISHED_SECURITY */
 
 #if IS_ENABLED(CONFIG_BT_ACS_ABORT)
 	case BT_ACS_CP_OPCODE_ABORT:
-		acs_sec_mgmt_abort(proc);
-		break;
+		return acs_sec_mgmt_abort(proc);
 #endif /* CONFIG_BT_ACS_ABORT */
 
 #if IS_ENABLED(CONFIG_BT_ACS_SET_SECURITY_CONTROLS_SWITCH)
 	case BT_ACS_CP_OPCODE_SET_SECURITY_CONTROLS_SWITCH:
-		acs_sec_mgmt_set_security_switch(proc, payload);
-		break;
+		return acs_sec_mgmt_set_security_switch(proc, payload);
 #endif /* CONFIG_BT_ACS_SET_SECURITY_CONTROLS_SWITCH */
 
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_URI)
 	case BT_ACS_CP_OPCODE_GET_KEY_URI:
-		acs_sec_mgmt_get_key_uri(proc, payload);
-		break;
+		return acs_sec_mgmt_get_key_uri(proc, payload);
 #endif /* CONFIG_BT_ACS_KEY_URI */
 
 #if IS_ENABLED(CONFIG_BT_ACS_INITIATE_PAIRING)
 	case BT_ACS_CP_OPCODE_INITIATE_PAIRING:
-		acs_sec_mgmt_initiate_pairing(proc);
-		break;
+		return acs_sec_mgmt_initiate_pairing(proc);
 #endif /* CONFIG_BT_ACS_INITIATE_PAIRING */
 
 	default:
 		LOG_WRN("Unsupported opcode: 0x%02x", opcode);
-		acs_cp_rsp_status(proc, opcode, BT_ACS_CP_RESPONSE_OPCODE_NOT_SUPPORTED);
-		break;
+		return acs_cp_rsp_status(proc, opcode, BT_ACS_CP_RESPONSE_OPCODE_NOT_SUPPORTED);
 	}
 }

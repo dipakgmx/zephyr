@@ -308,7 +308,7 @@ struct net_buf *acs_prepare_reply_buf(struct acs_procedure *proc,
 	__ASSERT_NO_MSG(proc != NULL);
 	__ASSERT_NO_MSG(proc->acs_conn != NULL);
 
-	if (proc->is_singleton) {
+	if (proc->kind == ACS_PROC_KIND_PLAIN_CP) {
 		__ASSERT_NO_MSG(channel == ACS_REPLY_CP);
 		__ASSERT_NO_MSG(!encrypted);
 		__ASSERT_NO_MSG(proc != NULL);
@@ -338,7 +338,7 @@ struct net_buf *acs_prepare_reply_buf(struct acs_procedure *proc,
 		net_buf_reserve(buf, ACS_CRYPTO_HEADROOM);
 	}
 
-	if (!proc->is_singleton) {
+	if (proc->kind == ACS_PROC_KIND_PROTECTED_REQ) {
 		/* Protected wire format: inner [Resource_Handle | payload] */
 		net_buf_add_le16(buf, resource_handle);
 	}
@@ -360,7 +360,7 @@ int acs_cp_rsp_status(struct acs_procedure *proc, uint8_t req_opcode, uint8_t co
 	buf = acs_prepare_reply_buf(proc, mode.channel, mode.encrypted);
 	if (!buf) {
 		acs_seq_abort(proc);
-		if (proc->is_singleton) {
+		if (proc->kind == ACS_PROC_KIND_PLAIN_CP) {
 			atomic_set(&proc->acs_conn->plain_cp_proc.locked, 0);
 		}
 		return -ENOMEM;
@@ -386,7 +386,7 @@ int acs_cp_rsp_status(struct acs_procedure *proc, uint8_t req_opcode, uint8_t co
 		 * inside acs_tx_submit_plain_cp itself, so we don't double up.
 		 */
 		acs_seq_abort(proc);
-		if (!proc->is_singleton) {
+		if (proc->kind == ACS_PROC_KIND_PROTECTED_REQ) {
 			LOG_WRN("Protected CP status indication failed for handle 0x%04x: %d",
 				proc->resource_handle, err);
 		} else {
@@ -439,7 +439,7 @@ int acs_tx_submit(struct acs_procedure *proc, const struct acs_reply *reply)
 	 */
 	switch (reply->channel) {
 	case ACS_REPLY_CP:
-		__ASSERT(proc->is_singleton,
+		__ASSERT(proc->kind == ACS_PROC_KIND_PLAIN_CP,
 			 "ACS_REPLY_CP requires plain-CP proc");
 		__ASSERT(proc != NULL, "plain-CP proc missing procedure");
 		__ASSERT(reply->plaintext == proc->response,
@@ -449,7 +449,7 @@ int acs_tx_submit(struct acs_procedure *proc, const struct acs_reply *reply)
 			 "ACS_REPLY_CP is always confirmed (segmented indication)");
 		return acs_tx_submit_plain_cp(proc, reply);
 	case ACS_REPLY_DON:
-		__ASSERT(!proc->is_singleton,
+		__ASSERT(proc->kind == ACS_PROC_KIND_PROTECTED_REQ,
 			 "ACS_REPLY_DON requires protected-request proc");
 		__ASSERT(proc != NULL, "protected-request proc missing req");
 		__ASSERT(reply->plaintext == proc->response,
@@ -459,7 +459,7 @@ int acs_tx_submit(struct acs_procedure *proc, const struct acs_reply *reply)
 			 "ACS_REPLY_DON is unconfirmed (notification)");
 		return acs_procedure_send_notify(proc, reply->plaintext);
 	case ACS_REPLY_DOI:
-		__ASSERT(!proc->is_singleton,
+		__ASSERT(proc->kind == ACS_PROC_KIND_PROTECTED_REQ,
 			 "ACS_REPLY_DOI requires protected-request proc");
 		__ASSERT(proc != NULL, "protected-request proc missing req");
 		__ASSERT(reply->plaintext == proc->response,

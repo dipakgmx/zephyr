@@ -135,10 +135,10 @@ struct bt_acs_conn *acs_conn_alloc(struct bt_conn *conn)
 #endif /* CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION */
 
 	/* Wire up the embedded plain-CP procedure singleton. The conn's own
-	 * memset has already zeroed the memory; mark it as a singleton so the
+	 * memset has already zeroed the memory; mark it as plain CP so the
 	 * slab/refcount paths skip it if anything ever drives it through them.
 	 */
-	acs_conn->plain_cp_proc.is_singleton = true;
+	acs_conn->plain_cp_proc.kind = ACS_PROC_KIND_PLAIN_CP;
 	acs_conn->plain_cp_proc.acs_conn = acs_conn;
 	acs_seg_tx_init(&acs_conn->cp_tx);
 #if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION)

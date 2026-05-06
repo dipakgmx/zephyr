@@ -72,7 +72,7 @@ static const struct acs_seq_desc invalidate_self_seq = {
 	.step_count = ARRAY_SIZE(invalidate_self_steps),
 };
 
-void acs_sec_mgmt_invalidate_all(struct acs_procedure *proc)
+int acs_sec_mgmt_invalidate_all(struct acs_procedure *proc)
 {
 	struct bt_acs_conn const *acs_conn = proc->acs_conn;
 	uint8_t req_idx;
@@ -80,9 +80,8 @@ void acs_sec_mgmt_invalidate_all(struct acs_procedure *proc)
 
 	if (!acs_conn || acs_conn->key_state != BT_ACS_KEY_EXCHANGE_COMPLETE) {
 		LOG_WRN("Invalidate All: rejected — sender has no established ACS security");
-		acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_INVALIDATE_ALL_ESTABLISHED_SECURITY,
-				  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE);
-		return;
+		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_INVALIDATE_ALL_ESTABLISHED_SECURITY,
+					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE);
 	}
 
 	req_idx = bt_conn_index(proc->acs_conn->conn);
@@ -110,8 +109,8 @@ void acs_sec_mgmt_invalidate_all(struct acs_procedure *proc)
 	/* Defer self-invalidation until after the success response is confirmed. */
 	acs_seq_begin(proc, &invalidate_self_seq);
 
-	acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_INVALIDATE_ALL_ESTABLISHED_SECURITY,
-			  BT_ACS_CP_RESPONSE_SUCCESS);
+	return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_INVALIDATE_ALL_ESTABLISHED_SECURITY,
+				 BT_ACS_CP_RESPONSE_SUCCESS);
 }
 
 /**
@@ -143,7 +142,7 @@ static void invalidate_kdf_child(struct bt_acs_conn *acs_conn)
 }
 #endif
 
-void acs_sec_mgmt_invalidate_key(struct acs_procedure *proc, struct net_buf_simple *buf)
+int acs_sec_mgmt_invalidate_key(struct acs_procedure *proc, struct net_buf_simple *buf)
 {
 	struct acs_cp_invalidate_key_req invalidate_req;
 	uint16_t key_id;
@@ -153,9 +152,8 @@ void acs_sec_mgmt_invalidate_key(struct acs_procedure *proc, struct net_buf_simp
 	if (buf->len < sizeof(struct acs_cp_invalidate_key_req)) {
 		LOG_ERR("Invalid Invalidate Key operand length: need %zu, have %u",
 			sizeof(struct acs_cp_invalidate_key_req), buf->len);
-		acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_INVALIDATE_KEY,
-				  BT_ACS_CP_RESPONSE_INVALID_OPERAND);
-		return;
+		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_INVALIDATE_KEY,
+					 BT_ACS_CP_RESPONSE_INVALID_OPERAND);
 	}
 
 	/* Pull operand data before any response buffer init. */
@@ -165,16 +163,14 @@ void acs_sec_mgmt_invalidate_key(struct acs_procedure *proc, struct net_buf_simp
 
 	if (!proc->acs_conn) {
 		LOG_ERR("Invalidate Key received for unknown connection");
-		acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_INVALIDATE_KEY,
-				  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
-		return;
+		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_INVALIDATE_KEY,
+					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 	}
 
 	if (proc->acs_conn->key_state != BT_ACS_KEY_EXCHANGE_COMPLETE) {
 		LOG_ERR("Invalidate Key ID 0x%04x: no security established", key_id);
-		acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_INVALIDATE_KEY,
-				  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE);
-		return;
+		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_INVALIDATE_KEY,
+					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE);
 	}
 
 	if (key_id == BT_ACS_GET_KEY_DESC_ALL_RECORDS_FILTER) {
@@ -235,7 +231,7 @@ void acs_sec_mgmt_invalidate_key(struct acs_procedure *proc, struct net_buf_simp
 		response_code = BT_ACS_CP_RESPONSE_NO_RECORDS_FOUND;
 	}
 
-	acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_INVALIDATE_KEY, response_code);
+	return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_INVALIDATE_KEY, response_code);
 }
 
 #endif /* CONFIG_BT_ACS_INVALIDATE_ESTABLISHED_SECURITY */
@@ -260,7 +256,7 @@ void acs_sec_mgmt_invalidate_key(struct acs_procedure *proc, struct net_buf_simp
  * able to preempt an in-progress procedure), so this handler also owns the
  * lock bookkeeping for its own response.
  */
-void acs_sec_mgmt_abort(struct acs_procedure *proc)
+int acs_sec_mgmt_abort(struct acs_procedure *proc)
 {
 	struct bt_acs_conn *acs_conn = proc->acs_conn;
 	struct k_work_sync sync;
@@ -289,9 +285,8 @@ void acs_sec_mgmt_abort(struct acs_procedure *proc)
 		LOG_WRN("Abort requested with no in-progress procedure");
 		/* Take the lock for our own response, since no proc holds it. */
 		atomic_set(&acs_conn->plain_cp_proc.locked, 1);
-		acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_ABORT,
-				  BT_ACS_CP_RESPONSE_ABORT_UNSUCCESSFUL);
-		return;
+		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_ABORT,
+					 BT_ACS_CP_RESPONSE_ABORT_UNSUCCESSFUL);
 	}
 
 	/* If a CP indication is already handed to the BLE stack we cannot
@@ -310,7 +305,7 @@ void acs_sec_mgmt_abort(struct acs_procedure *proc)
 	if (!can_commit) {
 		LOG_DBG("Abort deferred — indication in flight, will commit on confirm");
 		acs_conn->plain_cp_proc.abort_pending = true;
-		return;
+		return 0;
 	}
 
 	/*
@@ -347,30 +342,28 @@ void acs_sec_mgmt_abort(struct acs_procedure *proc)
 	}
 
 	/* Send success response — lock released on confirm as usual. */
-	acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_ABORT, BT_ACS_CP_RESPONSE_SUCCESS);
+	return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_ABORT, BT_ACS_CP_RESPONSE_SUCCESS);
 }
 
 #endif /* CONFIG_BT_ACS_ABORT */
 
 #if IS_ENABLED(CONFIG_BT_ACS_SET_SECURITY_CONTROLS_SWITCH)
 
-void acs_sec_mgmt_set_security_switch(struct acs_procedure *proc, struct net_buf_simple *buf)
+int acs_sec_mgmt_set_security_switch(struct acs_procedure *proc, struct net_buf_simple *buf)
 {
 	struct acs_cp_sec_switch_req switch_req;
 	uint8_t switch_state;
 
 	if (buf->len < sizeof(struct acs_cp_sec_switch_req)) {
 		LOG_ERR("Set Security Controls Switch operand too short: %u", buf->len);
-		acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_SET_SECURITY_CONTROLS_SWITCH,
-				  BT_ACS_CP_RESPONSE_INVALID_OPERAND);
-		return;
+		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_SET_SECURITY_CONTROLS_SWITCH,
+					 BT_ACS_CP_RESPONSE_INVALID_OPERAND);
 	}
 
 	if (!proc->acs_conn) {
 		LOG_ERR("Set Security Controls Switch for unknown ACS connection");
-		acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_SET_SECURITY_CONTROLS_SWITCH,
-				  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
-		return;
+		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_SET_SECURITY_CONTROLS_SWITCH,
+					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 	}
 
 	/* Pull operand data before any response buffer init. */
@@ -387,15 +380,15 @@ void acs_sec_mgmt_set_security_switch(struct acs_procedure *proc, struct net_buf
 
 	LOG_DBG("Security controls switch set to %u", switch_state);
 
-	acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_SET_SECURITY_CONTROLS_SWITCH,
-			  BT_ACS_CP_RESPONSE_SUCCESS);
+	return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_SET_SECURITY_CONTROLS_SWITCH,
+				 BT_ACS_CP_RESPONSE_SUCCESS);
 }
 
 #endif /* CONFIG_BT_ACS_SET_SECURITY_CONTROLS_SWITCH */
 
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_URI)
 
-void acs_sec_mgmt_get_key_uri(struct acs_procedure *proc, struct net_buf_simple *buf)
+int acs_sec_mgmt_get_key_uri(struct acs_procedure *proc, struct net_buf_simple *buf)
 {
 	struct acs_cp_get_key_uri_req key_uri_req;
 	struct acs_cp_key_uri_rsp_hdr *hdr;
@@ -410,9 +403,8 @@ void acs_sec_mgmt_get_key_uri(struct acs_procedure *proc, struct net_buf_simple 
 
 	if (buf->len < sizeof(struct acs_cp_get_key_uri_req)) {
 		LOG_ERR("Get Key URI operand too short: %u", buf->len);
-		acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_GET_KEY_URI,
-				  BT_ACS_CP_RESPONSE_INVALID_OPERAND);
-		return;
+		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_GET_KEY_URI,
+					 BT_ACS_CP_RESPONSE_INVALID_OPERAND);
 	}
 
 	/* Pull operand data before any response buffer init. */
@@ -423,16 +415,14 @@ void acs_sec_mgmt_get_key_uri(struct acs_procedure *proc, struct net_buf_simple 
 
 	if (!cb || !cb->key_uri_get) {
 		LOG_WRN("Get Key URI for key_id=0x%04x but no callback is registered", key_id);
-		acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_GET_KEY_URI,
-				  BT_ACS_CP_RESPONSE_PARAMETER_OUT_OF_RANGE);
-		return;
+		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_GET_KEY_URI,
+					 BT_ACS_CP_RESPONSE_PARAMETER_OUT_OF_RANGE);
 	}
 
 	if (!proc->acs_conn) {
 		LOG_ERR("Get Key URI for key_id=0x%04x with no ACS connection context", key_id);
-		acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_GET_KEY_URI,
-				  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
-		return;
+		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_GET_KEY_URI,
+					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 	}
 
 	{
@@ -441,9 +431,8 @@ void acs_sec_mgmt_get_key_uri(struct acs_procedure *proc, struct net_buf_simple 
 			acs_prepare_reply_buf(proc, reply_mode.channel, reply_mode.encrypted);
 
 		if (!nbuf) {
-			acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_GET_KEY_URI,
-					  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
-			return;
+			return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_GET_KEY_URI,
+						 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 		}
 		net_buf_add_u8(nbuf, BT_ACS_CP_OPCODE_KEY_URI_RESPONSE);
 		rsp_buf = &nbuf->b;
@@ -460,9 +449,8 @@ void acs_sec_mgmt_get_key_uri(struct acs_procedure *proc, struct net_buf_simple 
 
 	if (err || uri_len == 0) {
 		LOG_DBG("key_uri_get key_id=0x%04x err=%d", key_id, err);
-		acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_GET_KEY_URI,
-				  BT_ACS_CP_RESPONSE_PARAMETER_OUT_OF_RANGE);
-		return;
+		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_GET_KEY_URI,
+					 BT_ACS_CP_RESPONSE_PARAMETER_OUT_OF_RANGE);
 	}
 
 	net_buf_simple_add(rsp_buf, uri_len);
@@ -474,13 +462,14 @@ void acs_sec_mgmt_get_key_uri(struct acs_procedure *proc, struct net_buf_simple 
 	if (arm_err) {
 		LOG_WRN("Key URI response send failed for key_id=0x%04x: %d", key_id, arm_err);
 	}
+	return arm_err;
 }
 
 #endif /* CONFIG_BT_ACS_KEY_URI */
 
 #if IS_ENABLED(CONFIG_BT_ACS_INITIATE_PAIRING)
 
-void acs_sec_mgmt_initiate_pairing(struct acs_procedure *proc)
+int acs_sec_mgmt_initiate_pairing(struct acs_procedure *proc)
 {
 	int err;
 
@@ -488,12 +477,11 @@ void acs_sec_mgmt_initiate_pairing(struct acs_procedure *proc)
 
 	if (err) {
 		LOG_ERR("Initiate Pairing: bt_conn_set_security failed: %d", err);
-		acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_INITIATE_PAIRING,
-				  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
-		return;
+		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_INITIATE_PAIRING,
+					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 	}
 
-	acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_INITIATE_PAIRING, BT_ACS_CP_RESPONSE_SUCCESS);
+	return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_INITIATE_PAIRING, BT_ACS_CP_RESPONSE_SUCCESS);
 }
 
 #endif /* CONFIG_BT_ACS_INITIATE_PAIRING */

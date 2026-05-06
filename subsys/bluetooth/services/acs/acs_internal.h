@@ -47,8 +47,8 @@ void acs_buf_free(struct net_buf *buf);
  * @param acs_conn  Per-connection ACS state.
  * @param prot_req  NULL for plain CP, non-NULL for protected Data In path.
  */
-void acs_cp_dispatch(struct acs_frame *frame, struct bt_acs_conn *acs_conn,
-		     struct acs_procedure *prot_req);
+int acs_cp_dispatch(struct acs_frame *frame, struct bt_acs_conn *acs_conn,
+		    struct acs_procedure *prot_req);
 
 /**
  * @brief GATT write handler for the ACS Control Point characteristic.
@@ -177,21 +177,11 @@ int acs_data_in_unwrap_and_route(struct bt_conn *conn, struct bt_acs_conn *acs_c
 int acs_runtime_dispatch_frame(struct acs_frame *frame, struct bt_acs_conn *acs_conn);
 
 /**
- * @brief Dispatch a frame whose route kind is @ref ACS_ROUTE_ACS_CP.
- *
- * Forwards directly to @ref acs_cp_dispatch with @p prot_req. For plain CP
- * frames @p prot_req is NULL; for protected CP frames @p prot_req is the
- * already-allocated request context owning the decrypted input buffer.
- */
-int acs_runtime_dispatch_cp_frame(struct acs_frame *frame, struct bt_acs_conn *acs_conn,
-				  struct acs_procedure *prot_req);
-
-/**
  * @brief Dispatch a Data-In frame that targets a protected service CP.
  *
  * Performs the DOI CCC check, allocates a request context, transfers ownership
  * of @c acs_conn->data_rx.buf into the context, then forwards to
- * @ref acs_runtime_dispatch_cp_frame. Drops the proc reference here unless a
+ * @ref acs_cp_dispatch. Drops the proc reference here unless a
  * multi-step reply sequence took it over.
  */
 int acs_runtime_dispatch_protected_cp_frame(struct acs_frame *frame, struct bt_acs_conn *acs_conn);

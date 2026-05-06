@@ -145,6 +145,7 @@ struct acs_procedure *acs_procedure_alloc(struct bt_acs_conn *acs_conn,
 	atomic_set_bit(req->ref_flags, ACS_PROCEDURE_REF_ALLOC);
 	k_work_init(&req->work, acs_req_work_handler);
 	req->acs_conn = acs_conn;
+	req->kind = ACS_PROC_KIND_PROTECTED_REQ;
 	req->resource_handle = resource_handle;
 	req->isc_id = isc_id;
 	req->data_length = data_length;

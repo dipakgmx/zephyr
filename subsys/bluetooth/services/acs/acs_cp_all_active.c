@@ -125,7 +125,7 @@ static const struct acs_seq_desc all_active_seq = {
 	.step_count = ARRAY_SIZE(all_active_steps),
 };
 
-void acs_cp_all_active_get(struct acs_procedure *proc)
+int acs_cp_all_active_get(struct acs_procedure *proc)
 {
 	struct net_buf *buf;
 	struct acs_rmap_get_descriptor_req rm_operand;
@@ -134,9 +134,8 @@ void acs_cp_all_active_get(struct acs_procedure *proc)
 
 	buf = acs_prepare_reply_buf(proc, reply_mode.channel, reply_mode.encrypted);
 	if (buf == NULL) {
-		acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_GET_ALL_ACTIVE_DESCRIPTORS,
-				  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
-		return;
+		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_GET_ALL_ACTIVE_DESCRIPTORS,
+					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 	}
 	net_buf_add_u8(buf, BT_ACS_CP_OPCODE_RESTRICTION_MAP_DESCRIPTOR_RESPONSE);
 
@@ -145,9 +144,8 @@ void acs_cp_all_active_get(struct acs_procedure *proc)
 	err = acs_rmap_build_descriptor_response(&rm_operand, &buf->b);
 	if (err != 0) {
 		LOG_ERR("Get All Active Descriptors: RMAP build failed (%d)", err);
-		acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_GET_ALL_ACTIVE_DESCRIPTORS,
-				  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
-		return;
+		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_GET_ALL_ACTIVE_DESCRIPTORS,
+					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 	}
 
 	acs_seq_begin(proc, &all_active_seq);
@@ -157,4 +155,5 @@ void acs_cp_all_active_get(struct acs_procedure *proc)
 		acs_seq_abort(proc);
 		LOG_WRN("RMAP indication send failed (%d)", err);
 	}
+	return err;
 }
