@@ -25,7 +25,7 @@ int acs_cp_handle_get_restriction_map_id_list(struct acs_procedure *proc)
 	struct acs_reply_mode reply_mode = acs_proc_reply_mode(proc);
 	int build_err;
 
-	rsp_buf = acs_prepare_reply_buf(proc, reply_mode.channel, reply_mode.encrypted);
+	rsp_buf = acs_prepare_reply_buf(proc, reply_mode.encrypted);
 	if (!rsp_buf) {
 		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_GET_RESTRICTION_MAP_ID_LIST,
 					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
@@ -63,7 +63,7 @@ int acs_cp_handle_get_restriction_map_descriptor(struct acs_procedure *proc,
 	desc_req.map_id = net_buf_simple_pull_le16(buf);
 	desc_req.resource_handle_filter = net_buf_simple_pull_le16(buf);
 
-	rsp_buf = acs_prepare_reply_buf(proc, reply_mode.channel, reply_mode.encrypted);
+	rsp_buf = acs_prepare_reply_buf(proc, reply_mode.encrypted);
 	if (!rsp_buf) {
 		LOG_WRN("buffer pool exhausted");
 		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_GET_RESTRICTION_MAP_DESCRIPTOR,

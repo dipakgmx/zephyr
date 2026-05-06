@@ -7,14 +7,43 @@
 #ifndef BT_GATT_ACS_INTERNAL_H_
 #define BT_GATT_ACS_INTERNAL_H_
 
-/* Sub-headers: constants → types → utilities (order matters for dependencies) */
+/*
+ * acs_internal.h is the aggregator for the service's internal API. It pulls in
+ * every layer header so each .c file can keep a single "internal" include.
+ *
+ * Layering (skim top-to-bottom to follow the data flow):
+ *
+ *   acs_wire_constants.h  — on-the-wire field sizes / opcodes
+ *   acs_types.h           — core structs (acs_frame, acs_route, acs_procedure,
+ *                           bt_acs_conn) and enumerations shared across layers
+ *   acs_util.h            — small inline helpers
+ *
+ *   acs_runtime.h         — GATT-write entrypoints + frame dispatch + Data In
+ *                           unwrap. This is where every inbound PDU enters.
+ *   acs_procedure.h       — procedure (request) lifecycle, multi-step reply
+ *                           sequences, reply staging + send (acs_tx_submit),
+ *                           CP opcode dispatch.
+ *   acs_crypto.h          — session crypto + key exchange API.
+ *
+ * The remaining declarations below cover service-level concerns that don't
+ * belong to any single layer: buffer pool, GATT attribute accessors, CCC
+ * checks, connection lifecycle, session persistence, and global init/policy
+ * hooks.
+ */
+
 #include "acs_wire_constants.h"
 #include "acs_types.h"
 #include "acs_util.h"
 
+#include "acs_runtime.h"
+#include "acs_procedure.h"
+#include "acs_crypto.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/* ---- Buffer pool -------------------------------------------------------- */
 
 /**
  * @brief Allocate a buffer from the shared ACS net_buf pool.
@@ -38,69 +67,7 @@ struct net_buf *acs_buf_alloc(k_timeout_t timeout);
  */
 void acs_buf_free(struct net_buf *buf);
 
-/**
- * @brief Dispatch a reassembled CP payload to the opcode handler.
- *
- * @param frame     Normalized inbound frame. @c frame->payload[0] is the opcode.
- *                  For the protected CP path, @p prot_req must be non-NULL and
- *                  carries the live request context allocated by the runtime.
- * @param acs_conn  Per-connection ACS state.
- * @param prot_req  NULL for plain CP, non-NULL for protected Data In path.
- */
-int acs_cp_dispatch(struct acs_frame *frame, struct bt_acs_conn *acs_conn,
-		    struct acs_procedure *prot_req);
-
-/**
- * @brief GATT write handler for the ACS Control Point characteristic.
- *
- * Reassembles segmented writes and dispatches to @ref acs_cp_dispatch.
- */
-ssize_t acs_cp_write(struct bt_conn *conn, const struct bt_gatt_attr *attr, const void *buf,
-		     uint16_t len, uint16_t offset, uint8_t flags);
-
-/**
- * @brief Lazy-initialise and copy the server fixed nonce for @p acs_conn.
- *
- * Must be called before START_KEY_EXCHANGE for SEQ_DIFF_FIXED nonce types
- * (spec §4.4.3.13).
- *
- * @param acs_conn  Per-connection ACS state.
- * @param nonce_buf Caller buffer to receive the nonce.
- * @param len       Size of @p nonce_buf.
- * @return 0 on success, -ENOTSUP if fixed nonce is not configured.
- */
-int acs_crypto_get_server_nonce_fixed(struct bt_acs_conn *acs_conn, uint8_t *nonce_buf, size_t len);
-
-/**
- * @brief Send a 3-byte Response Code indication on the active CP channel.
- *
- * Stages a fresh response buffer for @p proc via @ref acs_prepare_reply_buf
- * with the mode from @ref acs_proc_reply_mode, fills
- * [BT_ACS_CP_OPCODE_RESPONSE_CODE | req_opcode | code], and submits via
- * @ref acs_tx_submit. Mirrors @ref acs_cp_send_reply on submit failure
- * (acs_seq_abort + log); on prep failure additionally releases the plain-CP
- * busy gate.
- *
- * @return 0 on success, negative errno on failure.
- */
-int acs_cp_rsp_status(struct acs_procedure *proc, uint8_t req_opcode, uint8_t code);
-
-/** @brief Return true if a multi-step reply sequence is active on @p proc. */
-bool acs_seq_active(struct acs_procedure *proc);
-
-/**
- * @brief Start a multi-step reply sequence on @p proc.
- *
- * @param proc Active execution proc.
- * @param desc  Sequence descriptor (step table + metadata).
- */
-void acs_seq_begin(struct acs_procedure *proc, const struct acs_seq_desc *desc);
-
-/** @brief Mark the active reply sequence as complete and release state. */
-void acs_seq_clear(struct acs_procedure *proc);
-
-/** @brief Abort the active reply sequence, invoking on_abort if set. */
-void acs_seq_abort(struct acs_procedure *proc);
+/* ---- GATT attribute accessors + CCC checks ------------------------------ */
 
 const struct bt_gatt_attr *acs_attr_status(void);
 const struct bt_gatt_attr *acs_attr_cp(void);
@@ -123,11 +90,15 @@ int acs_doi_ccc_check(struct bt_conn *conn);
 /** @brief Indicate the ACS Status characteristic to @p conn. */
 void acs_status_indicate(struct bt_conn *conn);
 
+/* ---- Service init + callbacks ------------------------------------------ */
+
 /** @brief Return true if the ACS service has been initialised. */
 bool acs_is_initialized(void);
 
 /** @brief Return the registered application callbacks, or NULL. */
 const struct bt_acs_cb *acs_cb_get(void);
+
+/* ---- Connection state lookup -------------------------------------------- */
 
 /**
  * @brief Return per-connection ACS state at pool @p index.
@@ -135,262 +106,6 @@ const struct bt_acs_cb *acs_cb_get(void);
  * @return Pointer to the slot, or NULL if out of range.
  */
 struct bt_acs_conn *acs_conn_by_index(uint8_t index);
-
-/** @brief GATT write handler for the ACS Data In characteristic. */
-ssize_t acs_data_in_write(struct bt_conn *conn, const struct bt_gatt_attr *attr, const void *buf,
-			  uint16_t len, uint16_t offset, uint8_t flags);
-
-/**
- * @name Data In pipeline error codes (returned by @ref acs_data_in_unwrap_and_route).
- *
- * Mapped by the runtime entry layer to ATT error codes.
- * @{
- */
-#define ACS_DATA_ERR_CCC_IMPROPER_CONF         (-EPIPE)
-#define ACS_DATA_ERR_NOT_AUTHORIZED            (-EPERM)
-#define ACS_DATA_ERR_INVALID_KEY               (-EACCES)
-#define ACS_DATA_ERR_RESOURCE_NOT_PROTECTED    (-ENOENT)
-#define ACS_DATA_ERR_INCORRECT_SECURITY_CONFIG (-EPROTO)
-/** @} */
-
-/**
- * @brief Unwrap a complete reassembled Data In payload and route it.
- *
- * Validates the ISC_ID/nonce header, decrypts the payload in place, builds a
- * normalized @ref acs_frame, then hands it to @ref acs_runtime_dispatch_frame.
- *
- * @return 0 on success, or one of @ref ACS_DATA_ERR_* on failure.
- */
-int acs_data_in_unwrap_and_route(struct bt_conn *conn, struct bt_acs_conn *acs_conn,
-				 struct net_buf_simple *buf);
-
-/**
- * @brief Common normalized-frame dispatch entry point.
- *
- * Single seam between the GATT-write entrypoints and the per-route execution
- * helpers. Classifies @p frame against @p acs_conn's active restriction map
- * (or trivially as @ref ACS_ROUTE_ACS_CP for CP-source frames) and forwards
- * to the matching @c acs_runtime_dispatch_*_frame helper.
- *
- * @return 0 on success, negative errno or @ref ACS_DATA_ERR_* on failure.
- */
-int acs_runtime_dispatch_frame(struct acs_frame *frame, struct bt_acs_conn *acs_conn);
-
-/**
- * @brief Dispatch a Data-In frame that targets a protected service CP.
- *
- * Performs the DOI CCC check, allocates a request context, transfers ownership
- * of @c acs_conn->data_rx.buf into the context, then forwards to
- * @ref acs_cp_dispatch. Drops the proc reference here unless a
- * multi-step reply sequence took it over.
- */
-int acs_runtime_dispatch_protected_cp_frame(struct acs_frame *frame, struct bt_acs_conn *acs_conn);
-
-/**
- * @brief Dispatch a Data-In frame that targets a protected characteristic.
- *
- * Resolves the required Data Out subscription, allocates a request context,
- * transfers ownership of @c acs_conn->data_rx.buf into the context, then
- * queues the work item that runs the application/auto-respond handler.
- */
-int acs_runtime_dispatch_protected_char_frame(struct acs_frame *frame,
-					      struct bt_acs_conn *acs_conn);
-
-/**
- * @brief Resolve the Data Out subscription for a protected resource handle.
- *
- * Picks DON or DOI based on the characteristic's properties; for zero-length
- * payloads only DON is checked. Returns 0 if the required CCC is configured,
- * @c -EINVAL when the CCC is missing, or other negative errno on lookup failure.
- */
-int acs_require_data_out_subscription(struct bt_conn *conn, uint16_t resource_handle,
-				      uint16_t data_length);
-
-/**
- * @brief Single-seam outbound submission for any reply.
- *
- * Decides the transport family from @p reply->channel:
- *   - @ref ACS_REPLY_CP  — plain segmented CP indication on @c acs_conn->cp_tx,
- *     completion via @ref acs_cp_on_indicate_done. @p proc must be the plain-CP
- *     singleton.
- *   - @ref ACS_REPLY_DOI — encrypts in place, queues on @c indicate_fifo with
- *     @ref try_send_next, completion via @ref acs_data_out_on_indicate_done.
- *     @p proc must be a protected request.
- *   - @ref ACS_REPLY_DON — encrypts in place, sends an unconfirmed segmented
- *     notification. @p proc must be a protected request.
- *
- * Domain code should produce a buffer + reply and call this. The send seam
- * picks segmentation, queueing, encryption, and the completion callback.
- *
- * @return 0 on success, negative errno on failure.
- */
-int acs_tx_submit(struct acs_procedure *proc, const struct acs_reply *reply);
-
-/**
- * @brief Lazy-allocate or reset the response staging buffer for @p proc.
- *
- * Plain CP: returns the singleton @c plain_cp_proc.response, no headroom,
- * no payload prefix.
- *
- * Protected CP / characteristic: returns @c req->response with
- * @ref ACS_CRYPTO_HEADROOM reserved and the protected-resource handle prefix
- * already pushed, so the handler can append its body bytes directly.
- *
- * @param proc     Active proc.
- * @param channel   Reply channel — selects whether the resource_handle prefix
- *                  is seeded (DON / DOI for protected paths).
- * @param encrypted True when the reply will go through AEAD encryption (drives
- *                  the headroom requirement).
- * @return Buffer to append response bytes into, or NULL on pool exhaustion.
- */
-struct net_buf *acs_prepare_reply_buf(struct acs_procedure *proc,
-				      enum acs_reply_channel channel, bool encrypted);
-
-/**
- * @brief Send the staged CP reply assembled from @p proc.
- *
- * Reads the active procedure's staged response buffer, builds an @ref acs_reply
- * using @ref acs_proc_reply_mode for the canonical channel/encrypted/needs_confirm
- * defaults, and submits via @ref acs_tx_submit. Aborts any active reply sequence
- * on submit failure and logs the failure.
- *
- * @return 0 on success, negative errno on failure.
- */
-int acs_cp_send_reply(struct acs_procedure *proc);
-
-/**
- * @brief Owner-centric reply-sequence advance.
- *
- * Called from indication-confirm callbacks (plain CP and DOI). Drives the next
- * step of any active reply sequence; aborts the sequence on step failure.
- * No-op if no sequence is active.
- */
-void acs_seq_on_confirm(struct acs_procedure *proc);
-
-/**
- * @brief Plain-CP indication-confirmation callback (defined in acs_cp.c).
- *
- * Exposed so the data-out channel layer can pass it as the completion handler
- * for plain-CP segmented indications.
- */
-void acs_cp_on_indicate_done(struct bt_conn *conn, const struct bt_gatt_attr *attr, int err,
-			     void *user_data);
-
-/** @brief Increment @p req reference count for caller @p who. */
-void acs_procedure_ref(struct acs_procedure *req,
-			       enum acs_procedure_ref_who who);
-
-/** @brief Decrement @p req reference count for caller @p who; frees at zero. */
-void acs_procedure_unref(struct acs_procedure *req,
-				 enum acs_procedure_ref_who who);
-
-/** @brief Return the connection for @p req, or NULL after disconnect. */
-struct bt_conn *acs_procedure_conn(const struct acs_procedure *req);
-
-/** @brief Return the protected resource ATT handle from @p req. */
-uint16_t acs_procedure_resource_handle(const struct acs_procedure *req);
-
-/**
- * @brief Allocate a protected resource request from the per-connection pool.
- *
- * @param acs_conn        Owning connection state.
- * @param resource_handle Protected resource ATT handle.
- * @param isc_id          ISC identifier for this request.
- * @param data_offset     Offset into the decrypted buffer where payload starts.
- * @param data_length     Plaintext payload length.
- * @return Allocated request, or NULL if no slot is free.
- */
-struct acs_procedure *acs_procedure_alloc(struct bt_acs_conn *acs_conn,
-							     uint16_t resource_handle,
-							     uint16_t isc_id, uint16_t data_offset,
-							     uint16_t data_length);
-
-/** @brief Drop the proc (allocation) reference on @p req. */
-void acs_procedure_release_owner(struct acs_procedure *req);
-
-/** @brief Drop the TX-path reference on @p req. */
-void acs_procedure_release_tx(struct acs_procedure *req);
-
-/** @brief Mark response transmission complete and release the TX reference. */
-void acs_procedure_tx_done(struct acs_procedure *req);
-
-/** @brief Abort all in-flight protected resource requests on @p acs_conn. */
-void acs_procedure_abort_all(struct bt_acs_conn *acs_conn);
-
-/**
- * @brief Encrypt and send @p plaintext via Data Out Notify on @p req's connection.
- *
- * @p plaintext must be the request's currently-staged response buffer
- * (@c req->response). Passing it explicitly keeps the buffer authoritatively
- * sourced from the @ref acs_reply contract rather than via an implicit
- * convention; the helper asserts the consistency in debug builds.
- *
- * @return 0 on success, negative errno on failure.
- */
-int acs_procedure_send_notify(struct acs_procedure *req, struct net_buf *plaintext);
-
-/**
- * @brief Encrypt and queue @p plaintext for Data Out Indicate on @p req's connection.
- *
- * Same contract as @ref acs_procedure_send_notify regarding @p plaintext.
- *
- * @return 0 on success, negative errno on failure.
- */
-int acs_procedure_send_indicate(struct acs_procedure *req, struct net_buf *plaintext);
-
-/**
- * @brief Derive the session key from the completed key exchange.
- *
- * @return 0 on success, negative errno on failure.
- */
-int acs_crypto_derive_session_key(struct bt_acs_conn *acs_conn);
-
-/**
- * @brief Import the session key into the PSA keystore.
- *
- * @return 0 on success, negative errno on failure.
- */
-int acs_crypto_import_session_key(struct bt_acs_conn *acs_conn);
-
-/** @brief Destroy the session key from the PSA keystore. */
-void acs_crypto_destroy_session_key(struct bt_acs_conn *acs_conn);
-
-/**
- * @brief Encrypt @p plaintext using the session key.
- *
- * @param acs_conn   Per-connection state (holds key and nonce counters).
- * @param isc_id     ISC identifier for nonce construction.
- * @param plaintext  Input data.
- * @param plain_len  Input length.
- * @param ciphertext Output buffer (must fit ciphertext + auth tag).
- * @param cipher_len [out] Total output length.
- * @return 0 on success, negative errno on failure.
- */
-int acs_crypto_encrypt(struct bt_acs_conn *acs_conn, uint16_t isc_id, const uint8_t *plaintext,
-		       uint16_t plain_len, uint8_t *ciphertext, uint16_t *cipher_len);
-
-/**
- * @brief Decrypt @p ciphertext using the session key.
- *
- * @param acs_conn   Per-connection state.
- * @param isc_id     ISC identifier for nonce construction.
- * @param ciphertext Input (ciphertext + auth tag).
- * @param cipher_len Total input length.
- * @param plaintext  Output buffer.
- * @param plain_len  [out] Plaintext length.
- * @param aad        Additional authenticated data (may be NULL).
- * @param aad_len    Length of @p aad.
- * @return 0 on success, negative errno on failure.
- */
-int acs_crypto_decrypt(struct bt_acs_conn *acs_conn, uint16_t isc_id, const uint8_t *ciphertext,
-		       uint16_t cipher_len, uint8_t *plaintext, uint16_t *plain_len,
-		       const uint8_t *aad, uint16_t aad_len);
-
-/** @brief Allocate a transient key-exchange context. Returns NULL if pool exhausted. */
-int acs_kex_alloc(struct bt_acs_conn *acs_conn);
-
-/** @brief Return a key-exchange context to the pool. */
-void acs_kex_free(struct bt_acs_kex_ctx *kex);
 
 /** @brief Look up per-connection ACS state. Returns NULL if not found. */
 struct bt_acs_conn *acs_conn_lookup(struct bt_conn *conn);
@@ -400,6 +115,8 @@ struct bt_acs_conn *acs_conn_alloc(struct bt_conn *conn);
 
 /** @brief Release all resources held by @p acs_conn. */
 void acs_conn_cleanup(struct bt_acs_conn *acs_conn);
+
+/* ---- Session persistence (BT_SETTINGS) ---------------------------------- */
 
 #if defined(CONFIG_BT_SETTINGS)
 /** @brief Persist the crypto session for @p conn to NVS. */
@@ -418,6 +135,8 @@ void acs_session_restore(struct bt_conn *conn, struct bt_acs_conn *acs_conn);
 void acs_session_invalidate_cache(const bt_addr_le_t *addr);
 extern struct bt_conn_auth_info_cb acs_auth_info_cb;
 #endif /* CONFIG_BT_SETTINGS */
+
+/* ---- GATT authorization policy ----------------------------------------- */
 
 #if IS_ENABLED(CONFIG_BT_ACS_GATT_AUTHORIZATION)
 /** @brief Mark all protected CCCDs as requiring authorisation in the GATT table. */

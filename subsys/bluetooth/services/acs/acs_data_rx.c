@@ -171,6 +171,17 @@ static int acs_data_in_validate(struct acs_data_in_pipeline *pipe)
 	return 0;
 }
 
+/*
+ * Byte-order dance — done in three steps because PSA AEAD demands MSO input/output
+ * but the wire format is LSO. We avoid an intermediate buffer by swapping in place:
+ *
+ *   1. swap(buf, buf->len)          : wire LSO    → PSA MSO   (input to PSA)
+ *   2. acs_crypto_decrypt           : PSA produces MSO plaintext over the same bytes
+ *   3. swap(buf, plain_len)         : PSA MSO     → host LSO  (output to caller)
+ *
+ * Each swap is the inverse of the previous step over the relevant prefix; the
+ * three together convert wire bytes to host plaintext without any extra copy.
+ */
 static int acs_data_in_decrypt(struct acs_data_in_pipeline *pipe)
 {
 	struct bt_acs_conn *acs_conn = pipe->acs_conn;
@@ -178,9 +189,7 @@ static int acs_data_in_decrypt(struct acs_data_in_pipeline *pipe)
 	uint16_t plain_len = 0;
 	int err;
 
-	/* buf->data points at MAC(LSO) || Cipher(LSO).
-	 * Reversing the whole block in-place gives [Cipher(MSO) || Tag(MSO)]:
-	 * exactly the PSA AEAD input format, with no intermediate buffer. */
+	/* Step 1: wire LSO → PSA MSO. */
 	sys_mem_swap(buf->data, buf->len);
 
 	/* Decrypt using the received counter as the nonce variable part. Commit the
@@ -205,7 +214,7 @@ static int acs_data_in_decrypt(struct acs_data_in_pipeline *pipe)
 		}
 	}
 
-	/* Reverse LSO-first plaintext to recover host byte order. */
+	/* Step 3: PSA MSO → host LSO. */
 	sys_mem_swap(buf->data, plain_len);
 	buf->len = plain_len;
 

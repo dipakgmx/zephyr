@@ -49,7 +49,7 @@ int acs_runtime_dispatch_protected_cp_frame(struct acs_frame *frame, struct bt_a
 
 	data_offset = (uint16_t)(frame->payload - acs_conn->data_rx.buf->data);
 	req_ctx = acs_procedure_alloc(acs_conn, frame->resource_handle, frame->isc_id,
-					      data_offset, frame->payload_len);
+				      data_offset, frame->payload_len);
 	if (!req_ctx) {
 		LOG_WRN("Data In: no free CP request context for handle 0x%04x",
 			frame->resource_handle);
@@ -107,7 +107,7 @@ int acs_runtime_dispatch_protected_char_frame(struct acs_frame *frame,
 
 	data_offset = (uint16_t)(frame->payload - acs_conn->data_rx.buf->data);
 	req_ctx = acs_procedure_alloc(acs_conn, frame->resource_handle, frame->isc_id,
-					      data_offset, frame->payload_len);
+				      data_offset, frame->payload_len);
 	if (!req_ctx) {
 		LOG_WRN("Data In: no free request context for handle 0x%04x",
 			frame->resource_handle);
@@ -207,17 +207,7 @@ ssize_t acs_cp_write(struct bt_conn *conn, const struct bt_gatt_attr *attr, cons
 
 	switch (seg_rx_result) {
 	case ACS_SEG_RX_COMPLETE: {
-		struct net_buf *rx_buf = acs_conn->cp_rx.buf;
-		struct acs_frame frame = {
-			.conn = conn,
-			.resource_handle = 0,
-			.isc_id = 0,
-			.payload = rx_buf->data,
-			.payload_len = rx_buf->len,
-			.source_channel = ACS_SRC_CP,
-			.encrypted = false,
-			.backing_buf = rx_buf,
-		};
+		struct acs_frame frame = acs_frame_from_cp_rx(conn, acs_conn->cp_rx.buf);
 		bool is_abort = false;
 
 #if IS_ENABLED(CONFIG_BT_ACS_ABORT)

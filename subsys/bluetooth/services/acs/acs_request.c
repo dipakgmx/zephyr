@@ -252,7 +252,7 @@ static int acs_auto_respond(struct acs_procedure *req)
 	{
 		enum acs_reply_channel channel = (props & BT_GATT_CHRC_INDICATE) ? ACS_REPLY_DOI
 									       : ACS_REPLY_DON;
-		struct net_buf *rsp_buf = acs_prepare_reply_buf(req, channel, true);
+		struct net_buf *rsp_buf = acs_prepare_reply_buf(req, true);
 		struct acs_reply reply;
 
 		if (!rsp_buf) {

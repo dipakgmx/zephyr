@@ -143,7 +143,7 @@ int acs_cp_handle_get_feature(struct acs_procedure *proc, struct net_buf_simple 
 	LOG_DBG("feat=0x%02x prot=0x%02x", acs_features.features,
 		acs_features.protection_methods);
 
-	rsp_buf = acs_prepare_reply_buf(proc, reply_mode.channel, reply_mode.encrypted);
+	rsp_buf = acs_prepare_reply_buf(proc, reply_mode.encrypted);
 	if (!rsp_buf) {
 		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_GET_FEATURE,
 				  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
@@ -165,7 +165,7 @@ int acs_cp_handle_att_mtu(struct acs_procedure *proc)
 	struct acs_reply_mode reply_mode = acs_proc_reply_mode(proc);
 	uint16_t mtu;
 
-	rsp_buf = acs_prepare_reply_buf(proc, reply_mode.channel, reply_mode.encrypted);
+	rsp_buf = acs_prepare_reply_buf(proc, reply_mode.encrypted);
 	if (!rsp_buf) {
 		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_ATT_MTU,
 					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);

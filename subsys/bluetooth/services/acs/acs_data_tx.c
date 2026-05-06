@@ -19,7 +19,7 @@
 #include <zephyr/logging/log.h>
 LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
 
-static void acs_put_nonce_var(uint8_t *secure_data, uint8_t nonce_var_size, uint32_t tx_counter)
+static void data_tx_put_nonce_var(uint8_t *secure_data, uint8_t nonce_var_size, uint32_t tx_counter)
 {
 	memset(secure_data, 0, nonce_var_size);
 	for (size_t i = 0; i < MIN((uint8_t)sizeof(tx_counter), nonce_var_size); i++) {
@@ -32,7 +32,7 @@ static void acs_put_nonce_var(uint8_t *secure_data, uint8_t nonce_var_size, uint
  * MAC(LSO) || Ciphertext-or-Data(LSO). All currently supported algorithms
  * (CCM, GCM, GMAC, CMAC) place the MAC before the payload (spec §3.2).
  */
-static void acs_format_secure_data_wire(uint8_t *ciphertext_and_tag, uint16_t plain_len)
+static void data_tx_format_wire(uint8_t *ciphertext_and_tag, uint16_t plain_len)
 {
 #if defined(CONFIG_BT_ACS_DATA_PROTECTION_AES_CCM) ||                                              \
 	defined(CONFIG_BT_ACS_DATA_PROTECTION_AES_GCM) ||                                          \
@@ -65,7 +65,7 @@ static void acs_format_secure_data_wire(uint8_t *ciphertext_and_tag, uint16_t pl
  *
  *   [ ISC_ID(2) | Nonce_Var(N) | MAC(T) | Ciphertext(LSO, same len as plaintext) ]
  */
-static int acs_data_out_encrypt_in_place(struct bt_acs_conn *acs_conn, uint16_t isc_id,
+static int data_tx_encrypt_in_place(struct bt_acs_conn *acs_conn, uint16_t isc_id,
 					 struct net_buf *buf)
 {
 	uint8_t *plaintext;
@@ -110,7 +110,7 @@ static int acs_data_out_encrypt_in_place(struct bt_acs_conn *acs_conn, uint16_t 
 	}
 
 	/* Reorder PSA output to wire: MAC(LSO) || Ciphertext(LSO). */
-	acs_format_secure_data_wire(plaintext, plain_len);
+	data_tx_format_wire(plaintext, plain_len);
 
 	/* Extend buffer length to include the auth tag. */
 	net_buf_add(buf, ACS_ACTIVE_AUTH_TAG_SIZE);
@@ -120,15 +120,17 @@ static int acs_data_out_encrypt_in_place(struct bt_acs_conn *acs_conn, uint16_t 
 		uint8_t *hdr = net_buf_push(buf, ACS_ACTIVE_NONCE_VAR_SIZE + 2U);
 
 		sys_put_le16(isc_id, hdr);
-		acs_put_nonce_var(hdr + 2U, ACS_ACTIVE_NONCE_VAR_SIZE, tx_counter);
+		data_tx_put_nonce_var(hdr + 2U, ACS_ACTIVE_NONCE_VAR_SIZE, tx_counter);
 	}
 
 	return 0;
 }
 
-/* Forward declaration for try_send_next. */
-static void acs_data_out_on_indicate_done(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+/* Forward declarations for the DOI drain loop and dispatch helpers. */
+static void data_tx_on_indicate_done(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 					  int err, void *user_data);
+static int data_tx_send_notify(struct acs_procedure *req, struct net_buf *plaintext);
+static int data_tx_send_indicate(struct acs_procedure *req, struct net_buf *plaintext);
 
 /**
  * @brief Drain the next queued indication if the DOI channel is idle.
@@ -138,7 +140,7 @@ static void acs_data_out_on_indicate_done(struct bt_conn *conn, const struct bt_
  * the FIFO serialises the rest.  On send failure the failing request is
  * released and the loop advances to the next queued entry.
  */
-static void try_send_next(struct bt_acs_conn *acs_conn)
+static void data_tx_drain_doi_queue(struct bt_acs_conn *acs_conn)
 {
 #if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION)
 	sys_snode_t *snode;
@@ -171,7 +173,7 @@ static void try_send_next(struct bt_acs_conn *acs_conn)
 		 * lifetime of the request — multi-step sequences reuse it.
 		 */
 		err = acs_seg_tx_send(&acs_conn->indicate_tx, acs_conn->conn, acs_conn->attr_doi,
-				      req->response, acs_data_out_on_indicate_done, req);
+				      req->response, data_tx_on_indicate_done, req);
 		if (!err) {
 			return;
 		}
@@ -197,7 +199,7 @@ static void try_send_next(struct bt_acs_conn *acs_conn)
  * synchronously via acs_cp_dispatch(), not through the work queue, so the
  * work item is idle by the time the reply sequence runs.
  */
-static void acs_seq_continue_work_handler(struct k_work *work)
+static void data_tx_seq_continue_work(struct k_work *work)
 {
 	struct acs_procedure *req =
 		CONTAINER_OF(work, struct acs_procedure, work);
@@ -216,7 +218,7 @@ static void acs_seq_continue_work_handler(struct k_work *work)
 
 drain:
 	if (acs_conn) {
-		try_send_next(acs_conn);
+		data_tx_drain_doi_queue(acs_conn);
 	}
 }
 
@@ -228,7 +230,7 @@ drain:
  * defers the next reply-sequence step to a work item or drains the next
  * independent request from the FIFO.
  */
-static void acs_data_out_on_indicate_done(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+static void data_tx_on_indicate_done(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 					  int err, void *user_data)
 {
 	struct acs_procedure *req = user_data;
@@ -248,7 +250,7 @@ static void acs_data_out_on_indicate_done(struct bt_conn *conn, const struct bt_
 
 	if (continue_reply_seq) {
 		if (!err) {
-			k_work_init(&req->work, acs_seq_continue_work_handler);
+			k_work_init(&req->work, data_tx_seq_continue_work);
 			k_work_submit(&req->work);
 			return;
 		}
@@ -258,11 +260,19 @@ static void acs_data_out_on_indicate_done(struct bt_conn *conn, const struct bt_
 	}
 
 	if (acs_conn) {
-		try_send_next(acs_conn);
+		data_tx_drain_doi_queue(acs_conn);
 	}
 }
 
-int acs_procedure_send_notify(struct acs_procedure *req, struct net_buf *plaintext)
+/*
+ * Internal helpers for acs_tx_submit. Notify and indicate diverge:
+ *   - notify   : synchronous one-shot send via acs_seg_notify; releases TX ref
+ *                immediately on completion or error.
+ *   - indicate : queued via FIFO and drained by data_tx_drain_doi_queue; TX ref
+ *                released asynchronously by data_tx_on_indicate_done.
+ * They are not merged because their concurrency models differ.
+ */
+static int data_tx_send_notify(struct acs_procedure *req, struct net_buf *plaintext)
 {
 #if !IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_NOTIFICATION)
 	ARG_UNUSED(req);
@@ -281,7 +291,7 @@ int acs_procedure_send_notify(struct acs_procedure *req, struct net_buf *plainte
 
 	acs_conn = req->acs_conn;
 
-	err = acs_data_out_encrypt_in_place(acs_conn, req->isc_id, plaintext);
+	err = data_tx_encrypt_in_place(acs_conn, req->isc_id, plaintext);
 	if (err) {
 		LOG_WRN("DON encrypt failed for handle 0x%04x: %d", req->resource_handle, err);
 		acs_procedure_tx_done(req);
@@ -298,49 +308,37 @@ int acs_procedure_send_notify(struct acs_procedure *req, struct net_buf *plainte
 #endif /* CONFIG_BT_ACS_PROTECTED_RESOURCE_NOTIFICATION */
 }
 
-struct net_buf *acs_prepare_reply_buf(struct acs_procedure *proc,
-				      enum acs_reply_channel channel, bool encrypted)
+struct net_buf *acs_prepare_reply_buf(struct acs_procedure *proc, bool encrypted)
 {
-	struct net_buf **slot;
 	struct net_buf *buf;
-	uint16_t resource_handle = 0U;
 
 	__ASSERT_NO_MSG(proc != NULL);
 	__ASSERT_NO_MSG(proc->acs_conn != NULL);
 
 	if (proc->kind == ACS_PROC_KIND_PLAIN_CP) {
-		__ASSERT_NO_MSG(channel == ACS_REPLY_CP);
 		__ASSERT_NO_MSG(!encrypted);
-		__ASSERT_NO_MSG(proc != NULL);
-		slot = &proc->response;
 	} else {
-		__ASSERT_NO_MSG(channel == ACS_REPLY_DOI || channel == ACS_REPLY_DON);
-		__ASSERT_NO_MSG(proc != NULL);
-		slot = &proc->response;
-		resource_handle = proc->resource_handle;
+		__ASSERT_NO_MSG(encrypted);
 	}
 
-	if (!*slot) {
-		*slot = acs_buf_alloc(K_NO_WAIT);
-		if (!*slot) {
+	buf = proc->response; /* attempting reusing the response buffer */
+	if (!buf) {
+		buf = acs_buf_alloc(K_NO_WAIT);
+		if (!buf) {
 			LOG_ERR("acs_prepare_reply_buf: buffer pool exhausted");
 			return NULL;
 		}
+		proc->response = buf;
 	} else {
-		net_buf_reset(*slot);
+		net_buf_reset(buf);
 	}
-	buf = *slot;
 
 	if (encrypted) {
-		/* Reserve room for the secure-transport prefix added by
-		 * acs_data_out_encrypt_in_place: ISC_ID + Nonce_Var.
-		 */
 		net_buf_reserve(buf, ACS_CRYPTO_HEADROOM);
 	}
 
 	if (proc->kind == ACS_PROC_KIND_PROTECTED_REQ) {
-		/* Protected wire format: inner [Resource_Handle | payload] */
-		net_buf_add_le16(buf, resource_handle);
+		net_buf_add_le16(buf, proc->resource_handle);
 	}
 
 	return buf;
@@ -357,7 +355,7 @@ int acs_cp_rsp_status(struct acs_procedure *proc, uint8_t req_opcode, uint8_t co
 	__ASSERT_NO_MSG(proc->acs_conn != NULL);
 
 	mode = acs_proc_reply_mode(proc);
-	buf = acs_prepare_reply_buf(proc, mode.channel, mode.encrypted);
+	buf = acs_prepare_reply_buf(proc, mode.encrypted);
 	if (!buf) {
 		acs_seq_abort(proc);
 		if (proc->kind == ACS_PROC_KIND_PLAIN_CP) {
@@ -457,7 +455,7 @@ int acs_tx_submit(struct acs_procedure *proc, const struct acs_reply *reply)
 		__ASSERT(reply->encrypted, "ACS_REPLY_DON must be encrypted");
 		__ASSERT(!reply->needs_confirm,
 			 "ACS_REPLY_DON is unconfirmed (notification)");
-		return acs_procedure_send_notify(proc, reply->plaintext);
+		return data_tx_send_notify(proc, reply->plaintext);
 	case ACS_REPLY_DOI:
 		__ASSERT(proc->kind == ACS_PROC_KIND_PROTECTED_REQ,
 			 "ACS_REPLY_DOI requires protected-request proc");
@@ -467,7 +465,7 @@ int acs_tx_submit(struct acs_procedure *proc, const struct acs_reply *reply)
 		__ASSERT(reply->encrypted, "ACS_REPLY_DOI must be encrypted");
 		__ASSERT(reply->needs_confirm,
 			 "ACS_REPLY_DOI is always confirmed (segmented indication)");
-		return acs_procedure_send_indicate(proc, reply->plaintext);
+		return data_tx_send_indicate(proc, reply->plaintext);
 	default:
 		LOG_ERR("acs_tx_submit: invalid channel %d", (int)reply->channel);
 		return -EINVAL;
@@ -475,7 +473,7 @@ int acs_tx_submit(struct acs_procedure *proc, const struct acs_reply *reply)
 }
 
 
-int acs_procedure_send_indicate(struct acs_procedure *req, struct net_buf *plaintext)
+static int data_tx_send_indicate(struct acs_procedure *req, struct net_buf *plaintext)
 {
 #if !IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION)
 	ARG_UNUSED(req);
@@ -494,7 +492,7 @@ int acs_procedure_send_indicate(struct acs_procedure *req, struct net_buf *plain
 
 	acs_conn = req->acs_conn;
 
-	err = acs_data_out_encrypt_in_place(acs_conn, req->isc_id, plaintext);
+	err = data_tx_encrypt_in_place(acs_conn, req->isc_id, plaintext);
 	if (err) {
 		LOG_WRN("DOI encrypt failed for handle 0x%04x: %d", req->resource_handle, err);
 		return err;
@@ -502,7 +500,7 @@ int acs_procedure_send_indicate(struct acs_procedure *req, struct net_buf *plain
 
 	acs_procedure_ref(req, ACS_PROCEDURE_REF_TX);
 	k_fifo_put(&acs_conn->indicate_fifo, req);
-	try_send_next(acs_conn);
+	data_tx_drain_doi_queue(acs_conn);
 	return 0;
 #endif /* CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION */
 }

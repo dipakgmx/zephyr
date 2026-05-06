@@ -57,7 +57,7 @@ int acs_cp_kex_get_current_key_list(struct acs_procedure *proc)
 
 	{
 		struct net_buf *rsp_buf =
-			acs_prepare_reply_buf(proc, reply_mode.channel, reply_mode.encrypted);
+			acs_prepare_reply_buf(proc, reply_mode.encrypted);
 
 		if (!rsp_buf) {
 			LOG_WRN("buffer pool exhausted");
@@ -91,7 +91,7 @@ static int kex_step_success_response(struct acs_procedure *proc)
 	payload[2] = 0x00;
 
 	struct net_buf *buf =
-		acs_prepare_reply_buf(proc, reply_mode.channel, reply_mode.encrypted);
+		acs_prepare_reply_buf(proc, reply_mode.encrypted);
 
 	if (!buf) {
 		return -ENOMEM;
@@ -207,7 +207,7 @@ static int kex_step_fail_response(struct acs_procedure *proc)
 	payload[2] = 0x01;
 
 	struct net_buf *buf =
-		acs_prepare_reply_buf(proc, reply_mode.channel, reply_mode.encrypted);
+		acs_prepare_reply_buf(proc, reply_mode.encrypted);
 
 	if (!buf) {
 		return -ENOMEM;
@@ -269,7 +269,7 @@ int acs_cp_kex_exchange_kdf(struct acs_procedure *proc, struct net_buf_simple *b
 					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE);
 	}
 
-	rsp_buf = acs_prepare_reply_buf(proc, reply_mode.channel, reply_mode.encrypted);
+	rsp_buf = acs_prepare_reply_buf(proc, reply_mode.encrypted);
 	if (!rsp_buf) {
 		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_KEY_EXCHANGE_KDF,
 					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
@@ -620,7 +620,7 @@ int acs_cp_kex_exchange_ecdh(struct acs_procedure *proc, struct net_buf_simple *
 	{
 		struct acs_reply_mode reply_mode = acs_proc_reply_mode(proc);
 		struct net_buf *rsp_buf =
-			acs_prepare_reply_buf(proc, reply_mode.channel, reply_mode.encrypted);
+			acs_prepare_reply_buf(proc, reply_mode.encrypted);
 
 		if (!rsp_buf) {
 			return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH,
@@ -694,7 +694,7 @@ int acs_cp_kex_ecdh_confirm_code(struct acs_procedure *proc, struct net_buf_simp
 
 	memcpy(acs_conn->kex->client_confirm, req_data.confirm_code, ACS_HMAC_SHA256_SIZE);
 
-	rsp_buf = acs_prepare_reply_buf(proc, reply_mode.channel, reply_mode.encrypted);
+	rsp_buf = acs_prepare_reply_buf(proc, reply_mode.encrypted);
 	if (!rsp_buf) {
 		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_ECDH_CONFIRM_CODE,
 					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
@@ -752,7 +752,7 @@ int acs_cp_kex_ecdh_confirm_rand(struct acs_procedure *proc, struct net_buf_simp
 
 	memcpy(acs_conn->kex->client_random, req_data.random, ACS_HMAC_SHA256_SIZE);
 
-	rsp_buf = acs_prepare_reply_buf(proc, reply_mode.channel, reply_mode.encrypted);
+	rsp_buf = acs_prepare_reply_buf(proc, reply_mode.encrypted);
 	if (!rsp_buf) {
 		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_ECDH_CONFIRM_RAND,
 					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);

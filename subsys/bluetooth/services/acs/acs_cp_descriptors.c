@@ -28,7 +28,7 @@ int acs_cp_handle_get_key_descriptor(struct acs_procedure *proc, struct net_buf_
 	struct acs_reply_mode reply_mode = acs_proc_reply_mode(proc);
 	int build_err;
 
-	rsp_buf = acs_prepare_reply_buf(proc, reply_mode.channel, reply_mode.encrypted);
+	rsp_buf = acs_prepare_reply_buf(proc, reply_mode.encrypted);
 	if (!rsp_buf) {
 		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_GET_KEY_DESCRIPTOR,
 					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
@@ -66,7 +66,7 @@ int acs_cp_handle_get_isc_descriptor(struct acs_procedure *proc, struct net_buf_
 	struct acs_reply_mode reply_mode = acs_proc_reply_mode(proc);
 	int build_err;
 
-	rsp_buf = acs_prepare_reply_buf(proc, reply_mode.channel, reply_mode.encrypted);
+	rsp_buf = acs_prepare_reply_buf(proc, reply_mode.encrypted);
 	if (!rsp_buf) {
 		return acs_cp_rsp_status(
 			proc, BT_ACS_CP_OPCODE_GET_INFORMATION_SECURITY_CONFIGURATION_DESCRIPTOR,
@@ -99,7 +99,7 @@ int acs_cp_handle_get_resource_handle_uuid_map(struct acs_procedure *proc)
 	struct acs_reply_mode reply_mode = acs_proc_reply_mode(proc);
 	int build_err;
 
-	rsp_buf = acs_prepare_reply_buf(proc, reply_mode.channel, reply_mode.encrypted);
+	rsp_buf = acs_prepare_reply_buf(proc, reply_mode.encrypted);
 	if (!rsp_buf) {
 		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_GET_RESOURCE_HANDLE_UUID_MAP,
 					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
@@ -136,7 +136,7 @@ int acs_cp_handle_get_svc_char_uuids(struct acs_procedure *proc, struct net_buf_
 
 	resource_handle = net_buf_simple_pull_le16(buf);
 
-	rsp_buf = acs_prepare_reply_buf(proc, reply_mode.channel, reply_mode.encrypted);
+	rsp_buf = acs_prepare_reply_buf(proc, reply_mode.encrypted);
 	if (!rsp_buf) {
 		return acs_cp_rsp_status(
 			proc, BT_ACS_CP_OPCODE_GET_SERVICE_CHARACTERISTIC_UUIDS_CHAR_RESOURCE_HANDLE,

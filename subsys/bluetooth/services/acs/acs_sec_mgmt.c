@@ -428,7 +428,7 @@ int acs_sec_mgmt_get_key_uri(struct acs_procedure *proc, struct net_buf_simple *
 	{
 		struct acs_reply_mode reply_mode = acs_proc_reply_mode(proc);
 		struct net_buf *nbuf =
-			acs_prepare_reply_buf(proc, reply_mode.channel, reply_mode.encrypted);
+			acs_prepare_reply_buf(proc, reply_mode.encrypted);
 
 		if (!nbuf) {
 			return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_GET_KEY_URI,

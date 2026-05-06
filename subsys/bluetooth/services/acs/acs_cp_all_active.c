@@ -39,7 +39,7 @@ static int all_active_step_isc(struct acs_procedure *proc)
 	struct net_buf_simple operand;
 	struct acs_reply_mode reply_mode = acs_proc_reply_mode(proc);
 
-	buf = acs_prepare_reply_buf(proc, reply_mode.channel, reply_mode.encrypted);
+	buf = acs_prepare_reply_buf(proc, reply_mode.encrypted);
 	if (!buf) {
 		return -ENOMEM;
 	}
@@ -66,7 +66,7 @@ static int all_active_step_key(struct acs_procedure *proc)
 	struct acs_reply_mode reply_mode = acs_proc_reply_mode(proc);
 	int err;
 
-	buf = acs_prepare_reply_buf(proc, reply_mode.channel, reply_mode.encrypted);
+	buf = acs_prepare_reply_buf(proc, reply_mode.encrypted);
 	if (!buf) {
 		return -ENOMEM;
 	}
@@ -132,7 +132,7 @@ int acs_cp_all_active_get(struct acs_procedure *proc)
 	struct acs_reply_mode reply_mode = acs_proc_reply_mode(proc);
 	int err;
 
-	buf = acs_prepare_reply_buf(proc, reply_mode.channel, reply_mode.encrypted);
+	buf = acs_prepare_reply_buf(proc, reply_mode.encrypted);
 	if (buf == NULL) {
 		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_GET_ALL_ACTIVE_DESCRIPTORS,
 					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);

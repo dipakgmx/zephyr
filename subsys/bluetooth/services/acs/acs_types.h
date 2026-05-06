@@ -73,6 +73,29 @@ struct acs_frame {
 };
 
 /**
+ * @brief Build a plain-CP frame from a reassembled segmentation buffer.
+ *
+ * The frame carries @p rx_buf in @c backing_buf — the runtime layer is
+ * responsible for releasing the buffer (or transferring ownership) on every
+ * terminal path. The Data In equivalent is built post-decrypt inside the
+ * unwrap helper and intentionally has @c backing_buf == NULL because the
+ * runtime dispatcher transfers ownership directly out of @c data_rx.
+ */
+static inline struct acs_frame acs_frame_from_cp_rx(struct bt_conn *conn, struct net_buf *rx_buf)
+{
+	return (struct acs_frame){
+		.conn = conn,
+		.resource_handle = 0,
+		.isc_id = 0,
+		.payload = rx_buf->data,
+		.payload_len = rx_buf->len,
+		.source_channel = ACS_SRC_CP,
+		.encrypted = false,
+		.backing_buf = rx_buf,
+	};
+}
+
+/**
  * @brief Result kind from @ref acs_classify_frame.
  *
  * The classifier answers "what kind of work is this?" — it does not allocate
