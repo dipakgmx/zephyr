@@ -21,6 +21,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <errno.h>
 
 #include <zephyr/types.h>
 #include <zephyr/bluetooth/conn.h>

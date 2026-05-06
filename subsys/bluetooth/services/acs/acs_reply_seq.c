@@ -119,7 +119,7 @@ void acs_seq_on_confirm(struct acs_procedure *proc)
 	if (err) {
 		if (proc->kind == ACS_PROC_KIND_PROTECTED_REQ) {
 			LOG_WRN("Protected CP reply sequence advance failed for handle 0x%04x: %d",
-				proc->resource_handle, err);
+				proc->route.resource_handle, err);
 		} else {
 			LOG_WRN("Plain CP reply sequence advance failed: %d", err);
 		}

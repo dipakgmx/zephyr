@@ -112,10 +112,10 @@ void acs_seq_on_confirm(struct acs_procedure *proc);
 /**
  * @brief Lazy-allocate or reset the response staging buffer for @p proc.
  *
- * Plain CP: returns the singleton @c plain_cp_proc.response, no headroom,
+ * Plain CP: returns the singleton @c plain_cp_proc.buffers.response_buf, no headroom,
  * no payload prefix.
  *
- * Protected CP / characteristic: returns @c req->response with
+ * Protected CP / characteristic: returns @c req->buffers.response_buf with
  * @ref ACS_CRYPTO_HEADROOM reserved and the protected-resource handle prefix
  * already pushed, so the handler can append its body bytes directly.
  *
@@ -140,9 +140,9 @@ struct net_buf *acs_prepare_reply_buf(struct acs_procedure *proc, bool encrypted
  *     notification. @p proc must be a protected request.
  *
  * Buffer ownership:
- *   - On success, @c reply->plaintext (== @c proc->response) is borrowed by the
+ *   - On success, @c reply->plaintext (== @c proc->buffers.response_buf) is borrowed by the
  *     TX layer for the lifetime of the send. The caller must not free it.
- *   - On failure, the caller retains ownership of @c proc->response. Plain CP
+ *   - On failure, the caller retains ownership of @c proc->buffers.response_buf. Plain CP
  *     frees it internally on send failure; protected paths leave it on the proc
  *     for a subsequent step or teardown to release.
  *

@@ -63,10 +63,10 @@ void acs_procedure_ref(struct acs_procedure *req,
 		return;
 	}
 
-	__ASSERT(!atomic_test_bit(req->ref_flags, who),
+	__ASSERT(!atomic_test_bit(req->lifetime.ref_flags, who),
 		 "acs_procedure_ref: double-ref who=%d", who);
-	atomic_set_bit(req->ref_flags, who);
-	atomic_inc(&req->ref_count);
+	atomic_set_bit(req->lifetime.ref_flags, who);
+	atomic_inc(&req->lifetime.ref_count);
 }
 
 /**
@@ -77,13 +77,13 @@ static void acs_req_free(struct acs_procedure *req)
 	/* Release the request-input buffer; always owned by the request once
 	 * the protected dispatcher transferred it from acs_conn->data_rx.buf.
 	 */
-	if (req->decrypted_request) {
-		acs_buf_free(req->decrypted_request);
+	if (req->buffers.request_buf) {
+		acs_buf_free(req->buffers.request_buf);
 	}
 
 	/* Release response staging buffer */
-	if (req->response) {
-		acs_buf_free(req->response);
+	if (req->buffers.response_buf) {
+		acs_buf_free(req->buffers.response_buf);
 	}
 
 	k_mem_slab_free(&acs_req_ctx_slab, req);
@@ -96,16 +96,16 @@ void acs_procedure_unref(struct acs_procedure *req,
 		return;
 	}
 
-	__ASSERT(atomic_test_bit(req->ref_flags, who),
+	__ASSERT(atomic_test_bit(req->lifetime.ref_flags, who),
 		 "acs_procedure_unref: double-release who=%d", who);
-	atomic_clear_bit(req->ref_flags, who);
+	atomic_clear_bit(req->lifetime.ref_flags, who);
 
-	if (atomic_dec(&req->ref_count) != 1) {
+	if (atomic_dec(&req->lifetime.ref_count) != 1) {
 		return;
 	}
 
 	if (req->acs_conn) {
-		atomic_ptr_set(&req->acs_conn->pending_reqs[req->req_slot], NULL);
+		atomic_ptr_set(&req->acs_conn->pending_reqs[req->lifetime.req_slot], NULL);
 	}
 
 	acs_req_free(req);
@@ -122,7 +122,7 @@ struct bt_conn *acs_procedure_conn(const struct acs_procedure *req)
 
 uint16_t acs_procedure_resource_handle(const struct acs_procedure *req)
 {
-	return req ? req->resource_handle : 0U;
+	return req ? req->route.resource_handle : 0U;
 }
 
 struct acs_procedure *acs_procedure_alloc(struct bt_acs_conn *acs_conn,
@@ -141,26 +141,26 @@ struct acs_procedure *acs_procedure_alloc(struct bt_acs_conn *acs_conn,
 	}
 
 	memset(req, 0, sizeof(*req));
-	atomic_set(&req->ref_count, 1);
-	atomic_set_bit(req->ref_flags, ACS_PROCEDURE_REF_ALLOC);
+	atomic_set(&req->lifetime.ref_count, 1);
+	atomic_set_bit(req->lifetime.ref_flags, ACS_PROCEDURE_REF_ALLOC);
 	k_work_init(&req->work, acs_req_work_handler);
 	req->acs_conn = acs_conn;
 	req->kind = ACS_PROC_KIND_PROTECTED_REQ;
-	req->resource_handle = resource_handle;
-	req->isc_id = isc_id;
-	req->data_length = data_length;
-	req->data_offset = data_offset;
+	req->route.resource_handle = resource_handle;
+	req->route.isc_id = isc_id;
+	req->buffers.data_length = data_length;
+	req->buffers.data_offset = data_offset;
 
 	/* Response buffer is allocated lazily in acs_prepare_reply_buf
 	 * (called directly from CP / DOI / DON reply builders, or from
 	 * acs_auto_respond).
 	 */
-	req->response = NULL;
+	req->buffers.response_buf = NULL;
 
 	/* Claim a slot in the connection's active request array */
 	for (uint8_t i = 0; i < CONFIG_BT_ACS_MAX_INFLIGHT_REQ_PER_CONN; i++) {
 		if (atomic_ptr_cas(&acs_conn->pending_reqs[i], NULL, req)) {
-			req->req_slot = i;
+			req->lifetime.req_slot = i;
 			return req;
 		}
 	}
@@ -177,7 +177,7 @@ void acs_procedure_release_owner(struct acs_procedure *req)
 		return;
 	}
 
-	if (atomic_test_bit(req->ref_flags, ACS_PROCEDURE_REF_ALLOC)) {
+	if (atomic_test_bit(req->lifetime.ref_flags, ACS_PROCEDURE_REF_ALLOC)) {
 		acs_procedure_unref(req, ACS_PROCEDURE_REF_ALLOC);
 	}
 }
@@ -188,7 +188,7 @@ void acs_procedure_release_tx(struct acs_procedure *req)
 		return;
 	}
 
-	if (atomic_test_bit(req->ref_flags, ACS_PROCEDURE_REF_TX)) {
+	if (atomic_test_bit(req->lifetime.ref_flags, ACS_PROCEDURE_REF_TX)) {
 		acs_procedure_unref(req, ACS_PROCEDURE_REF_TX);
 	}
 }
@@ -206,8 +206,8 @@ void acs_procedure_tx_done(struct acs_procedure *req)
 static int acs_auto_respond(struct acs_procedure *req)
 {
 	const uint8_t *data =
-		req->decrypted_request ? req->decrypted_request->data + req->data_offset : NULL;
-	uint16_t len = req->data_length;
+		req->buffers.request_buf ? req->buffers.request_buf->data + req->buffers.data_offset : NULL;
+	uint16_t len = req->buffers.data_length;
 	ssize_t n;
 	uint8_t props = 0;
 	struct bt_conn *conn = acs_procedure_conn(req);
@@ -332,10 +332,10 @@ void acs_procedure_abort_all(struct bt_acs_conn *acs_conn)
 		req->acs_conn = NULL;
 
 		/* Drop each held reference using the unified API */
-		if (atomic_test_bit(req->ref_flags, ACS_PROCEDURE_REF_ALLOC)) {
+		if (atomic_test_bit(req->lifetime.ref_flags, ACS_PROCEDURE_REF_ALLOC)) {
 			acs_procedure_unref(req, ACS_PROCEDURE_REF_ALLOC);
 		}
-		if (atomic_test_bit(req->ref_flags, ACS_PROCEDURE_REF_TX)) {
+		if (atomic_test_bit(req->lifetime.ref_flags, ACS_PROCEDURE_REF_TX)) {
 			acs_procedure_unref(req, ACS_PROCEDURE_REF_TX);
 		}
 	}
@@ -366,7 +366,7 @@ static void acs_req_work_handler(struct k_work *work)
 		}
 
 		h = acs_rhandle_find_char_handle(entry->char_uuid);
-		if (h != 0U && h == req->resource_handle) {
+		if (h != 0U && h == req->route.resource_handle) {
 			entry->handler(req);
 			handled = true;
 			break;
@@ -377,7 +377,7 @@ static void acs_req_work_handler(struct k_work *work)
 		err = acs_auto_respond(req);
 		if (err) {
 			LOG_WRN("ACS auto-response failed for handle 0x%04x: %d",
-				req->resource_handle, err);
+				req->route.resource_handle, err);
 		}
 	}
 
@@ -386,9 +386,9 @@ static void acs_req_work_handler(struct k_work *work)
 	 * for the indication / notification to confirm — acs_req_free will see
 	 * NULL and skip the free at refcount-zero.
 	 */
-	if (req->decrypted_request) {
-		acs_buf_free(req->decrypted_request);
-		req->decrypted_request = NULL;
+	if (req->buffers.request_buf) {
+		acs_buf_free(req->buffers.request_buf);
+		req->buffers.request_buf = NULL;
 	}
 
 	acs_procedure_release_owner(req);

@@ -158,7 +158,7 @@ static int kex_step_status(struct acs_procedure *proc)
 #endif
 
 	acs_seq_clear(proc);
-	acs_status_indicate(proc->acs_conn->conn);
+	acs_status_indicate(acs_conn->conn);
 	return 0;
 }
 

@@ -34,24 +34,22 @@ int acs_cp_send_reply(struct acs_procedure *proc)
 
 	__ASSERT_NO_MSG(proc != NULL);
 	__ASSERT_NO_MSG(proc->acs_conn != NULL);
-	__ASSERT_NO_MSG(proc->response != NULL);
-	__ASSERT_NO_MSG(proc->response->len > 0);
+	__ASSERT_NO_MSG(proc->buffers.response_buf != NULL);
+	__ASSERT_NO_MSG(proc->buffers.response_buf->len > 0);
 
 	mode = acs_proc_reply_mode(proc);
 
-	reply = (struct acs_reply){
-		.channel = mode.channel,
-		.plaintext = proc->response,
-		.encrypted = mode.encrypted,
-		.needs_confirm = mode.needs_confirm,
-	};
+	reply.channel = mode.channel;
+	reply.plaintext = proc->buffers.response_buf;
+	reply.encrypted = mode.encrypted;
+	reply.needs_confirm = mode.needs_confirm;
 
 	err = acs_tx_submit(proc, &reply);
 	if (err) {
 		acs_seq_abort(proc);
 		if (proc->kind == ACS_PROC_KIND_PROTECTED_REQ) {
 			LOG_WRN("Protected CP DOI queue failed for handle 0x%04x: %d",
-				proc->resource_handle, err);
+				proc->route.resource_handle, err);
 		} else {
 			LOG_WRN("Plain CP response indication failed: %d", err);
 		}
@@ -85,24 +83,24 @@ void acs_cp_on_indicate_done(struct bt_conn *conn, const struct bt_gatt_attr *at
 	if (err) {
 		LOG_WRN("Plain CP indication failed: %d", err);
 		acs_seq_abort(&acs_conn->plain_cp_proc);
-		acs_conn->plain_cp_proc.abort_pending = false;
-		atomic_set(&acs_conn->plain_cp_proc.locked, 0);
+		acs_conn->plain_cp_proc.plain_cp.abort_pending = false;
+		atomic_set(&acs_conn->plain_cp_proc.plain_cp.locked, 0);
 		return;
 	}
 
 	/* Deferred abort: an Abort opcode arrived while this indication was
 	 * in-flight.  The TX channel is now free (tx_in_flight cleared before
 	 * this callback), so tear down the procedure and send ABORT SUCCESS. */
-	if (acs_conn->plain_cp_proc.abort_pending) {
+	if (acs_conn->plain_cp_proc.plain_cp.abort_pending) {
 		struct k_work_sync sync;
 
-		acs_conn->plain_cp_proc.abort_pending = false;
+		acs_conn->plain_cp_proc.plain_cp.abort_pending = false;
 
 		k_work_cancel_sync(&acs_conn->cp_tx.tx_work, &sync);
 		acs_seq_clear(&acs_conn->plain_cp_proc);
-		if (acs_conn->plain_cp_proc.response) {
-			acs_buf_free(acs_conn->plain_cp_proc.response);
-			acs_conn->plain_cp_proc.response = NULL;
+		if (acs_conn->plain_cp_proc.buffers.response_buf) {
+			acs_buf_free(acs_conn->plain_cp_proc.buffers.response_buf);
+			acs_conn->plain_cp_proc.buffers.response_buf = NULL;
 		}
 
 		/* Tear down KEX if in progress. */
@@ -131,7 +129,7 @@ void acs_cp_on_indicate_done(struct bt_conn *conn, const struct bt_gatt_attr *at
 	acs_seq_on_confirm(&acs_conn->plain_cp_proc);
 
 	if (acs_conn->plain_cp_proc.reply_seq.desc == NULL) {
-		atomic_set(&acs_conn->plain_cp_proc.locked, 0);
+		atomic_set(&acs_conn->plain_cp_proc.plain_cp.locked, 0);
 	}
 }
 

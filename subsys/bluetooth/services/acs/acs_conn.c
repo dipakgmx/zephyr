@@ -210,11 +210,11 @@ void acs_conn_cleanup(struct bt_acs_conn *acs_conn)
 	acs_procedure_abort_all(acs_conn);
 
 	/* Reset the plain-CP procedure singleton. */
-	atomic_set(&acs_conn->plain_cp_proc.locked, 0);
-	acs_conn->plain_cp_proc.abort_pending = false;
-	if (acs_conn->plain_cp_proc.response) {
-		acs_buf_free(acs_conn->plain_cp_proc.response);
-		acs_conn->plain_cp_proc.response = NULL;
+	atomic_set(&acs_conn->plain_cp_proc.plain_cp.locked, 0);
+	acs_conn->plain_cp_proc.plain_cp.abort_pending = false;
+	if (acs_conn->plain_cp_proc.buffers.response_buf) {
+		acs_buf_free(acs_conn->plain_cp_proc.buffers.response_buf);
+		acs_conn->plain_cp_proc.buffers.response_buf = NULL;
 	}
 	acs_seg_tx_reset(&acs_conn->cp_tx);
 #if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION)

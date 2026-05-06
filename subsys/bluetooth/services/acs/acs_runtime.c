@@ -56,7 +56,7 @@ int acs_runtime_dispatch_protected_cp_frame(struct acs_frame *frame, struct bt_a
 		return -ENOMEM;
 	}
 
-	req_ctx->decrypted_request = acs_conn->data_rx.buf;
+	req_ctx->buffers.request_buf = acs_conn->data_rx.buf;
 	acs_conn->data_rx.buf = NULL;
 
 	sub_err = acs_cp_dispatch(frame, acs_conn, req_ctx);
@@ -66,9 +66,9 @@ int acs_runtime_dispatch_protected_cp_frame(struct acs_frame *frame, struct bt_a
 	 * we wait for the indication to confirm — acs_req_free will see NULL
 	 * and skip the free at refcount-zero.
 	 */
-	if (req_ctx->decrypted_request) {
-		acs_buf_free(req_ctx->decrypted_request);
-		req_ctx->decrypted_request = NULL;
+	if (req_ctx->buffers.request_buf) {
+		acs_buf_free(req_ctx->buffers.request_buf);
+		req_ctx->buffers.request_buf = NULL;
 	}
 
 	/* If a multi-step reply sequence is active, the sequence now owns the
@@ -114,7 +114,7 @@ int acs_runtime_dispatch_protected_char_frame(struct acs_frame *frame,
 		return -ENOMEM;
 	}
 
-	req_ctx->decrypted_request = acs_conn->data_rx.buf;
+	req_ctx->buffers.request_buf = acs_conn->data_rx.buf;
 	acs_conn->data_rx.buf = NULL;
 
 	k_work_submit(&req_ctx->work);
@@ -218,7 +218,7 @@ ssize_t acs_cp_write(struct bt_conn *conn, const struct bt_gatt_attr *attr, cons
 		is_abort = (frame.payload_len > 0 &&
 			    frame.payload[0] == BT_ACS_CP_OPCODE_ABORT);
 #endif
-		if (!is_abort && !atomic_cas(&acs_conn->plain_cp_proc.locked, 0, 1)) {
+		if (!is_abort && !atomic_cas(&acs_conn->plain_cp_proc.plain_cp.locked, 0, 1)) {
 			acs_seg_rx_reset(&acs_conn->cp_rx);
 			LOG_WRN("procedure already in progress");
 			return BT_GATT_ERR(BT_ATT_ERR_PROCEDURE_IN_PROGRESS);

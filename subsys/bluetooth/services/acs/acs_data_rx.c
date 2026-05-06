@@ -276,4 +276,3 @@ int acs_data_in_unwrap_and_route(struct bt_conn *conn, struct bt_acs_conn *acs_c
 	acs_data_in_build_frame(&pipe, &frame);
 	return acs_runtime_dispatch_frame(&frame, acs_conn);
 }
-

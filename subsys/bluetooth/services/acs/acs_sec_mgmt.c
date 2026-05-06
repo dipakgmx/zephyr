@@ -57,9 +57,10 @@ static inline bool is_active_key_id(uint16_t key_id)
 
 static int invalidate_self_step(struct acs_procedure *proc)
 {
+	struct bt_acs_conn *acs_conn = proc->acs_conn;
 
 	acs_seq_clear(proc);
-	bt_acs_invalidate_security(proc->acs_conn->conn);
+	bt_acs_invalidate_security(acs_conn->conn);
 	return 0;
 }
 
@@ -252,7 +253,7 @@ int acs_sec_mgmt_invalidate_key(struct acs_procedure *proc, struct net_buf_simpl
  *   3. Commit  — only after both checks pass, tear down sequences, KEX, and
  *                data-op state, then send the ABORT SUCCESS response.
  *
- * ABORT bypasses the plain_cp_proc.locked gate in acs_cp_write() (ABORT must be
+ * ABORT bypasses the plain_cp_proc.plain_cp.locked gate in acs_cp_write() (ABORT must be
  * able to preempt an in-progress procedure), so this handler also owns the
  * lock bookkeeping for its own response.
  */
@@ -266,7 +267,7 @@ int acs_sec_mgmt_abort(struct acs_procedure *proc)
 	bool has_work;
 	bool can_commit;
 
-	plain_cp_active = (atomic_get(&acs_conn->plain_cp_proc.locked) == 1);
+	plain_cp_active = (atomic_get(&acs_conn->plain_cp_proc.plain_cp.locked) == 1);
 
 	kex_in_progress = (acs_conn->key_state != BT_ACS_KEY_EXCHANGE_IDLE &&
 			   acs_conn->key_state != BT_ACS_KEY_EXCHANGE_COMPLETE);
@@ -284,7 +285,7 @@ int acs_sec_mgmt_abort(struct acs_procedure *proc)
 	if (!has_work) {
 		LOG_WRN("Abort requested with no in-progress procedure");
 		/* Take the lock for our own response, since no proc holds it. */
-		atomic_set(&acs_conn->plain_cp_proc.locked, 1);
+		atomic_set(&acs_conn->plain_cp_proc.plain_cp.locked, 1);
 		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_ABORT,
 					 BT_ACS_CP_RESPONSE_ABORT_UNSUCCESSFUL);
 	}
@@ -304,7 +305,7 @@ int acs_sec_mgmt_abort(struct acs_procedure *proc)
 
 	if (!can_commit) {
 		LOG_DBG("Abort deferred — indication in flight, will commit on confirm");
-		acs_conn->plain_cp_proc.abort_pending = true;
+		acs_conn->plain_cp_proc.plain_cp.abort_pending = true;
 		return 0;
 	}
 
@@ -315,13 +316,13 @@ int acs_sec_mgmt_abort(struct acs_procedure *proc)
 	if (plain_cp_active) {
 		k_work_cancel_sync(&acs_conn->cp_tx.tx_work, &sync);
 		acs_seq_clear(proc);
-		if (acs_conn->plain_cp_proc.response) {
-			acs_buf_free(acs_conn->plain_cp_proc.response);
-			acs_conn->plain_cp_proc.response = NULL;
+		if (acs_conn->plain_cp_proc.buffers.response_buf) {
+			acs_buf_free(acs_conn->plain_cp_proc.buffers.response_buf);
+			acs_conn->plain_cp_proc.buffers.response_buf = NULL;
 		}
 		/* lock stays held — ABORT now owns it for its own response */
 	} else {
-		atomic_set(&acs_conn->plain_cp_proc.locked, 1);
+		atomic_set(&acs_conn->plain_cp_proc.plain_cp.locked, 1);
 	}
 
 	/* Tear down KEX state (local only — always safe once probed). */

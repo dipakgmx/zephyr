@@ -14,6 +14,14 @@
 #include <zephyr/bluetooth/gatt.h>
 #include <zephyr/bluetooth/services/acs.h>
 
+#include <zephyr/device.h>
+#include <zephyr/drivers/emul.h>
+#include <zephyr/drivers/emul_sensor.h>
+#include <zephyr/drivers/spi.h>
+#include <zephyr/drivers/spi_emul.h>
+#include <zephyr/logging/log.h>
+
+
 #include "acs_internal.h"
 
 #include <zephyr/logging/log.h>
@@ -129,8 +137,12 @@ static int data_tx_encrypt_in_place(struct bt_acs_conn *acs_conn, uint16_t isc_i
 /* Forward declarations for the DOI drain loop and dispatch helpers. */
 static void data_tx_on_indicate_done(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 					  int err, void *user_data);
-static int data_tx_send_notify(struct acs_procedure *req, struct net_buf *plaintext);
-static int data_tx_send_indicate(struct acs_procedure *req, struct net_buf *plaintext);
+#if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_NOTIFICATION)
+static int data_tx_send_notify(struct acs_procedure *req);
+#endif
+#if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION)
+static int data_tx_send_indicate(struct acs_procedure *req);
+#endif
 
 /**
  * @brief Drain the next queued indication if the DOI channel is idle.
@@ -169,16 +181,16 @@ static void data_tx_drain_doi_queue(struct bt_acs_conn *acs_conn)
 		}
 
 		/* The seg-TX engine borrows the buffer for segmented transfer
-		 * but does not own it.  req->response stays alive for the
+		 * but does not own it.  req->buffers.response_buf stays alive for the
 		 * lifetime of the request — multi-step sequences reuse it.
 		 */
 		err = acs_seg_tx_send(&acs_conn->indicate_tx, acs_conn->conn, acs_conn->attr_doi,
-				      req->response, data_tx_on_indicate_done, req);
+				      req->buffers.response_buf, data_tx_on_indicate_done, req);
 		if (!err) {
 			return;
 		}
 		atomic_ptr_cas(&acs_conn->active_indication, req, NULL);
-		LOG_WRN("DOI seg_tx_send failed: %d (handle 0x%04x)", err, req->resource_handle);
+		LOG_WRN("DOI seg_tx_send failed: %d (handle 0x%04x)", err, req->route.resource_handle);
 		acs_procedure_tx_done(req);
 	}
 #else
@@ -272,41 +284,38 @@ static void data_tx_on_indicate_done(struct bt_conn *conn, const struct bt_gatt_
  *                released asynchronously by data_tx_on_indicate_done.
  * They are not merged because their concurrency models differ.
  */
-static int data_tx_send_notify(struct acs_procedure *req, struct net_buf *plaintext)
+#if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_NOTIFICATION)
+static int data_tx_send_notify(struct acs_procedure *req)
 {
-#if !IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_NOTIFICATION)
-	ARG_UNUSED(req);
-	ARG_UNUSED(plaintext);
-	return -ENOTSUP;
-#else
 	struct bt_acs_conn *acs_conn;
+	struct net_buf *buf;
 	int err;
 
 	__ASSERT_NO_MSG(req != NULL);
 	__ASSERT_NO_MSG(req->acs_conn != NULL);
 	__ASSERT_NO_MSG(req->acs_conn->conn != NULL);
-	__ASSERT_NO_MSG(plaintext != NULL);
-	__ASSERT_NO_MSG(plaintext->len > 0);
-	__ASSERT_NO_MSG(plaintext == req->response);
+	__ASSERT_NO_MSG(req->buffers.response_buf != NULL);
+	__ASSERT_NO_MSG(req->buffers.response_buf->len > 0);
 
 	acs_conn = req->acs_conn;
+	buf = req->buffers.response_buf;
 
-	err = data_tx_encrypt_in_place(acs_conn, req->isc_id, plaintext);
+	err = data_tx_encrypt_in_place(acs_conn, req->route.isc_id, buf);
 	if (err) {
-		LOG_WRN("DON encrypt failed for handle 0x%04x: %d", req->resource_handle, err);
+		LOG_WRN("DON encrypt failed for handle 0x%04x: %d", req->route.resource_handle, err);
 		acs_procedure_tx_done(req);
 		return err;
 	}
 
-	err = acs_seg_notify(acs_conn->conn, acs_conn->attr_don, plaintext->data, plaintext->len);
+	err = acs_seg_notify(acs_conn->conn, acs_conn->attr_don, buf->data, buf->len);
 	if (err) {
-		LOG_WRN("DON send failed for handle 0x%04x: %d", req->resource_handle, err);
+		LOG_WRN("DON send failed for handle 0x%04x: %d", req->route.resource_handle, err);
 	}
 
 	acs_procedure_tx_done(req);
 	return err;
-#endif /* CONFIG_BT_ACS_PROTECTED_RESOURCE_NOTIFICATION */
 }
+#endif /* CONFIG_BT_ACS_PROTECTED_RESOURCE_NOTIFICATION */
 
 struct net_buf *acs_prepare_reply_buf(struct acs_procedure *proc, bool encrypted)
 {
@@ -321,14 +330,14 @@ struct net_buf *acs_prepare_reply_buf(struct acs_procedure *proc, bool encrypted
 		__ASSERT_NO_MSG(encrypted);
 	}
 
-	buf = proc->response; /* attempting reusing the response buffer */
+	buf = proc->buffers.response_buf; /* attempting reusing the response buffer */
 	if (!buf) {
 		buf = acs_buf_alloc(K_NO_WAIT);
 		if (!buf) {
 			LOG_ERR("acs_prepare_reply_buf: buffer pool exhausted");
 			return NULL;
 		}
-		proc->response = buf;
+		proc->buffers.response_buf = buf;
 	} else {
 		net_buf_reset(buf);
 	}
@@ -338,7 +347,7 @@ struct net_buf *acs_prepare_reply_buf(struct acs_procedure *proc, bool encrypted
 	}
 
 	if (proc->kind == ACS_PROC_KIND_PROTECTED_REQ) {
-		net_buf_add_le16(buf, proc->resource_handle);
+		net_buf_add_le16(buf, proc->route.resource_handle);
 	}
 
 	return buf;
@@ -359,7 +368,7 @@ int acs_cp_rsp_status(struct acs_procedure *proc, uint8_t req_opcode, uint8_t co
 	if (!buf) {
 		acs_seq_abort(proc);
 		if (proc->kind == ACS_PROC_KIND_PLAIN_CP) {
-			atomic_set(&proc->acs_conn->plain_cp_proc.locked, 0);
+			atomic_set(&proc->acs_conn->plain_cp_proc.plain_cp.locked, 0);
 		}
 		return -ENOMEM;
 	}
@@ -386,7 +395,7 @@ int acs_cp_rsp_status(struct acs_procedure *proc, uint8_t req_opcode, uint8_t co
 		acs_seq_abort(proc);
 		if (proc->kind == ACS_PROC_KIND_PROTECTED_REQ) {
 			LOG_WRN("Protected CP status indication failed for handle 0x%04x: %d",
-				proc->resource_handle, err);
+				proc->route.resource_handle, err);
 		} else {
 			LOG_WRN("Plain CP status indication failed: %d", err);
 		}
@@ -396,22 +405,19 @@ int acs_cp_rsp_status(struct acs_procedure *proc, uint8_t req_opcode, uint8_t co
 }
 
 /* Plain-CP final-mile send. Caller must already hold the busy gate. */
-static int acs_tx_submit_plain_cp(struct acs_procedure *proc,
-				  const struct acs_reply *reply)
+static int acs_tx_submit_plain_cp(struct acs_procedure *proc)
 {
 	struct bt_acs_conn *acs_conn = proc->acs_conn;
 	struct net_buf *rsp_buf;
 	int err;
 
-	__ASSERT_NO_MSG(reply->channel == ACS_REPLY_CP);
 	__ASSERT_NO_MSG(acs_conn != NULL);
 	__ASSERT_NO_MSG(acs_conn->conn != NULL);
 
-	rsp_buf = acs_conn->plain_cp_proc.response;
-	acs_conn->plain_cp_proc.response = NULL;
+	rsp_buf = acs_conn->plain_cp_proc.buffers.response_buf;
+	acs_conn->plain_cp_proc.buffers.response_buf = NULL;
 
 	__ASSERT_NO_MSG(rsp_buf != NULL);
-	__ASSERT_NO_MSG(rsp_buf == reply->plaintext);
 
 	/* Pass the buffer via user_data so the completion callback can free
 	 * it.  The seg-TX engine borrows the buffer but does not own it.
@@ -419,7 +425,7 @@ static int acs_tx_submit_plain_cp(struct acs_procedure *proc,
 	err = acs_seg_tx_send(&acs_conn->cp_tx, acs_conn->conn, acs_conn->attr_cp, rsp_buf,
 			      acs_cp_on_indicate_done, rsp_buf);
 	if (err) {
-		atomic_set(&acs_conn->plain_cp_proc.locked, 0);
+		atomic_set(&acs_conn->plain_cp_proc.plain_cp.locked, 0);
 		acs_buf_free(rsp_buf);
 	}
 	return err;
@@ -440,61 +446,62 @@ int acs_tx_submit(struct acs_procedure *proc, const struct acs_reply *reply)
 		__ASSERT(proc->kind == ACS_PROC_KIND_PLAIN_CP,
 			 "ACS_REPLY_CP requires plain-CP proc");
 		__ASSERT(proc != NULL, "plain-CP proc missing procedure");
-		__ASSERT(reply->plaintext == proc->response,
-			 "ACS_REPLY_CP plaintext must be the staged plain_cp_proc.response");
+		__ASSERT(reply->plaintext == proc->buffers.response_buf,
+			 "ACS_REPLY_CP plaintext must be the staged plain_cp_proc.buffers.response_buf");
 		__ASSERT(!reply->encrypted, "ACS_REPLY_CP must be unencrypted (plain transport)");
 		__ASSERT(reply->needs_confirm,
 			 "ACS_REPLY_CP is always confirmed (segmented indication)");
-		return acs_tx_submit_plain_cp(proc, reply);
+		return acs_tx_submit_plain_cp(proc);
+#if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_NOTIFICATION)
 	case ACS_REPLY_DON:
 		__ASSERT(proc->kind == ACS_PROC_KIND_PROTECTED_REQ,
 			 "ACS_REPLY_DON requires protected-request proc");
 		__ASSERT(proc != NULL, "protected-request proc missing req");
-		__ASSERT(reply->plaintext == proc->response,
-			 "ACS_REPLY_DON plaintext must be the staged req->response");
+		__ASSERT(reply->plaintext == proc->buffers.response_buf,
+			 "ACS_REPLY_DON plaintext must be the staged req->buffers.response_buf");
 		__ASSERT(reply->encrypted, "ACS_REPLY_DON must be encrypted");
 		__ASSERT(!reply->needs_confirm,
 			 "ACS_REPLY_DON is unconfirmed (notification)");
-		return data_tx_send_notify(proc, reply->plaintext);
+		return data_tx_send_notify(proc);
+#endif
+#if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION)
 	case ACS_REPLY_DOI:
 		__ASSERT(proc->kind == ACS_PROC_KIND_PROTECTED_REQ,
 			 "ACS_REPLY_DOI requires protected-request proc");
 		__ASSERT(proc != NULL, "protected-request proc missing req");
-		__ASSERT(reply->plaintext == proc->response,
-			 "ACS_REPLY_DOI plaintext must be the staged req->response");
+		__ASSERT(reply->plaintext == proc->buffers.response_buf,
+			 "ACS_REPLY_DOI plaintext must be the staged req->buffers.response_buf");
 		__ASSERT(reply->encrypted, "ACS_REPLY_DOI must be encrypted");
 		__ASSERT(reply->needs_confirm,
 			 "ACS_REPLY_DOI is always confirmed (segmented indication)");
-		return data_tx_send_indicate(proc, reply->plaintext);
+		return data_tx_send_indicate(proc);
+#endif
 	default:
+		__ASSERT_UNREACHABLE;
 		LOG_ERR("acs_tx_submit: invalid channel %d", (int)reply->channel);
 		return -EINVAL;
 	}
 }
 
-
-static int data_tx_send_indicate(struct acs_procedure *req, struct net_buf *plaintext)
+#if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION)
+static int data_tx_send_indicate(struct acs_procedure *req)
 {
-#if !IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION)
-	ARG_UNUSED(req);
-	ARG_UNUSED(plaintext);
-	return -ENOTSUP;
-#else
 	struct bt_acs_conn *acs_conn;
+	struct net_buf *buf;
 	int err;
 
 	__ASSERT_NO_MSG(req != NULL);
 	__ASSERT_NO_MSG(req->acs_conn != NULL);
 	__ASSERT_NO_MSG(req->acs_conn->conn != NULL);
-	__ASSERT_NO_MSG(plaintext != NULL);
-	__ASSERT_NO_MSG(plaintext->len > 0);
-	__ASSERT_NO_MSG(plaintext == req->response);
+	__ASSERT_NO_MSG(req->buffers.response_buf != NULL);
+	__ASSERT_NO_MSG(req->buffers.response_buf->len > 0);
 
 	acs_conn = req->acs_conn;
+	buf = req->buffers.response_buf;
 
-	err = data_tx_encrypt_in_place(acs_conn, req->isc_id, plaintext);
+	err = data_tx_encrypt_in_place(acs_conn, req->route.isc_id, buf);
 	if (err) {
-		LOG_WRN("DOI encrypt failed for handle 0x%04x: %d", req->resource_handle, err);
+		LOG_WRN("DOI encrypt failed for handle 0x%04x: %d", req->route.resource_handle, err);
 		return err;
 	}
 
@@ -502,5 +509,5 @@ static int data_tx_send_indicate(struct acs_procedure *req, struct net_buf *plai
 	k_fifo_put(&acs_conn->indicate_fifo, req);
 	data_tx_drain_doi_queue(acs_conn);
 	return 0;
-#endif /* CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION */
 }
+#endif /* CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION */

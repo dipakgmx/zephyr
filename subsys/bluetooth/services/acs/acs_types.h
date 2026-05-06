@@ -343,51 +343,41 @@ struct bt_acs_kex_ctx {
 };
 
 /**
- * @brief Live execution state of one ACS Control Point or protected resource procedure.
- *
- * This is the unified procedure object referenced as @c acs_procedure in the
- * runtime model. Two flavours share this struct:
- *
- *  - **Slab-allocated protected procedure**: one per in-flight protected request
- *    (Data In path), allocated from the per-connection slab and tracked in
- *    @c acs_conn->pending_reqs[]. Lifetime is governed by @c ref_count;
- *    @c kind is @ref ACS_PROC_KIND_PROTECTED_REQ.
- *
- *  - **Singleton plain-CP procedure**: embedded in @c bt_acs_conn::plain_cp_proc.
- *    Manages plain ACS Control Point flow on its connection. Lifetime is the
- *    connection's lifetime; @c kind is @ref ACS_PROC_KIND_PLAIN_CP and the slab/refcount/slot
- *    bookkeeping fields are unused. Concurrency on the plain-CP path is gated
- *    by @c locked (single in-flight procedure per connection); the @c locked
- *    field is unused for slab-allocated protected procedures because the slot
- *    pool itself enforces concurrency.
- *
- * Both flavours share a single @c reply_seq state, so the multi-indication
- * reply-sequence engine has one home regardless of dispatch path.
- *
- * The legacy public name @c acs_procedure is retained as the struct
- * tag so existing handler signatures (@ref bt_acs_prot_resource_handler_t and
- * @ref ACS_PROT_RESOURCE_HANDLER_DEFINE) keep working unchanged. The typedef
- * @c acs_procedure below is the conceptual name used by new internal code.
- */
-struct acs_procedure {
-	sys_snode_t node;                  /**< k_fifo linkage for send queue (DOI) */
-	struct bt_acs_conn *acs_conn;      /**< Owning ACS connection; NULL after disconnect */
-	enum acs_proc_kind kind;           /**< Plain CP singleton vs protected request */
-	struct net_buf *response;          /**< Pool buffer for plaintext response staging */
-	struct net_buf *decrypted_request; /**< Reference-counted buffer from pool (request data) */
-	atomic_t ref_count;                /**< Request lifetime refcount (unused for plain CP) */
-	ATOMIC_DEFINE(ref_flags, 2);       /**< Per-caller bitmask (debug: catch double-release) */
-	struct k_work work;                /**< Deferred dispatch work item */
-	struct acs_reply_seq_state reply_seq; /**< Multi-indication reply-sequence state */
+ * @brief Buffers owned by an in-flight procedure.
+*/
+struct acs_proc_buffers {
+	struct net_buf *request_buf;  /**< Reference-counted decrypted request buffer */
+	struct net_buf *response_buf; /**< Pool buffer for plaintext response staging */
+	uint16_t data_offset;         /**< Offset within request_buf->data where payload starts */
+	uint16_t data_length;         /**< Plaintext request payload length */
+};
+
+struct acs_proc_route {
 	uint16_t resource_handle; /**< Protected resource handle (0 for plain CP singleton) */
 	uint16_t isc_id;          /**< ISC_ID associated with this request (0 for plain CP) */
-	uint16_t data_offset;     /**< Offset within decrypted_request->data where payload starts */
-	uint16_t data_length;     /**< Plaintext request payload length */
-	uint8_t req_slot;         /**< Index in acs_conn->pending_reqs[] (unused if singleton) */
-	/* (decrypted_request ownership: implicit — non-NULL ⇒ owned, freed in acs_req_free.) */
-	/* Plain-CP singleton fields (unused for slab-allocated protected procedures): */
-	atomic_t locked;          /**< Plain-CP busy gate: 1 while a procedure is active */
-	bool abort_pending;       /**< Plain-CP deferred-abort flag (indication in flight) */
+};
+
+struct acs_proc_lifetime {
+	atomic_t ref_count;          /**< Request lifetime refcount (unused for plain CP) */
+	ATOMIC_DEFINE(ref_flags, 2); /**< Per-caller bitmask (debug: catch double-release) */
+	uint8_t req_slot;            /**< Index in acs_conn->pending_reqs[] (unused if singleton) */
+};
+
+struct acs_proc_plain_cp_state {
+	atomic_t locked;    /**< Plain-CP busy gate: 1 while a procedure is active */
+	bool abort_pending; /**< Plain-CP deferred-abort flag (indication in flight) */
+};
+
+struct acs_procedure {
+	sys_snode_t node;             /**< k_fifo linkage for send queue (DOI) */
+	struct bt_acs_conn *acs_conn; /**< Owning ACS connection; NULL after disconnect */
+	enum acs_proc_kind kind;      /**< Plain CP singleton vs protected request */
+	struct k_work work;           /**< Deferred dispatch work item */
+	struct acs_reply_seq_state reply_seq; /**< Multi-indication reply-sequence state */
+	struct acs_proc_buffers buffers;      /**< Request/response buffer ownership */
+	struct acs_proc_route route;          /**< Resource routing metadata */
+	struct acs_proc_lifetime lifetime;    /**< Refcount / slot bookkeeping */
+	struct acs_proc_plain_cp_state plain_cp; /**< Plain-CP-only busy/abort interlock */
 };
 
 /**

@@ -258,8 +258,8 @@ static void rmap_dump_entry(const char *kind, const struct bt_acs_rmap_protected
 		bt_uuid_to_str(uuid, uuid_str, sizeof(uuid_str));
 	}
 
-	LOG_DBG("rmap:   protected %s handle=0x%04x uuid=%s num_ops=%u", kind, p->resource_handle,
-		uuid_str, p->num_ops);
+	LOG_DBG("rmap:   protected %s handle=0x%04x uuid=%s num_ops=%u", kind,
+		p->resource_handle, uuid_str, p->num_ops);
 	for (uint8_t j = 0; j < p->num_ops; j++) {
 		LOG_DBG("rmap:     op=0x%04x -> isc=0x%04x", p->ops[j].opcode, p->ops[j].isc_id);
 	}
