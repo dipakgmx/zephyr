@@ -89,6 +89,16 @@ static void acs_req_free(struct acs_procedure *req)
 	k_mem_slab_free(&acs_req_ctx_slab, req);
 }
 
+static void acs_procedure_destroy(struct acs_procedure *req)
+{
+	if (req->registration.pending_slot) {
+		atomic_ptr_set(req->registration.pending_slot, NULL);
+		req->registration.pending_slot = NULL;
+	}
+
+	acs_req_free(req);
+}
+
 void acs_procedure_unref(struct acs_procedure *req,
 				 enum acs_procedure_ref_who who)
 {
@@ -104,11 +114,7 @@ void acs_procedure_unref(struct acs_procedure *req,
 		return;
 	}
 
-	if (req->acs_conn) {
-		atomic_ptr_set(&req->acs_conn->pending_reqs[req->lifetime.req_slot], NULL);
-	}
-
-	acs_req_free(req);
+	acs_procedure_destroy(req);
 }
 
 struct bt_conn *acs_procedure_conn(const struct acs_procedure *req)
@@ -159,8 +165,8 @@ struct acs_procedure *acs_procedure_alloc(struct bt_acs_conn *acs_conn,
 
 	/* Claim a slot in the connection's active request array */
 	for (uint8_t i = 0; i < CONFIG_BT_ACS_MAX_INFLIGHT_REQ_PER_CONN; i++) {
-		if (atomic_ptr_cas(&acs_conn->pending_reqs[i], NULL, req)) {
-			req->lifetime.req_slot = i;
+		if (atomic_ptr_cas(&acs_conn->inflight_reqs[i], NULL, req)) {
+			req->registration.pending_slot = &acs_conn->inflight_reqs[i];
 			return req;
 		}
 	}
@@ -322,7 +328,7 @@ void acs_procedure_abort_all(struct bt_acs_conn *acs_conn)
 
 	/* Atomically detach each request, cancel its work item, and drop held references. */
 	for (uint8_t i = 0; i < CONFIG_BT_ACS_MAX_INFLIGHT_REQ_PER_CONN; i++) {
-		req = atomic_ptr_set(&acs_conn->pending_reqs[i], NULL);
+		req = atomic_ptr_set(&acs_conn->inflight_reqs[i], NULL);
 		if (!req) {
 			continue;
 		}

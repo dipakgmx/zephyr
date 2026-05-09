@@ -23,7 +23,7 @@ LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
 /* Definition below; non-static so the data-out channel layer can pass it
  * as the seg-TX completion callback for plain-CP indications.
  */
-void acs_cp_on_indicate_done(struct bt_conn *conn, const struct bt_gatt_attr *attr, int err,
+void acs_cp_completion_cb(struct bt_conn *conn, const struct bt_gatt_attr *attr, int err,
 			     void *user_data);
 
 int acs_cp_send_reply(struct acs_procedure *proc)
@@ -69,7 +69,7 @@ int acs_cp_send_reply(struct acs_procedure *proc)
  * @param err       0 on confirm, negative errno if the indication failed.
  * @param user_data Unused.
  */
-void acs_cp_on_indicate_done(struct bt_conn *conn, const struct bt_gatt_attr *attr, int err,
+void acs_cp_completion_cb(struct bt_conn *conn, const struct bt_gatt_attr *attr, int err,
 			     void *user_data)
 {
 	struct net_buf *rsp_buf = user_data;

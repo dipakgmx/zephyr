@@ -295,7 +295,6 @@ ssize_t acs_data_in_write(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 					      acs_conn->data_rx.buf->len);
 
 		proc_err = acs_data_in_unwrap_and_route(conn, acs_conn, &simple);
-		attr_handle = bt_gatt_attr_get_handle(attr);
 
 		/*
 		 * On success the buffer is either owned by the request context

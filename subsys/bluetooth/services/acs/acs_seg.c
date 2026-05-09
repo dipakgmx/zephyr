@@ -25,7 +25,7 @@ static inline uint8_t seg_hdr_build(bool first, bool last, uint8_t counter)
 int acs_seg_notify(struct bt_conn *conn, const struct bt_gatt_attr *attr, const uint8_t *data,
 		   uint16_t len)
 {
-	uint8_t pdu[ACS_SEG_HDR_SIZE + CONFIG_BT_ACS_MAX_SEGMENT_SIZE];
+	uint8_t pdu[ACS_SEG_CTX_PDU_SIZE];
 	uint16_t seg_payload;
 	uint16_t offset;
 	uint8_t counter;
@@ -36,7 +36,7 @@ int acs_seg_notify(struct bt_conn *conn, const struct bt_gatt_attr *attr, const 
 	}
 
 	seg_payload = MIN(ACS_SEG_PAYLOAD_SIZE(bt_gatt_get_mtu(conn)),
-			  (uint16_t)CONFIG_BT_ACS_MAX_SEGMENT_SIZE);
+			  (uint16_t)(sizeof(pdu) - ACS_SEG_HDR_SIZE));
 
 	if (seg_payload == 0) {
 		return -ENOMEM;
@@ -251,13 +251,13 @@ static void acs_seg_tx_confirm_cb(struct bt_conn *conn, struct bt_gatt_indicate_
 
 	LOG_DBG("seg_tx: indication confirmed, transfer complete total_len=%u", buf_len);
 
-	/* Snapshot callbacks before resetting state so tx_on_complete can re-arm. */
-	acs_seg_tx_on_complete_t cb = ctx->tx_on_complete;
-	void *ud = ctx->tx_on_complete_data;
+	/* Snapshot callbacks before resetting state so completion_cb can re-arm. */
+	acs_seg_tx_completion_cb_t cb = ctx->completion_cb;
+	void *ud = ctx->completion_cb_data;
 	const struct bt_gatt_attr *attr = ctx->tx_attr;
 
-	ctx->tx_on_complete = NULL;
-	ctx->tx_on_complete_data = NULL;
+	ctx->completion_cb = NULL;
+	ctx->completion_cb_data = NULL;
 
 	bt_conn_unref(ctx->tx_conn);
 	ctx->tx_conn = NULL;
@@ -272,8 +272,8 @@ static void acs_seg_tx_confirm_cb(struct bt_conn *conn, struct bt_gatt_indicate_
 	return;
 
 cleanup_err:
-	acs_seg_tx_on_complete_t err_cb = ctx->tx_on_complete;
-	void *err_ud = ctx->tx_on_complete_data;
+	acs_seg_tx_completion_cb_t err_cb = ctx->completion_cb;
+	void *err_ud = ctx->completion_cb_data;
 	const struct bt_gatt_attr *err_attr = ctx->tx_attr;
 
 	if (ctx->tx_conn) {
@@ -283,8 +283,8 @@ cleanup_err:
 	ctx->tx_offset = 0;
 	ctx->tx_counter = 0;
 	ctx->tx_attr = NULL;
-	ctx->tx_on_complete = NULL;
-	ctx->tx_on_complete_data = NULL;
+	ctx->completion_cb = NULL;
+	ctx->completion_cb_data = NULL;
 	seg_tx_detach_buf(ctx);
 	if (err_cb) {
 		err_cb(conn, err_attr, -EIO, err_ud);
@@ -303,7 +303,7 @@ static void acs_seg_tx_work_handler(struct k_work *work)
 	bool is_last;
 	int err;
 
-	acs_seg_tx_on_complete_t cb;
+	acs_seg_tx_completion_cb_t cb;
 	void *ud;
 	const struct bt_gatt_attr *attr;
 	struct bt_conn *conn;
@@ -367,8 +367,8 @@ static void acs_seg_tx_work_handler(struct k_work *work)
 	return;
 
 cleanup:
-	cb = ctx->tx_on_complete;
-	ud = ctx->tx_on_complete_data;
+	cb = ctx->completion_cb;
+	ud = ctx->completion_cb_data;
 	attr = ctx->tx_attr;
 	conn = ctx->tx_conn;
 
@@ -376,8 +376,8 @@ cleanup:
 	ctx->tx_offset = 0;
 	ctx->tx_counter = 0;
 	ctx->tx_attr = NULL;
-	ctx->tx_on_complete = NULL;
-	ctx->tx_on_complete_data = NULL;
+	ctx->completion_cb = NULL;
+	ctx->completion_cb_data = NULL;
 	seg_tx_detach_buf(ctx);
 	if (cb) {
 		cb(conn, attr, err, ud);
@@ -398,8 +398,8 @@ void acs_seg_tx_init(struct acs_seg_tx_ctx *ctx)
 	ctx->tx_attr = NULL;
 	ctx->tx_conn = NULL;
 	ctx->buf = NULL;
-	ctx->tx_on_complete = NULL;
-	ctx->tx_on_complete_data = NULL;
+	ctx->completion_cb = NULL;
+	ctx->completion_cb_data = NULL;
 	k_work_init(&ctx->tx_work, acs_seg_tx_work_handler);
 }
 
@@ -427,13 +427,13 @@ void acs_seg_tx_reset(struct acs_seg_tx_ctx *ctx)
 	/* Release buffer if present */
 	seg_tx_detach_buf(ctx);
 
-	ctx->tx_on_complete = NULL;
-	ctx->tx_on_complete_data = NULL;
+	ctx->completion_cb = NULL;
+	ctx->completion_cb_data = NULL;
 }
 
 int acs_seg_tx_send(struct acs_seg_tx_ctx *ctx, struct bt_conn *conn,
 		    const struct bt_gatt_attr *attr, struct net_buf *buf,
-		    acs_seg_tx_on_complete_t tx_on_complete, void *user_data)
+		    acs_seg_tx_completion_cb_t completion_cb, void *user_data)
 {
 	__ASSERT_NO_MSG(ctx != NULL);
 	__ASSERT_NO_MSG(conn != NULL);
@@ -451,8 +451,8 @@ int acs_seg_tx_send(struct acs_seg_tx_ctx *ctx, struct bt_conn *conn,
 	ctx->tx_offset = 0;
 	ctx->tx_counter = 0;
 	ctx->tx_attr = attr;
-	ctx->tx_on_complete = tx_on_complete;
-	ctx->tx_on_complete_data = user_data;
+	ctx->completion_cb = completion_cb;
+	ctx->completion_cb_data = user_data;
 
 	__ASSERT_NO_MSG(ctx->tx_conn == NULL);
 	ctx->tx_conn = bt_conn_ref(conn);

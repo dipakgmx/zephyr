@@ -20,7 +20,7 @@
  *   - reply staging and submission (acs_prepare_reply_buf, acs_tx_submit,
  *     acs_cp_send_reply, acs_cp_rsp_status)
  *   - the CP opcode dispatcher (acs_cp_dispatch) and its plain-CP indication
- *     completion callback (acs_cp_on_indicate_done)
+ *     completion callback (acs_cp_completion_cb)
  *
  * Crypto-side helpers live in acs_crypto.h; transport entry points live in
  * acs_runtime.h.
@@ -107,8 +107,6 @@ void acs_seq_abort(struct acs_procedure *proc);
  */
 void acs_seq_on_confirm(struct acs_procedure *proc);
 
-/* ---- Reply staging + submission ----------------------------------------- */
-
 /**
  * @brief Lazy-allocate or reset the response staging buffer for @p proc.
  *
@@ -131,10 +129,10 @@ struct net_buf *acs_prepare_reply_buf(struct acs_procedure *proc, bool encrypted
  *
  * Decides the transport family from @p reply->channel:
  *   - @ref ACS_REPLY_CP  — plain segmented CP indication on @c acs_conn->cp_tx,
- *     completion via @ref acs_cp_on_indicate_done. @p proc must be the plain-CP
+ *     completion via @ref acs_cp_completion_cb. @p proc must be the plain-CP
  *     singleton.
  *   - @ref ACS_REPLY_DOI — encrypts in place, queues on @c indicate_fifo and
- *     drains it; completion via @c data_tx_on_indicate_done. @p proc must
+ *     drains it; completion via @c data_tx_completion_cb. @p proc must
  *     be a protected request.
  *   - @ref ACS_REPLY_DON — encrypts in place, sends an unconfirmed segmented
  *     notification. @p proc must be a protected request.
@@ -196,7 +194,7 @@ int acs_cp_dispatch(struct acs_frame *frame, struct bt_acs_conn *acs_conn,
  * Exposed so the data-out channel layer can pass it as the completion handler
  * for plain-CP segmented indications.
  */
-void acs_cp_on_indicate_done(struct bt_conn *conn, const struct bt_gatt_attr *attr, int err,
+void acs_cp_completion_cb(struct bt_conn *conn, const struct bt_gatt_attr *attr, int err,
 			     void *user_data);
 
 #ifdef __cplusplus

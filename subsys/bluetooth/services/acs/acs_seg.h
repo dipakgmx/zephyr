@@ -54,15 +54,21 @@ extern "C" {
 #define ACS_SEG_CTX_PDU_SIZE (ACS_SEG_HDR_SIZE + CONFIG_BT_ACS_SEG_TX_SCRATCH_PAYLOAD)
 
 /**
- * @brief Completion callback invoked when all TX indication segments have been
- *        confirmed (or after the first failure).
+ * @brief Completion callback invoked when a full segmented indication transfer
+ *        completes (or after the first failure).
+ *
+ * Called once per logical ACS payload, not once per segment.
  *
  * @param conn       Connection the indication was sent on.
  * @param attr       GATT attribute that was indicated.
  * @param err        0 on success, negative errno on failure.
- * @param user_data  Opaque pointer passed to acs_seg_tx_send().
+ * @param user_data  Caller-owned completion context passed through
+ *                   @ref acs_seg_tx_send so higher layers can resume or
+ *                   clean up the object associated with this transfer
+ *                   (for example a staged CP response buffer or an
+ *                   in-flight @ref acs_procedure).
  */
-typedef void (*acs_seg_tx_on_complete_t)(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+typedef void (*acs_seg_tx_completion_cb_t)(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 					 int err, void *user_data);
 
 /**
@@ -109,8 +115,8 @@ struct acs_seg_tx_ctx {
 	struct net_buf *buf;                       /**< Borrowed from pool; set before TX */
 	const struct bt_gatt_attr *tx_attr;        /**< Characteristic value attribute */
 	struct bt_conn *tx_conn;                   /**< Connection ref held during TX */
-	acs_seg_tx_on_complete_t tx_on_complete;   /**< Completion callback */
-	void *tx_on_complete_data;                 /**< Opaque callback user data */
+	acs_seg_tx_completion_cb_t completion_cb;   /**< Completion callback */
+	void *completion_cb_data;                 /**< Opaque callback user data */
 	uint8_t tx_scratch[ACS_SEG_CTX_PDU_SIZE];  /**< PDU scratch: seg header + one chunk */
 	uint16_t tx_offset;                        /**< Bytes already indicated */
 	uint8_t tx_counter;                        /**< Rolling segment counter */
@@ -206,14 +212,14 @@ void acs_seg_tx_reset(struct acs_seg_tx_ctx *ctx);
  * @param conn  Connection to indicate on (ref taken internally).
  * @param attr  GATT attribute to indicate.
  * @param buf   Full payload buffer to send.
- * @param tx_on_complete Completion callback invoked after all segments are confirmed.
+ * @param completion_cb Completion callback invoked after all segments are confirmed.
  * @param user_data Opaque callback user data.
  *
  * @return 0 on success, negative errno on failure.
  */
 int acs_seg_tx_send(struct acs_seg_tx_ctx *ctx, struct bt_conn *conn,
 		    const struct bt_gatt_attr *attr, struct net_buf *buf,
-		    acs_seg_tx_on_complete_t tx_on_complete, void *user_data);
+		    acs_seg_tx_completion_cb_t completion_cb, void *user_data);
 
 #ifdef __cplusplus
 }

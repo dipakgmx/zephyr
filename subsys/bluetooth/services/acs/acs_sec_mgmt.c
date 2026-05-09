@@ -274,7 +274,7 @@ int acs_sec_mgmt_abort(struct acs_procedure *proc)
 
 	data_ops_pending = false;
 	for (uint8_t i = 0; i < CONFIG_BT_ACS_MAX_INFLIGHT_REQ_PER_CONN; i++) {
-		if (atomic_ptr_get(&acs_conn->pending_reqs[i]) != NULL) {
+		if (atomic_ptr_get(&acs_conn->inflight_reqs[i]) != NULL) {
 			data_ops_pending = true;
 			break;
 		}

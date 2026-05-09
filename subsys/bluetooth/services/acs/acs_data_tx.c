@@ -135,7 +135,7 @@ static int data_tx_encrypt_in_place(struct bt_acs_conn *acs_conn, uint16_t isc_i
 }
 
 /* Forward declarations for the DOI drain loop and dispatch helpers. */
-static void data_tx_on_indicate_done(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+static void data_tx_completion_cb(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 					  int err, void *user_data);
 #if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_NOTIFICATION)
 static int data_tx_send_notify(struct acs_procedure *req);
@@ -185,7 +185,7 @@ static void data_tx_drain_doi_queue(struct bt_acs_conn *acs_conn)
 		 * lifetime of the request — multi-step sequences reuse it.
 		 */
 		err = acs_seg_tx_send(&acs_conn->indicate_tx, acs_conn->conn, acs_conn->attr_doi,
-				      req->buffers.response_buf, data_tx_on_indicate_done, req);
+				      req->buffers.response_buf, data_tx_completion_cb, req);
 		if (!err) {
 			return;
 		}
@@ -242,7 +242,7 @@ drain:
  * defers the next reply-sequence step to a work item or drains the next
  * independent request from the FIFO.
  */
-static void data_tx_on_indicate_done(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+static void data_tx_completion_cb(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 					  int err, void *user_data)
 {
 	struct acs_procedure *req = user_data;
@@ -281,7 +281,7 @@ static void data_tx_on_indicate_done(struct bt_conn *conn, const struct bt_gatt_
  *   - notify   : synchronous one-shot send via acs_seg_notify; releases TX ref
  *                immediately on completion or error.
  *   - indicate : queued via FIFO and drained by data_tx_drain_doi_queue; TX ref
- *                released asynchronously by data_tx_on_indicate_done.
+ *                released asynchronously by data_tx_completion_cb.
  * They are not merged because their concurrency models differ.
  */
 #if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_NOTIFICATION)
@@ -423,7 +423,7 @@ static int acs_tx_submit_plain_cp(struct acs_procedure *proc)
 	 * it.  The seg-TX engine borrows the buffer but does not own it.
 	 */
 	err = acs_seg_tx_send(&acs_conn->cp_tx, acs_conn->conn, acs_conn->attr_cp, rsp_buf,
-			      acs_cp_on_indicate_done, rsp_buf);
+			      acs_cp_completion_cb, rsp_buf);
 	if (err) {
 		atomic_set(&acs_conn->plain_cp_proc.plain_cp.locked, 0);
 		acs_buf_free(rsp_buf);

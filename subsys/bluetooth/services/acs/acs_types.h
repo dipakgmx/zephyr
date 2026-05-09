@@ -360,7 +360,11 @@ struct acs_proc_route {
 struct acs_proc_lifetime {
 	atomic_t ref_count;          /**< Request lifetime refcount (unused for plain CP) */
 	ATOMIC_DEFINE(ref_flags, 2); /**< Per-caller bitmask (debug: catch double-release) */
-	uint8_t req_slot;            /**< Index in acs_conn->pending_reqs[] (unused if singleton) */
+};
+
+struct acs_proc_registration {
+	/** Published slot in acs_conn->pending_reqs[] (NULL for plain CP singleton). */
+	atomic_ptr_t *pending_slot;
 };
 
 struct acs_proc_plain_cp_state {
@@ -376,7 +380,8 @@ struct acs_procedure {
 	struct acs_reply_seq_state reply_seq; /**< Multi-indication reply-sequence state */
 	struct acs_proc_buffers buffers;      /**< Request/response buffer ownership */
 	struct acs_proc_route route;          /**< Resource routing metadata */
-	struct acs_proc_lifetime lifetime;    /**< Refcount / slot bookkeeping */
+	struct acs_proc_lifetime lifetime;    /**< Refcount bookkeeping */
+	struct acs_proc_registration registration; /**< Connection slot registration */
 	struct acs_proc_plain_cp_state plain_cp; /**< Plain-CP-only busy/abort interlock */
 };
 
@@ -429,7 +434,7 @@ struct bt_acs_conn {
 	struct acs_seg_rx_ctx cp_rx;   /**< CP path RX reassembly context */
 	struct acs_seg_rx_ctx data_rx; /**< Data In path RX reassembly context */
 	/** In-flight request slots, one per concurrent protected request. */
-	atomic_ptr_t pending_reqs[CONFIG_BT_ACS_MAX_INFLIGHT_REQ_PER_CONN];
+	atomic_ptr_t inflight_reqs[CONFIG_BT_ACS_MAX_INFLIGHT_REQ_PER_CONN];
 #if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION)
 	struct k_fifo indicate_fifo;    /**< Pending Data Out Indicate response FIFO */
 	atomic_ptr_t active_indication; /**< Currently in-flight DOI response slot */
