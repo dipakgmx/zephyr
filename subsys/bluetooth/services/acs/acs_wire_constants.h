@@ -48,8 +48,7 @@ extern "C" {
  *   - 1 for plain CP / DOI wire TX
  *   - 2 per inflight protected request slot (plaintext input + plaintext response)
  */
-#define ACS_BUF_COUNT                                                                              \
-	(CONFIG_BT_MAX_CONN * (3 + (2 * CONFIG_BT_ACS_MAX_INFLIGHT_REQ_PER_CONN)))
+#define ACS_BUF_COUNT (CONFIG_BT_MAX_CONN * (3 + (2 * CONFIG_BT_ACS_MAX_INFLIGHT_REQ_PER_CONN)))
 
 /** @brief ACS Status characteristic size: 1 byte flags + 2 bytes map_id */
 #define ACS_STATUS_SIZE 3

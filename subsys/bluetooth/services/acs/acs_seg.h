@@ -36,11 +36,11 @@ extern "C" {
  *   Bit 1: Last Segment
  *   Bits 2-7: Rolling Segment Counter (0-63, wraps)
  */
-#define ACS_SEG_FIRST_SEGMENT_BIT   0
-#define ACS_SEG_LAST_SEGMENT_BIT    1
-#define ACS_SEG_COUNTER_MASK GENMASK(7, 2)
+#define ACS_SEG_FIRST_SEGMENT_BIT 0
+#define ACS_SEG_LAST_SEGMENT_BIT  1
+#define ACS_SEG_COUNTER_MASK      GENMASK(7, 2)
 /* (1U << 6): counter occupies 6 bits (GENMASK(7,2)); wraps at 64. */
-#define ACS_SEG_COUNTER_MAX  64
+#define ACS_SEG_COUNTER_MAX       64
 
 /** Single-segment (complete) PDU header: First=1, Last=1, Counter=0 */
 #define ACS_SEG_SINGLE_PDU (BIT(ACS_SEG_FIRST_SEGMENT_BIT) | BIT(ACS_SEG_LAST_SEGMENT_BIT))
@@ -69,14 +69,14 @@ extern "C" {
  *                   in-flight @ref acs_procedure).
  */
 typedef void (*acs_seg_tx_completion_cb_t)(struct bt_conn *conn, const struct bt_gatt_attr *attr,
-					 int err, void *user_data);
+					   int err, void *user_data);
 
 /**
  * @brief Return codes for acs_seg_rx_process().
  */
 enum acs_seg_rx_result {
 	ACS_SEG_RX_COMPLETE = 0,      /**< Payload fully reassembled in ctx->buf */
-	ACS_SEG_RX_PENDING = 1,      /**< Mid-stream segment buffered; not yet complete */
+	ACS_SEG_RX_PENDING = 1,       /**< Mid-stream segment buffered; not yet complete */
 	ACS_SEG_RX_ERR_COUNTER = -1,  /**< Invalid rolling counter */
 	ACS_SEG_RX_ERR_OVERFLOW = -2, /**< Segment too large for buffer */
 	ACS_SEG_RX_ERR_ORPHAN = -3,   /**< Last/continuation without preceding First */
@@ -115,8 +115,8 @@ struct acs_seg_tx_ctx {
 	struct net_buf *buf;                       /**< Borrowed from pool; set before TX */
 	const struct bt_gatt_attr *tx_attr;        /**< Characteristic value attribute */
 	struct bt_conn *tx_conn;                   /**< Connection ref held during TX */
-	acs_seg_tx_completion_cb_t completion_cb;   /**< Completion callback */
-	void *completion_cb_data;                 /**< Opaque callback user data */
+	acs_seg_tx_completion_cb_t completion_cb;  /**< Completion callback */
+	void *completion_cb_data;                  /**< Opaque callback user data */
 	uint8_t tx_scratch[ACS_SEG_CTX_PDU_SIZE];  /**< PDU scratch: seg header + one chunk */
 	uint16_t tx_offset;                        /**< Bytes already indicated */
 	uint8_t tx_counter;                        /**< Rolling segment counter */

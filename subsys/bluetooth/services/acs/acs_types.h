@@ -15,7 +15,6 @@
 #ifndef BT_GATT_ACS_TYPES_H_
 #define BT_GATT_ACS_TYPES_H_
 
-#include <zephyr/types.h>
 #include <zephyr/kernel.h>
 #include <zephyr/sys/atomic.h>
 #include <zephyr/sys/slist.h>
@@ -24,17 +23,17 @@
 #include <zephyr/bluetooth/services/acs.h>
 #include <psa/crypto.h>
 
-#include "acs_wire_constants.h"
 #include "acs_seg.h"
 #include "acs_cp.h"
+#include "acs_key_desc.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 struct acs_procedure; /**< Defined below; forward-declared for bt_acs_conn */
-struct bt_acs_conn;  /**< Defined below; forward-declared for struct acs_procedure */
-struct acs_seq_desc; /**< Defined below; forward-declared for acs_reply_seq_state */
+struct bt_acs_conn;   /**< Defined below; forward-declared for struct acs_procedure */
+struct acs_seq_desc;  /**< Defined below; forward-declared for acs_reply_seq_state */
 
 /**
  * @brief Source GATT characteristic that produced an inbound frame.
@@ -62,14 +61,14 @@ enum acs_source_channel {
  *   every terminal path.
  */
 struct acs_frame {
-	struct bt_conn *conn;             /**< Connection that produced the frame */
-	uint16_t resource_handle;         /**< Inner resource handle (0 until unwrap for Data In) */
-	uint16_t isc_id;                  /**< ISC_ID (0 for plain CP) */
-	const uint8_t *payload;           /**< Pointer to current logical payload */
-	uint16_t payload_len;             /**< Length of @p payload */
+	struct bt_conn *conn;     /**< Connection that produced the frame */
+	uint16_t resource_handle; /**< Inner resource handle (0 until unwrap for Data In) */
+	uint16_t isc_id;          /**< ISC_ID (0 for plain CP) */
+	const uint8_t *payload;   /**< Pointer to current logical payload */
+	uint16_t payload_len;     /**< Length of @p payload */
 	enum acs_source_channel source_channel; /**< Originating ACS characteristic */
-	bool encrypted;                   /**< True between channel RX and unwrap */
-	struct net_buf *backing_buf;      /**< Owns request storage; runtime releases */
+	bool encrypted;                         /**< True between channel RX and unwrap */
+	struct net_buf *backing_buf;            /**< Owns request storage; runtime releases */
 };
 
 /**
@@ -102,8 +101,9 @@ static inline struct acs_frame acs_frame_from_cp_rx(struct bt_conn *conn, struct
  * state and does not dispatch.
  */
 enum acs_route_kind {
-	ACS_ROUTE_ACS_CP = 0,            /**< Plain ACS Control Point opcode */
-	ACS_ROUTE_PROTECTED_CHAR = 1,    /**< Protected characteristic request (auto-respond / handler) */
+	ACS_ROUTE_ACS_CP = 0, /**< Plain ACS Control Point opcode */
+	ACS_ROUTE_PROTECTED_CHAR =
+		1, /**< Protected characteristic request (auto-respond / handler) */
 	ACS_ROUTE_PROTECTED_SERVICE_CP = 2, /**< Protected service Control Point request */
 };
 
@@ -197,6 +197,8 @@ enum bt_acs_key_exchange_state {
 	BT_ACS_KEY_EXCHANGE_COMPLETE,         /**< Session key derived and ready for use */
 };
 
+struct bt_acs_kex_ctx;
+
 /**
  * @brief Discriminator for which caller holds a reference on a request context.
  */
@@ -232,23 +234,47 @@ struct acs_reply_seq_state {
 };
 
 /**
- * @brief Persistent per-connection crypto session (survives key exchange).
+ * @brief Runtime state for one live ACS key on a connection.
+ */
+struct bt_acs_runtime_key_state {
+	/** Static key descriptor that this runtime state is bound to. */
+	const struct bt_acs_key_desc_record *key_desc;
+	/** Imported PSA key handle. 0 means this current key is not installed/usable. */
+	psa_key_id_t psa_key_id;
+	/** Key material retained in RAM for restore/invalidate/derive flows. */
+	uint8_t key[CONFIG_BT_ACS_SESSION_KEY_SIZE];
+	/** TX nonce counter consumed by the AC Server. */
+	uint32_t tx_nonce_counter;
+	/** RX nonce counter expected from the AC Client. */
+	uint32_t rx_nonce_counter;
+};
+
+static inline uint16_t acs_runtime_key_id(const struct bt_acs_runtime_key_state *key_state)
+{
+	return (key_state && key_state->key_desc) ? key_state->key_desc->key_id : 0U;
+}
+
+/**
+ * @brief Persistent per-connection ACS crypto state.
  */
 struct bt_acs_crypto_session {
-	/** Operational AEAD key — whichever key is currently loaded for
-	 *  encryption/decryption.  Holds the ECDHKey (parent) after ECDH
-	 *  exchange, or the KDF-derived child key after standalone KDF.
-	 *  @c kdf_child_active in bt_acs_conn tracks which one is present.
-	 *  The original parent is preserved in @c ecdh_parent_key. */
-	uint8_t active_key[CONFIG_BT_ACS_SESSION_KEY_SIZE];
+	/** Runtime live-key states for this connection.
+	 *
+	 * Only key-exchange records become current keys:
+	 * ECDH, KDF, and OOB. Algorithm records remain compile-time descriptors
+	 * that resolve to one of these current keys via their parent Key_ID
+	 * relation.
+	 */
+	struct bt_acs_runtime_key_state current_keys[ACS_KEY_ID_COUNT];
+	/** Key-exchange phase of the currently active ACS security procedure. */
+	enum bt_acs_key_exchange_state key_state;
+	/** Transient key-exchange scratch state, if a handshake is active. */
+	struct bt_acs_kex_ctx *kex;
 #if IS_ENABLED(CONFIG_BT_ACS_HAS_NONCE_FIXED)
 	uint8_t server_nonce_fixed[CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE]; /**< Server fixed nonce */
 	uint8_t client_nonce_fixed[CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE]; /**< Client fixed nonce */
 	bool client_nonce_set; /**< Set in this connection or restored from NVS */
 #endif
-	uint32_t tx_nonce_counter; /**< TX nonce counter */
-	uint32_t rx_nonce_counter; /**< RX nonce counter */
-	psa_key_id_t psa_key_id;   /**< Persistent PSA key handle (0 when not imported) */
 };
 
 /**
@@ -268,22 +294,21 @@ struct bt_acs_session_store {
 	/** ECDH/OOB exchanged parent key (spec §4.4.3.12: "top-level parent key").
 	 *  When KDF is active, the child "session" key is in @c child_key. */
 	uint8_t parent_key[CONFIG_BT_ACS_SESSION_KEY_SIZE];
+	uint16_t parent_key_id; /**< Key_ID of @c parent_key (ECDH or OOB). */
 #if IS_ENABLED(CONFIG_BT_ACS_HAS_NONCE_FIXED)
 	uint8_t server_nonce_fixed[CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE]; /**< Server fixed nonce */
 	uint8_t client_nonce_fixed[CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE]; /**< Client fixed nonce */
 #endif
-	uint32_t tx_nonce_counter;   /**< Reserved (always 0 when KDF active; parent has no AEAD
-					nonces) */
-	uint32_t rx_nonce_counter;   /**< Reserved (always 0 when KDF active; parent has no AEAD
-					nonces) */
+	uint32_t tx_nonce_counter;   /**< Parent TX nonce counter */
+	uint32_t rx_nonce_counter;   /**< Parent RX nonce counter */
 	uint16_t restriction_map_id; /**< Active restriction map ID */
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF) && !IS_ENABLED(CONFIG_BT_ACS_KDF_SESSION_KEY)
 	/** When true, the KDF child key below is valid and should be restored as
 	 *  the active AEAD key; parent_key holds the ECDH parent for reference. */
 	bool kdf_child_valid;
 	uint8_t child_key[CONFIG_BT_ACS_SESSION_KEY_SIZE]; /**< KDF-derived child key */
-	uint32_t kdf_tx_nonce_counter; /**< TX nonce counter consumed against the child key */
-	uint32_t kdf_rx_nonce_counter; /**< RX nonce counter consumed against the child key */
+	uint32_t kdf_tx_nonce_counter;                     /**< Child TX nonce counter */
+	uint32_t kdf_rx_nonce_counter;                     /**< Child RX nonce counter */
 #endif
 };
 
@@ -344,7 +369,7 @@ struct bt_acs_kex_ctx {
 
 /**
  * @brief Buffers owned by an in-flight procedure.
-*/
+ */
 struct acs_proc_buffers {
 	struct net_buf *request_buf;  /**< Reference-counted decrypted request buffer */
 	struct net_buf *response_buf; /**< Pool buffer for plaintext response staging */
@@ -373,16 +398,16 @@ struct acs_proc_plain_cp_state {
 };
 
 struct acs_procedure {
-	sys_snode_t node;             /**< k_fifo linkage for send queue (DOI) */
-	struct bt_acs_conn *acs_conn; /**< Owning ACS connection; NULL after disconnect */
-	enum acs_proc_kind kind;      /**< Plain CP singleton vs protected request */
-	struct k_work work;           /**< Deferred dispatch work item */
+	sys_snode_t node;                     /**< k_fifo linkage for send queue (DOI) */
+	struct bt_acs_conn *acs_conn;         /**< Owning ACS connection; NULL after disconnect */
+	enum acs_proc_kind kind;              /**< Plain CP singleton vs protected request */
+	struct k_work work;                   /**< Deferred dispatch work item */
 	struct acs_reply_seq_state reply_seq; /**< Multi-indication reply-sequence state */
 	struct acs_proc_buffers buffers;      /**< Request/response buffer ownership */
 	struct acs_proc_route route;          /**< Resource routing metadata */
 	struct acs_proc_lifetime lifetime;    /**< Refcount bookkeeping */
 	struct acs_proc_registration registration; /**< Connection slot registration */
-	struct acs_proc_plain_cp_state plain_cp; /**< Plain-CP-only busy/abort interlock */
+	struct acs_proc_plain_cp_state plain_cp;   /**< Plain-CP-only busy/abort interlock */
 };
 
 /**
@@ -399,35 +424,15 @@ struct bt_acs_conn {
 #if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION)
 	const struct bt_gatt_attr *attr_doi;
 #endif
-	enum bt_acs_key_exchange_state key_state; /**< Key exchange state */
-#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
-	/** True when crypto.active_key holds a KDF-derived child key.
-	 *
-	 *  The KDF child key is the key actually used for all AEAD operations.
-	 *  The ECDH parent key (ecdh_parent_key below) is stored only to enable
-	 *  per-connection re-derivation and to satisfy the Get Current Key List
-	 *  and Invalidate Key procedures, which must be able to address the two
-	 *  keys independently. This flag tells the session-store, key-list, and
-	 *  disconnect handlers which key's nonces are the current live counters.
-	 */
-	bool kdf_child_active;
-	/** Snapshot of the ECDH parent key, taken when the KDF child key was
-	 *  derived and overwrote crypto.active_key.  Kept in RAM so the
-	 *  session-store can write it back to NVS alongside the child key
-	 *  without having to decrypt the stored session just to read the parent.
-	 */
-	uint8_t ecdh_parent_key[CONFIG_BT_ACS_SESSION_KEY_SIZE];
-#endif
 	uint8_t status_flags;                /**< Status flags */
 	uint16_t restriction_map_id;         /**< Restriction map ID */
 	struct bt_acs_crypto_session crypto; /**< Persistent crypto session */
-	struct bt_acs_kex_ctx *kex;          /**< Transient key exchange context */
 	uint8_t status_data[3];              /**< Embedded status indication payload */
 	struct bt_gatt_indicate_params status_indicate_params; /**< Status indication params */
-	struct acs_procedure plain_cp_proc; /**< Singleton plain-CP procedure
-							 *  (kind=ACS_PROC_KIND_PLAIN_CP; not slab-managed)
-							 */
-	struct acs_seg_tx_ctx cp_tx;    /**< Plain CP indication transport context */
+	struct acs_procedure plain_cp_proc;                    /**< Singleton plain-CP procedure
+								*  (kind=ACS_PROC_KIND_PLAIN_CP; not slab-managed)
+								*/
+	struct acs_seg_tx_ctx cp_tx; /**< Plain CP indication transport context */
 #if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION)
 	struct acs_seg_tx_ctx indicate_tx; /**< DOI indication segmentation context */
 #endif

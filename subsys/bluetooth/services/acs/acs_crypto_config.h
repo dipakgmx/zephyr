@@ -71,11 +71,23 @@ extern "C" {
 #define ACS_CCM_MAC_SIZE ACS_CRYPTO_AUTH_TAG_SIZE
 #endif
 
-/** @brief Fixed-prefix length for AES-GCM nonces in bytes. */
-#define ACS_GCM_NONCE_FIXED_SIZE 4
+/** @brief Fixed-prefix length for AES-GCM nonces in bytes.
+ *
+ * ACS §4.4.4.15.1.4.4.6 says the fixed part for GCM/GMAC should be used as
+ * the IV fixed field with 4 octets. We intentionally advertise 8 here because
+ * this implementation currently caps the variable part at 32 bits.
+ */
+#define ACS_GCM_NONCE_FIXED_SIZE 8
 
-/** @brief Variable (counter) part of the AES-GCM nonce in bytes. */
-#define ACS_GCM_NONCE_VAR_SIZE 8
+/** @brief Variable (counter) part of the AES-GCM nonce in bytes.
+ *
+ * The current ACS implementation intentionally caps runtime nonce counters at
+ * 32 bits. ACS §4.4.4.15.1.4.4.5 says the GCM/GMAC variable part should be
+ * used as the IV invocation field with 8 octets, but we intentionally
+ * advertise 4 here so we do not claim support for a larger nonce space than
+ * the code actually maintains.
+ */
+#define ACS_GCM_NONCE_VAR_SIZE 4
 
 /** @brief Total AES-GCM nonce length in bytes (fixed + variable). */
 #define ACS_GCM_NONCE_SIZE (ACS_GCM_NONCE_FIXED_SIZE + ACS_GCM_NONCE_VAR_SIZE) /**< 12 */

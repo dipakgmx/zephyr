@@ -23,8 +23,8 @@ LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
 
 #define ACS_REQ_CTX_COUNT (CONFIG_BT_MAX_CONN * CONFIG_BT_ACS_MAX_INFLIGHT_REQ_PER_CONN)
 
-K_MEM_SLAB_DEFINE_STATIC(acs_req_ctx_slab, sizeof(struct acs_procedure),
-			 ACS_REQ_CTX_COUNT, __alignof__(struct acs_procedure));
+K_MEM_SLAB_DEFINE_STATIC(acs_req_ctx_slab, sizeof(struct acs_procedure), ACS_REQ_CTX_COUNT,
+			 __alignof__(struct acs_procedure));
 
 STRUCT_SECTION_ITERABLE(bt_acs_prot_resource_handler_entry, acs_req_handler_sentinel) = {
 	.char_uuid = NULL,
@@ -56,8 +56,7 @@ static uint8_t acs_find_char_attrs_cb(const struct bt_gatt_attr *attr, uint16_t 
 	return BT_GATT_ITER_CONTINUE;
 }
 
-void acs_procedure_ref(struct acs_procedure *req,
-			       enum acs_procedure_ref_who who)
+void acs_procedure_ref(struct acs_procedure *req, enum acs_procedure_ref_who who)
 {
 	if (!req) {
 		return;
@@ -99,8 +98,7 @@ static void acs_procedure_destroy(struct acs_procedure *req)
 	acs_req_free(req);
 }
 
-void acs_procedure_unref(struct acs_procedure *req,
-				 enum acs_procedure_ref_who who)
+void acs_procedure_unref(struct acs_procedure *req, enum acs_procedure_ref_who who)
 {
 	if (!req) {
 		return;
@@ -131,10 +129,9 @@ uint16_t acs_procedure_resource_handle(const struct acs_procedure *req)
 	return req ? req->route.resource_handle : 0U;
 }
 
-struct acs_procedure *acs_procedure_alloc(struct bt_acs_conn *acs_conn,
-							     uint16_t resource_handle,
-							     uint16_t isc_id, uint16_t data_offset,
-							     uint16_t data_length)
+struct acs_procedure *acs_procedure_alloc(struct bt_acs_conn *acs_conn, uint16_t resource_handle,
+					  uint16_t isc_id, uint16_t data_offset,
+					  uint16_t data_length)
 {
 	struct acs_procedure *req;
 
@@ -211,8 +208,9 @@ void acs_procedure_tx_done(struct acs_procedure *req)
 /* Auto-respond to a secure request when no application handler is registered. */
 static int acs_auto_respond(struct acs_procedure *req)
 {
-	const uint8_t *data =
-		req->buffers.request_buf ? req->buffers.request_buf->data + req->buffers.data_offset : NULL;
+	const uint8_t *data = req->buffers.request_buf
+				      ? req->buffers.request_buf->data + req->buffers.data_offset
+				      : NULL;
 	uint16_t len = req->buffers.data_length;
 	ssize_t n;
 	uint8_t props = 0;
@@ -256,8 +254,8 @@ static int acs_auto_respond(struct acs_procedure *req)
 	 * buffer layout is identical for protected DON/DOI).
 	 */
 	{
-		enum acs_reply_channel channel = (props & BT_GATT_CHRC_INDICATE) ? ACS_REPLY_DOI
-									       : ACS_REPLY_DON;
+		enum acs_reply_channel channel =
+			(props & BT_GATT_CHRC_INDICATE) ? ACS_REPLY_DOI : ACS_REPLY_DON;
 		struct net_buf *rsp_buf = acs_prepare_reply_buf(req, true);
 		struct acs_reply reply;
 
@@ -354,8 +352,7 @@ void acs_procedure_abort_all(struct bt_acs_conn *acs_conn)
 
 static void acs_req_work_handler(struct k_work *work)
 {
-	struct acs_procedure *req =
-		CONTAINER_OF(work, struct acs_procedure, work);
+	struct acs_procedure *req = CONTAINER_OF(work, struct acs_procedure, work);
 	struct bt_conn const *conn = acs_procedure_conn(req);
 	bool handled = false;
 	int err = 0;

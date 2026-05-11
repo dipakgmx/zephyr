@@ -49,76 +49,11 @@ static const char *acs_direction_str(enum bt_acs_direction direction)
 	}
 }
 
-struct check_protected_ctx {
-	uint16_t att_handle;
-	enum bt_acs_direction direction;
-	/* tri-state: 0 = not found, 1 = found+protected, 2 = found+not protected */
-	uint8_t result;
-};
-
-static bool check_protected_cb(const struct bt_acs_rmap_protected *prot, void *user_data)
-{
-	struct check_protected_ctx *ctx = user_data;
-
-	if (prot->resource_handle != ctx->att_handle) {
-		return true;
-	}
-
-	for (uint8_t j = 0; j < prot->num_ops; j++) {
-		uint16_t op = prot->ops[j].opcode;
-		bool opcode_matches = false;
-
-		switch (ctx->direction) {
-		case BT_ACS_DIRECTION_READ:
-			opcode_matches = (op == BT_ACS_RMAP_OP_ATT_READ_REQ ||
-					  op == BT_ACS_RMAP_OP_ATT_READ_BLOB_REQ ||
-					  op == BT_ACS_RMAP_OP_ATT_READ_MULT_REQ ||
-					  op == BT_ACS_RMAP_OP_ATT_READ_MULT_VL_REQ);
-			break;
-		case BT_ACS_DIRECTION_WRITE:
-			opcode_matches = (op == BT_ACS_RMAP_OP_ATT_WRITE_REQ ||
-					  op == BT_ACS_RMAP_OP_ATT_WRITE_CMD ||
-					  op == BT_ACS_RMAP_OP_ATT_SIGNED_WRITE_CMD ||
-					  op == BT_ACS_RMAP_OP_ATT_PREPARE_WRITE_REQ ||
-					  op == BT_ACS_RMAP_OP_ATT_EXECUTE_WRITE_REQ);
-			break;
-		case BT_ACS_DIRECTION_NOTIFY:
-			opcode_matches = (op == BT_ACS_RMAP_OP_ATT_NOTIFY ||
-					  op == BT_ACS_RMAP_OP_ATT_NOTIFY_MULT);
-			break;
-		case BT_ACS_DIRECTION_INDICATE:
-			opcode_matches = (op == BT_ACS_RMAP_OP_ATT_INDICATE);
-			break;
-		}
-
-		if (opcode_matches) {
-			ctx->result = (prot->ops[j].isc_id != BT_ACS_ISC_ID_NONE) ? 1u : 2u;
-			return false; /* stop */
-		}
-	}
-
-	/* Handle in map but no opcode for this direction — not blocked */
-	ctx->result = 2u;
-	return false; /* stop */
-}
-
 /* Check if a handle is protected in the active restriction map for the given direction. */
 static bool acs_handle_is_protected(uint16_t restriction_map_id, uint16_t att_handle,
 				    enum bt_acs_direction direction)
 {
-	struct bt_acs_restriction_map map = {0};
-	struct check_protected_ctx ctx = {
-		.att_handle = att_handle,
-		.direction = direction,
-		.result = 0,
-	};
-
-	if (acs_rmap_lookup(restriction_map_id, &map) != 0) {
-		return false;
-	}
-
-	acs_rmap_foreach_char(&map, check_protected_cb, &ctx);
-	return ctx.result == 1u;
+	return acs_rmap_char_is_protected(restriction_map_id, att_handle, direction);
 }
 
 #endif /* CONFIG_BT_ACS_FEAT_AUTHORIZATION */
@@ -165,80 +100,16 @@ bool bt_acs_policy_is_permitted(struct bt_conn *conn, uint16_t att_handle,
 #if IS_ENABLED(CONFIG_BT_ACS_FEAT_AUTHORIZATION)
 
 /* CCCD gate table — maps protected CCCD handles to their char's permission entries. */
-struct acs_protected_cccd_gate {
-	uint16_t cccd_handle;
-	uint16_t char_handle;
-	bool notify_protected;
-	bool indicate_protected;
-};
-
-static struct acs_protected_cccd_gate acs_protected_cccds[CONFIG_BT_ACS_MAX_PROTECTED_CCCD_GATES];
+static struct acs_rmap_cccd_gate acs_protected_cccds[CONFIG_BT_ACS_MAX_PROTECTED_CCCD_GATES];
 static uint8_t acs_protected_cccd_count;
-
-static bool cccd_resolve_char_cb(const struct bt_acs_rmap_protected *prot, void *user_data)
-{
-	bool protect_notify = false;
-	bool protect_indicate = false;
-
-	ARG_UNUSED(user_data);
-
-	if (prot->resource_handle == 0) {
-		return true;
-	}
-
-	for (uint8_t j = 0; j < prot->num_ops; j++) {
-		uint16_t op = prot->ops[j].opcode;
-
-		if (op == BT_ACS_RMAP_OP_ATT_NOTIFY || op == BT_ACS_RMAP_OP_ATT_NOTIFY_MULT) {
-			protect_notify = true;
-		} else if (op == BT_ACS_RMAP_OP_ATT_INDICATE) {
-			protect_indicate = true;
-		}
-	}
-
-	if (!protect_notify && !protect_indicate) {
-		return true;
-	}
-
-	uint16_t cccd = acs_rhandle_find_cccd_for_char(prot->resource_handle);
-
-	if (cccd == 0) {
-		LOG_WRN("No CCCD found for protected char 0x%04x", prot->resource_handle);
-		return true;
-	}
-
-	/* Avoid duplicates (same char may appear in multiple maps) */
-	for (uint8_t k = 0; k < acs_protected_cccd_count; k++) {
-		if (acs_protected_cccds[k].cccd_handle == cccd) {
-			acs_protected_cccds[k].notify_protected |= protect_notify;
-			acs_protected_cccds[k].indicate_protected |= protect_indicate;
-			return true;
-		}
-	}
-
-	if (acs_protected_cccd_count >= CONFIG_BT_ACS_MAX_PROTECTED_CCCD_GATES) {
-		LOG_WRN("Protected CCCD gate table full (max %d) — char 0x%04x left ungated",
-			CONFIG_BT_ACS_MAX_PROTECTED_CCCD_GATES, prot->resource_handle);
-		return true;
-	}
-
-	acs_protected_cccds[acs_protected_cccd_count].cccd_handle = cccd;
-	acs_protected_cccds[acs_protected_cccd_count].char_handle = prot->resource_handle;
-	acs_protected_cccds[acs_protected_cccd_count].notify_protected = protect_notify;
-	acs_protected_cccds[acs_protected_cccd_count].indicate_protected = protect_indicate;
-	acs_protected_cccd_count++;
-	LOG_DBG("CCCD 0x%04x gated for protected char 0x%04x (notify=%u indicate=%u)", cccd,
-		prot->resource_handle, protect_notify, protect_indicate);
-	return true;
-}
 
 void acs_policy_resolve_protected_cccds(void)
 {
-	acs_protected_cccd_count = 0;
+	size_t gate_count = 0;
 
-	STRUCT_SECTION_FOREACH(bt_acs_restriction_map, map) {
-		acs_rmap_foreach_char(map, cccd_resolve_char_cb, NULL);
-	}
+	acs_rmap_collect_protected_cccds(acs_protected_cccds, ARRAY_SIZE(acs_protected_cccds),
+					 &gate_count);
+	acs_protected_cccd_count = (uint8_t)gate_count;
 }
 
 #endif /* CONFIG_BT_ACS_FEAT_AUTHORIZATION */

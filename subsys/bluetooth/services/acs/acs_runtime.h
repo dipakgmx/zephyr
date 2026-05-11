@@ -63,8 +63,7 @@ ssize_t acs_data_in_write(struct bt_conn *conn, const struct bt_gatt_attr *attr,
  *
  * @return 0 on success, or one of @ref ACS_DATA_ERR_* on failure.
  */
-int acs_data_in_unwrap_and_route(struct bt_conn *conn, struct bt_acs_conn *acs_conn,
-				 struct net_buf_simple *buf);
+int acs_data_in_unwrap_and_route(struct bt_acs_conn *acs_conn, struct net_buf_simple *buf);
 
 /**
  * @brief Common normalized-frame dispatch entry point.

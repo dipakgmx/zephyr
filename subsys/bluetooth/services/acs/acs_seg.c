@@ -18,7 +18,8 @@ LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
 /* Build a segmentation header byte. */
 static inline uint8_t seg_hdr_build(bool first, bool last, uint8_t counter)
 {
-	return (first ? BIT(ACS_SEG_FIRST_SEGMENT_BIT) : 0U) | (last ? BIT(ACS_SEG_LAST_SEGMENT_BIT) : 0U) |
+	return (first ? BIT(ACS_SEG_FIRST_SEGMENT_BIT) : 0U) |
+	       (last ? BIT(ACS_SEG_LAST_SEGMENT_BIT) : 0U) |
 	       FIELD_PREP(ACS_SEG_COUNTER_MASK, counter);
 }
 
@@ -125,7 +126,7 @@ enum acs_seg_rx_result acs_seg_rx_process(struct acs_seg_rx_ctx *ctx, const uint
 
 	seg_hdr = data[0];
 	is_first = IS_BIT_SET(seg_hdr, ACS_SEG_FIRST_SEGMENT_BIT);
-	is_last  = IS_BIT_SET(seg_hdr, ACS_SEG_LAST_SEGMENT_BIT);
+	is_last = IS_BIT_SET(seg_hdr, ACS_SEG_LAST_SEGMENT_BIT);
 	counter = FIELD_GET(ACS_SEG_COUNTER_MASK, seg_hdr);
 	payload = &data[1];
 	payload_len = len - 1;
@@ -243,7 +244,8 @@ static void acs_seg_tx_confirm_cb(struct bt_conn *conn, struct bt_gatt_indicate_
 	}
 
 	if (ctx->tx_offset < buf_len) {
-		LOG_DBG("seg_tx: indication confirmed, more segments pending offset=%u total_len=%u",
+		LOG_DBG("seg_tx: indication confirmed, more segments pending offset=%u "
+			"total_len=%u",
 			ctx->tx_offset, buf_len);
 		k_work_submit(&ctx->tx_work);
 		return;
@@ -338,8 +340,8 @@ static void acs_seg_tx_work_handler(struct k_work *work)
 	ctx->tx_scratch[0] = seg_hdr_build(is_first, is_last, ctx->tx_counter);
 	memcpy(&ctx->tx_scratch[1], ctx->buf->data + ctx->tx_offset, chunk);
 
-	LOG_DBG("seg_tx: send first=%u last=%u counter=%u chunk=%u offset=%u/%u", is_first,
-		is_last, ctx->tx_counter, chunk, ctx->tx_offset, buf_len);
+	LOG_DBG("seg_tx: send first=%u last=%u counter=%u chunk=%u offset=%u/%u", is_first, is_last,
+		ctx->tx_counter, chunk, ctx->tx_offset, buf_len);
 	LOG_HEXDUMP_DBG(ctx->tx_scratch, chunk + ACS_SEG_HDR_SIZE, "seg_tx pdu");
 
 	memset(&ctx->ind_params, 0, sizeof(ctx->ind_params));

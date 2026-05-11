@@ -117,7 +117,7 @@ int acs_cp_handle_activate_restriction_map(struct acs_procedure *proc, struct ne
 	 * decryption.  On the plain CP the peer must have completed key exchange.
 	 */
 	if (map.map_isc_id != 0 && proc == NULL &&
-	    proc->acs_conn->key_state != BT_ACS_KEY_EXCHANGE_COMPLETE) {
+	    proc->acs_conn->crypto.key_state != BT_ACS_KEY_EXCHANGE_COMPLETE) {
 		LOG_WRN("Activate Restriction Map: map 0x%04x is protected (ISC 0x%04x) — "
 			"security not established",
 			map_id, map.map_isc_id);

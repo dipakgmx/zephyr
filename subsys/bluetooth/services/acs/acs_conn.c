@@ -33,6 +33,33 @@ static struct bt_acs_conn acs_conn_state[CONFIG_BT_MAX_CONN];
 /** Pool of transient key-exchange contexts (released on handshake completion) */
 static struct bt_acs_kex_ctx acs_kex_pool[CONFIG_BT_MAX_CONN];
 
+static void acs_conn_init_current_keys(struct bt_acs_conn *acs_conn)
+{
+	size_t slot = 0;
+
+#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_ECDH)
+	acs_conn->crypto.current_keys[slot++].key_desc = acs_key_desc_lookup(ACS_KEY_ID_ECDH);
+#endif
+#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
+	acs_conn->crypto.current_keys[slot++].key_desc = acs_key_desc_lookup(ACS_KEY_ID_KDF);
+#endif
+#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_OOB)
+	acs_conn->crypto.current_keys[slot++].key_desc = acs_key_desc_lookup(ACS_KEY_ID_OOB);
+#endif
+
+	__ASSERT_NO_MSG(slot <= ARRAY_SIZE(acs_conn->crypto.current_keys));
+}
+
+#if defined(CONFIG_BT_SETTINGS) && IS_ENABLED(CONFIG_BT_ACS_KDF_SESSION_KEY)
+static bool acs_conn_has_current_key(struct bt_acs_conn *acs_conn, uint16_t key_id)
+{
+	struct bt_acs_runtime_key_state *current_key;
+	int err = acs_crypto_current_key_lookup(acs_conn, key_id, &current_key);
+
+	return err == 0 && current_key->psa_key_id != 0U;
+}
+#endif
+
 struct net_buf *acs_buf_alloc(k_timeout_t timeout)
 {
 	struct net_buf *buf = net_buf_alloc(&acs_buf_pool, timeout);
@@ -70,7 +97,7 @@ int acs_kex_alloc(struct bt_acs_conn *acs_conn)
 	}
 	memset(kex, 0, sizeof(*kex));
 	kex->in_use = true;
-	acs_conn->kex = kex;
+	acs_conn->crypto.kex = kex;
 	return 0;
 }
 
@@ -116,6 +143,7 @@ struct bt_acs_conn *acs_conn_alloc(struct bt_conn *conn)
 #else
 	memset(acs_conn, 0, sizeof(*acs_conn));
 #endif
+	acs_conn_init_current_keys(acs_conn);
 	acs_conn->conn = conn;
 	acs_conn->attr_cp = acs_attr_cp();
 	acs_conn->attr_status = acs_attr_status();
@@ -125,7 +153,7 @@ struct bt_acs_conn *acs_conn_alloc(struct bt_conn *conn)
 #if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION)
 	acs_conn->attr_doi = acs_attr_doi();
 #endif
-	acs_conn->key_state = BT_ACS_KEY_EXCHANGE_IDLE;
+	acs_conn->crypto.key_state = BT_ACS_KEY_EXCHANGE_IDLE;
 	acs_conn->status_flags = BT_ACS_STATUS_SECURITY_CONTROLS_ENABLED;
 	acs_conn->restriction_map_id =
 		IS_ENABLED(CONFIG_BT_ACS_FEAT_AUTHORIZATION) ? CONFIG_BT_ACS_ACTIVE_RMAP_ID : 0;
@@ -161,27 +189,20 @@ void acs_conn_cleanup(struct bt_acs_conn *acs_conn)
 	LOG_DBG("Cleaning up ACS connection state %p", (void *)acs_conn);
 
 	acs_conn->conn = NULL;
-	acs_conn->key_state = BT_ACS_KEY_EXCHANGE_IDLE;
-#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
-	acs_conn->kdf_child_active = false;
-	/* Zero the parent key snapshot now that the session is torn down.
-	 * crypto.active_key is cleared below via acs_crypto_destroy_session_key
-	 * and the crypto memset; ecdh_parent_key lives outside that struct. */
-	memset(acs_conn->ecdh_parent_key, 0, sizeof(acs_conn->ecdh_parent_key));
-#endif
+	acs_conn->crypto.key_state = BT_ACS_KEY_EXCHANGE_IDLE;
 	acs_conn->status_flags = BT_ACS_STATUS_SECURITY_CONTROLS_ENABLED;
 
 	/* Release transient key-exchange context back to the pool. */
-	if (acs_conn->kex) {
-		if (acs_conn->kex->ecdh_key_id != 0) {
-			psa_destroy_key(acs_conn->kex->ecdh_key_id);
-			acs_conn->kex->ecdh_key_id = 0;
+	if (acs_conn->crypto.kex) {
+		if (acs_conn->crypto.kex->ecdh_key_id != 0) {
+			psa_destroy_key(acs_conn->crypto.kex->ecdh_key_id);
+			acs_conn->crypto.kex->ecdh_key_id = 0;
 		}
-		acs_kex_free(acs_conn->kex);
-		acs_conn->kex = NULL;
+		acs_kex_free(acs_conn->crypto.kex);
+		acs_conn->crypto.kex = NULL;
 	}
 
-	acs_crypto_destroy_session_key(acs_conn);
+	acs_crypto_destroy_connection_keys(acs_conn);
 	/* Preserve nonce fixed parts across disconnect — they are set once per
 	 * device pair and reused on reconnect (§3.6.4: "does not change for
 	 * the life of the key").  Session key and counters are wiped.
@@ -204,6 +225,7 @@ void acs_conn_cleanup(struct bt_acs_conn *acs_conn)
 #else
 	memset(&acs_conn->crypto, 0, sizeof(acs_conn->crypto));
 #endif
+	acs_conn_init_current_keys(acs_conn);
 	/* Abort request contexts before freeing the shared I/O slot so queued/in-flight
 	 * ACS Data Out activity cannot outlive the buffers it references.
 	 */
@@ -272,14 +294,15 @@ static void acs_bt_disconnected(struct bt_conn *conn, uint8_t reason)
 
 	cb = acs_cb_get();
 
-	if (acs_conn->key_state == BT_ACS_KEY_EXCHANGE_COMPLETE && cb && cb->security_invalidated) {
+	if (acs_conn->crypto.key_state == BT_ACS_KEY_EXCHANGE_COMPLETE && cb &&
+	    cb->security_invalidated) {
 		cb->security_invalidated(conn);
 	}
 
 #if defined(CONFIG_BT_SETTINGS)
-	if (acs_conn->key_state == BT_ACS_KEY_EXCHANGE_COMPLETE
+	if (acs_conn->crypto.key_state == BT_ACS_KEY_EXCHANGE_COMPLETE
 #if IS_ENABLED(CONFIG_BT_ACS_KDF_SESSION_KEY)
-	    && !acs_conn->kdf_child_active
+	    && !acs_conn_has_current_key(acs_conn, ACS_KEY_ID_KDF)
 #endif
 	) {
 		acs_session_store(conn, acs_conn);
@@ -320,16 +343,21 @@ int bt_acs_invalidate_security(struct bt_conn *conn)
 		return -ENOTCONN;
 	}
 
-	was_established = (acs_conn->key_state == BT_ACS_KEY_EXCHANGE_COMPLETE);
+	was_established = (acs_conn->crypto.key_state == BT_ACS_KEY_EXCHANGE_COMPLETE);
 
-	acs_conn->key_state = BT_ACS_KEY_EXCHANGE_IDLE;
+	acs_conn->crypto.key_state = BT_ACS_KEY_EXCHANGE_IDLE;
 	acs_conn->status_flags &= ~BT_ACS_STATUS_SECURITY_ESTABLISHED;
-#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
-	acs_conn->kdf_child_active = false;
-	memset(acs_conn->ecdh_parent_key, 0, sizeof(acs_conn->ecdh_parent_key));
-#endif
-	acs_crypto_destroy_session_key(acs_conn);
+	if (acs_conn->crypto.kex) {
+		if (acs_conn->crypto.kex->ecdh_key_id != 0) {
+			psa_destroy_key(acs_conn->crypto.kex->ecdh_key_id);
+			acs_conn->crypto.kex->ecdh_key_id = 0;
+		}
+		acs_kex_free(acs_conn->crypto.kex);
+		acs_conn->crypto.kex = NULL;
+	}
+	acs_crypto_destroy_connection_keys(acs_conn);
 	memset(&acs_conn->crypto, 0, sizeof(acs_conn->crypto));
+	acs_conn_init_current_keys(acs_conn);
 
 #if defined(CONFIG_BT_SETTINGS)
 	if (bt_conn_get_info(conn, &info) == 0) {

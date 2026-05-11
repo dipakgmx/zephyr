@@ -79,7 +79,7 @@ int acs_sec_mgmt_invalidate_all(struct acs_procedure *proc)
 	uint8_t req_idx;
 	int count = 0;
 
-	if (!acs_conn || acs_conn->key_state != BT_ACS_KEY_EXCHANGE_COMPLETE) {
+	if (!acs_conn || acs_conn->crypto.key_state != BT_ACS_KEY_EXCHANGE_COMPLETE) {
 		LOG_WRN("Invalidate All: rejected — sender has no established ACS security");
 		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_INVALIDATE_ALL_ESTABLISHED_SECURITY,
 					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE);
@@ -94,7 +94,7 @@ int acs_sec_mgmt_invalidate_all(struct acs_procedure *proc)
 			continue;
 		}
 
-		if (ac->key_state == BT_ACS_KEY_EXCHANGE_COMPLETE) {
+		if (ac->crypto.key_state == BT_ACS_KEY_EXCHANGE_COMPLETE) {
 			LOG_DBG("Invalidating security for conn %p", (void *)ac->conn);
 			bt_acs_invalidate_security(ac->conn);
 			count++;
@@ -117,29 +117,27 @@ int acs_sec_mgmt_invalidate_all(struct acs_procedure *proc)
 /**
  * @brief Invalidate only the KDF child key, keeping the ECDH parent alive.
  *
- * Destroys the current PSA key (the child), zeros crypto.active_key,
- * resets nonce counters, and clears kdf_child_active.  The ECDH parent in
- * ecdh_parent_key is untouched — the peer can Start Key Exchange(KDF) to
- * derive a new child without repeating the full ECDH handshake.
+ * Destroys the current KDF key handle and clears its runtime key context.
+ * The ECDH parent current key remains intact, so the peer can Start
+ * Key Exchange(KDF) to derive a new child without repeating the full ECDH
+ * handshake.
  */
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
 static void invalidate_kdf_child(struct bt_acs_conn *acs_conn)
 {
-	acs_crypto_destroy_session_key(acs_conn);
+	struct bt_acs_runtime_key_state *kdf_key;
+	int err = acs_crypto_current_key_lookup(acs_conn, ACS_KEY_ID_KDF, &kdf_key);
 
-	/* Restore the ECDH parent into crypto.active_key so a subsequent
-	 * Start Key Exchange(KDF) + Key Exchange KDF can use it as IKM for
-	 * bt_acs_crypto_derive_kdf_child_key().  Re-import it into PSA so
-	 * the key handle is valid if any code path touches psa_key_id before
-	 * the new child derivation overwrites it. */
-	memcpy(acs_conn->crypto.active_key, acs_conn->ecdh_parent_key,
-	       CONFIG_BT_ACS_SESSION_KEY_SIZE);
-	acs_conn->crypto.tx_nonce_counter = 0;
-	acs_conn->crypto.rx_nonce_counter = 0;
-	acs_conn->kdf_child_active = false;
+	if (err) {
+		LOG_ERR("Missing KDF runtime key state");
+		return;
+	}
+
+	acs_crypto_destroy_current_key(kdf_key);
+	memset(kdf_key->key, 0, sizeof(kdf_key->key));
+	kdf_key->tx_nonce_counter = 0;
+	kdf_key->rx_nonce_counter = 0;
 	acs_conn->status_flags &= ~BT_ACS_STATUS_SECURITY_ESTABLISHED;
-
-	acs_crypto_import_session_key(acs_conn);
 }
 #endif
 
@@ -168,7 +166,7 @@ int acs_sec_mgmt_invalidate_key(struct acs_procedure *proc, struct net_buf_simpl
 					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 	}
 
-	if (proc->acs_conn->key_state != BT_ACS_KEY_EXCHANGE_COMPLETE) {
+	if (proc->acs_conn->crypto.key_state != BT_ACS_KEY_EXCHANGE_COMPLETE) {
 		LOG_ERR("Invalidate Key ID 0x%04x: no security established", key_id);
 		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_INVALIDATE_KEY,
 					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE);
@@ -179,7 +177,13 @@ int acs_sec_mgmt_invalidate_key(struct acs_procedure *proc, struct net_buf_simpl
 		response_code = BT_ACS_CP_RESPONSE_SUCCESS;
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
 	} else if (key_id == ACS_KEY_ID_KDF) {
-		if (!proc->acs_conn->kdf_child_active) {
+		struct bt_acs_runtime_key_state *kdf_key;
+
+		ret = acs_crypto_current_key_lookup(proc->acs_conn, ACS_KEY_ID_KDF, &kdf_key);
+		if (ret) {
+			LOG_ERR("Missing KDF runtime key state");
+			response_code = BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED;
+		} else if (kdf_key->psa_key_id == 0U) {
 			/* Spec §4.4.3.12: "key ID that is already invalid → Procedure Not
 			 * Applicable" */
 			response_code = BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE;
@@ -199,24 +203,35 @@ int acs_sec_mgmt_invalidate_key(struct acs_procedure *proc, struct net_buf_simpl
 			response_code = BT_ACS_CP_RESPONSE_SUCCESS;
 			LOG_DBG("KDF child key invalidated");
 		}
-	} else if (is_active_algorithm_key_id(key_id) && proc->acs_conn->kdf_child_active) {
-		/* Algorithm keys (GCM, CCM, …) use the KDF child as their actual key
-		 * material.  Invalidating them is equivalent to invalidating the child. */
-		invalidate_kdf_child(proc->acs_conn);
-#if defined(CONFIG_BT_SETTINGS) && !IS_ENABLED(CONFIG_BT_ACS_KDF_SESSION_KEY)
-		acs_session_store(proc->acs_conn->conn, proc->acs_conn);
-#endif
-		{
-			const struct bt_acs_cb *cb = acs_cb_get();
+	} else if (is_active_algorithm_key_id(key_id)) {
+		struct bt_acs_runtime_key_state *kdf_key;
 
-			if (cb && cb->security_invalidated) {
-				cb->security_invalidated(proc->acs_conn->conn);
+		ret = acs_crypto_current_key_lookup(proc->acs_conn, ACS_KEY_ID_KDF, &kdf_key);
+		if (ret == 0 && kdf_key->psa_key_id != 0U) {
+			/* Algorithm keys (GCM, CCM, …) use the KDF child as their actual key
+			 * material.  Invalidating them is equivalent to invalidating the child. */
+			invalidate_kdf_child(proc->acs_conn);
+#if defined(CONFIG_BT_SETTINGS) && !IS_ENABLED(CONFIG_BT_ACS_KDF_SESSION_KEY)
+			acs_session_store(proc->acs_conn->conn, proc->acs_conn);
+#endif
+			{
+				const struct bt_acs_cb *cb = acs_cb_get();
+
+				if (cb && cb->security_invalidated) {
+					cb->security_invalidated(proc->acs_conn->conn);
+				}
 			}
+			acs_status_indicate(proc->acs_conn->conn);
+			response_code = BT_ACS_CP_RESPONSE_SUCCESS;
+			LOG_DBG("Algorithm key 0x%04x invalidated (KDF child destroyed, parent "
+				"retained)",
+				key_id);
+		} else if (ret) {
+			LOG_ERR("Missing KDF runtime key state");
+			response_code = BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED;
+		} else {
+			response_code = BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE;
 		}
-		acs_status_indicate(proc->acs_conn->conn);
-		response_code = BT_ACS_CP_RESPONSE_SUCCESS;
-		LOG_DBG("Algorithm key 0x%04x invalidated (KDF child destroyed, parent retained)",
-			key_id);
 #endif
 	} else if (is_active_key_id(key_id)) {
 		ret = bt_acs_invalidate_security(proc->acs_conn->conn);
@@ -269,8 +284,8 @@ int acs_sec_mgmt_abort(struct acs_procedure *proc)
 
 	plain_cp_active = (atomic_get(&acs_conn->plain_cp_proc.plain_cp.locked) == 1);
 
-	kex_in_progress = (acs_conn->key_state != BT_ACS_KEY_EXCHANGE_IDLE &&
-			   acs_conn->key_state != BT_ACS_KEY_EXCHANGE_COMPLETE);
+	kex_in_progress = (acs_conn->crypto.key_state != BT_ACS_KEY_EXCHANGE_IDLE &&
+			   acs_conn->crypto.key_state != BT_ACS_KEY_EXCHANGE_COMPLETE);
 
 	data_ops_pending = false;
 	for (uint8_t i = 0; i < CONFIG_BT_ACS_MAX_INFLIGHT_REQ_PER_CONN; i++) {
@@ -327,13 +342,13 @@ int acs_sec_mgmt_abort(struct acs_procedure *proc)
 
 	/* Tear down KEX state (local only — always safe once probed). */
 	if (kex_in_progress) {
-		acs_conn->key_state = BT_ACS_KEY_EXCHANGE_IDLE;
-		if (acs_conn->kex) {
-			if (acs_conn->kex->ecdh_key_id != 0) {
-				psa_destroy_key(acs_conn->kex->ecdh_key_id);
+		acs_conn->crypto.key_state = BT_ACS_KEY_EXCHANGE_IDLE;
+		if (acs_conn->crypto.kex) {
+			if (acs_conn->crypto.kex->ecdh_key_id != 0) {
+				psa_destroy_key(acs_conn->crypto.kex->ecdh_key_id);
 			}
-			acs_kex_free(acs_conn->kex);
-			acs_conn->kex = NULL;
+			acs_kex_free(acs_conn->crypto.kex);
+			acs_conn->crypto.kex = NULL;
 		}
 	}
 
@@ -428,8 +443,7 @@ int acs_sec_mgmt_get_key_uri(struct acs_procedure *proc, struct net_buf_simple *
 
 	{
 		struct acs_reply_mode reply_mode = acs_proc_reply_mode(proc);
-		struct net_buf *nbuf =
-			acs_prepare_reply_buf(proc, reply_mode.encrypted);
+		struct net_buf *nbuf = acs_prepare_reply_buf(proc, reply_mode.encrypted);
 
 		if (!nbuf) {
 			return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_GET_KEY_URI,
@@ -482,7 +496,8 @@ int acs_sec_mgmt_initiate_pairing(struct acs_procedure *proc)
 					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 	}
 
-	return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_INITIATE_PAIRING, BT_ACS_CP_RESPONSE_SUCCESS);
+	return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_INITIATE_PAIRING,
+				 BT_ACS_CP_RESPONSE_SUCCESS);
 }
 
 #endif /* CONFIG_BT_ACS_INITIATE_PAIRING */

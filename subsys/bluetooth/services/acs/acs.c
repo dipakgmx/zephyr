@@ -310,13 +310,13 @@ int bt_acs_set_oob_number(struct bt_conn *conn, const uint8_t *oob, uint16_t len
 		return -ENOENT;
 	}
 
-	if (!acs_conn->kex) {
+	if (!acs_conn->crypto.kex) {
 		LOG_WRN("set_oob_number: no key exchange in progress");
 		return -ENOENT;
 	}
 
-	memset(acs_conn->kex->auth_value, 0, sizeof(acs_conn->kex->auth_value));
-	memcpy(&acs_conn->kex->auth_value[ACS_HMAC_SHA256_SIZE - len], oob, len);
+	memset(acs_conn->crypto.kex->auth_value, 0, sizeof(acs_conn->crypto.kex->auth_value));
+	memcpy(&acs_conn->crypto.kex->auth_value[ACS_HMAC_SHA256_SIZE - len], oob, len);
 	return 0;
 }
 

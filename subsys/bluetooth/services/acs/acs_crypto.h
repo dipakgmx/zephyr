@@ -10,9 +10,12 @@
 /*
  * Crypto and key-exchange API used by the runtime and reply layers.
  *
- * Per-connection crypto state lives on bt_acs_conn (key_state, rx/tx nonce
- * counters, session-key handle). This header exposes the operations on that
- * state plus the pooled key-exchange context lifecycle.
+ * Per-connection crypto state lives on bt_acs_conn->crypto:
+ *   - current_keys[] bound to key-exchange descriptor records
+ *   - fixed nonce values
+ *
+ * This header exposes resolution helpers and crypto operations on that state
+ * plus the pooled key-exchange context lifecycle.
  */
 
 #include <stddef.h>
@@ -23,6 +26,28 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/**
+ * @brief Look up the runtime key-state slot for @p key_id on @p acs_conn.
+ *
+ * @param acs_conn      Per-connection ACS state.
+ * @param key_id        Spec Key_ID to resolve.
+ * @param current_key   [out] Matching runtime key-state slot.
+ * @return 0 on success, -ENOENT if no slot is reserved for @p key_id,
+ *         -EINVAL for invalid arguments.
+ */
+int acs_crypto_current_key_lookup(struct bt_acs_conn *acs_conn, uint16_t key_id,
+				  struct bt_acs_runtime_key_state **current_key);
+
+/**
+ * @brief Resolve the current key used by @p isc_id on @p acs_conn.
+ *
+ * Follows the static descriptor relation ISC -> Key Descriptor ->
+ * parent Key_ID (if any) until it reaches the current key that must carry the
+ * runtime material and nonce state for this message.
+ */
+int acs_crypto_current_key_from_isc(struct bt_acs_conn *acs_conn, uint16_t isc_id,
+				    struct bt_acs_runtime_key_state **current_key);
 
 /**
  * @brief Lazy-initialise and copy the server fixed nonce for @p acs_conn.
@@ -45,14 +70,17 @@ int acs_crypto_get_server_nonce_fixed(struct bt_acs_conn *acs_conn, uint8_t *non
 int acs_crypto_derive_session_key(struct bt_acs_conn *acs_conn);
 
 /**
- * @brief Import the session key into the PSA keystore.
+ * @brief Import a current key into the PSA keystore.
  *
  * @return 0 on success, negative errno on failure.
  */
-int acs_crypto_import_session_key(struct bt_acs_conn *acs_conn);
+int acs_crypto_import_current_key(struct bt_acs_runtime_key_state *current_key);
 
-/** @brief Destroy the session key from the PSA keystore. */
-void acs_crypto_destroy_session_key(struct bt_acs_conn *acs_conn);
+/** @brief Destroy one current key from the PSA keystore. */
+void acs_crypto_destroy_current_key(struct bt_acs_runtime_key_state *current_key);
+
+/** @brief Destroy every imported current key on @p acs_conn. */
+void acs_crypto_destroy_connection_keys(struct bt_acs_conn *acs_conn);
 
 /**
  * @brief Encrypt @p plaintext using the session key.

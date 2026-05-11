@@ -24,8 +24,11 @@ struct rmap_desc_char_ctx {
 	int err;
 };
 
+typedef bool (*acs_rmap_entry_cb_t)(const struct bt_acs_rmap_protected *entry, void *user_data);
+
 static bool rmap_desc_entry_cb(const struct bt_acs_rmap_protected *entry, void *user_data)
 {
+	__ASSERT_NO_MSG(user_data != NULL);
 	struct rmap_desc_char_ctx *ctx = user_data;
 
 	if (ctx->handle_filter != ACS_RMAP_FILTER_ALL &&
@@ -72,24 +75,14 @@ int acs_rmap_lookup(uint16_t map_id, struct bt_acs_restriction_map *out)
 	return -ENOENT;
 }
 
-void acs_rmap_foreach_char(const struct bt_acs_restriction_map *map,
-			   bool (*cb)(const struct bt_acs_rmap_protected *prot, void *user_data),
-			   void *user_data)
+static void acs_rmap_foreach_char(const struct bt_acs_restriction_map *map, acs_rmap_entry_cb_t cb,
+				  void *user_data)
 {
 	if (!map || !cb) {
 		return;
 	}
 
-	/* Iterate explicit chars array if provided */
-	for (uint8_t i = 0; i < map->num_chars; i++) {
-		if (!cb(map->chars[i], user_data)) {
-			return;
-		}
-	}
-
-	/* Also iterate iterable section entries matching this map_id.
-	 * This supports BT_ACS_RMAP_PROTECT_CHAR_IN_MAP() which registers
-	 * characteristics by map_id instead of an explicit pointer array.
+	/* Iterate characteristic entries registered for this map ID.
 	 * Skip CP entries (is_cp == true) — those are handled by acs_rmap_foreach_cp().
 	 */
 	STRUCT_SECTION_FOREACH(bt_acs_rmap_char_reg, reg) {
@@ -101,28 +94,200 @@ void acs_rmap_foreach_char(const struct bt_acs_restriction_map *map,
 	}
 }
 
-void acs_rmap_foreach_cp(const struct bt_acs_restriction_map *map, bt_acs_rmap_protected_cb_t cb,
-			 void *user_data)
+static void acs_rmap_foreach_cp(const struct bt_acs_restriction_map *map, acs_rmap_entry_cb_t cb,
+				void *user_data)
 {
 	__ASSERT_NO_MSG(cb);
 	__ASSERT_NO_MSG(map);
 
-	/* Iterate explicit cps array if provided */
-	for (size_t i = 0; i < map->num_cps; i++) {
-		if (!cb(map->cps[i], user_data)) {
-			return;
-		}
-	}
-
-	/* Also iterate iterable section CP entries matching this map_id.
-	 * This supports BT_ACS_RMAP_PROTECT_CP_IN_MAP().
-	 */
+	/* Iterate CP entries registered for this map ID. */
 	STRUCT_SECTION_FOREACH(bt_acs_rmap_char_reg, reg) {
 		if (reg->map_id == map->map_id && reg->entry && reg->is_cp &&
 		    !cb(reg->entry, user_data)) {
 			return;
 		}
 	}
+}
+
+struct acs_att_direction_ops {
+	const uint16_t *ops;
+	size_t count;
+};
+
+static const uint16_t dir_read_ops[] = {
+	BT_ACS_RMAP_OP_ATT_READ_REQ,
+	BT_ACS_RMAP_OP_ATT_READ_BLOB_REQ,
+	BT_ACS_RMAP_OP_ATT_READ_MULT_REQ,
+	BT_ACS_RMAP_OP_ATT_READ_MULT_VL_REQ,
+};
+
+static const uint16_t dir_write_ops[] = {
+	BT_ACS_RMAP_OP_ATT_WRITE_REQ,         BT_ACS_RMAP_OP_ATT_WRITE_CMD,
+	BT_ACS_RMAP_OP_ATT_SIGNED_WRITE_CMD,  BT_ACS_RMAP_OP_ATT_PREPARE_WRITE_REQ,
+	BT_ACS_RMAP_OP_ATT_EXECUTE_WRITE_REQ,
+};
+
+static const uint16_t dir_notify_ops[] = {
+	BT_ACS_RMAP_OP_ATT_NOTIFY,
+	BT_ACS_RMAP_OP_ATT_NOTIFY_MULT,
+};
+
+static const uint16_t dir_indicate_ops[] = {
+	BT_ACS_RMAP_OP_ATT_INDICATE,
+};
+
+static const struct acs_att_direction_ops direction_ops[] = {
+	[BT_ACS_DIRECTION_READ] =
+		{
+			.ops = dir_read_ops,
+			.count = ARRAY_SIZE(dir_read_ops),
+		},
+	[BT_ACS_DIRECTION_WRITE] =
+		{
+			.ops = dir_write_ops,
+			.count = ARRAY_SIZE(dir_write_ops),
+		},
+	[BT_ACS_DIRECTION_NOTIFY] =
+		{
+			.ops = dir_notify_ops,
+			.count = ARRAY_SIZE(dir_notify_ops),
+		},
+	[BT_ACS_DIRECTION_INDICATE] =
+		{
+			.ops = dir_indicate_ops,
+			.count = ARRAY_SIZE(dir_indicate_ops),
+		},
+};
+
+static bool acs_att_opcode_matches_direction(uint16_t opcode, enum bt_acs_direction direction)
+{
+	const uint16_t *ops;
+	size_t count;
+
+	__ASSERT_NO_MSG((size_t)direction < ARRAY_SIZE(direction_ops));
+
+	if ((size_t)direction >= ARRAY_SIZE(direction_ops)) {
+		return false;
+	}
+
+	ops = direction_ops[direction].ops;
+	count = direction_ops[direction].count;
+
+	for (size_t i = 0; i < count; i++) {
+		if (ops[i] == opcode) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
+int acs_rmap_find_protected(uint16_t map_id, uint16_t resource_handle,
+			    enum acs_rmap_resource_kind *kind,
+			    const struct bt_acs_rmap_protected **entry)
+{
+	__ASSERT_NO_MSG(kind != NULL);
+	__ASSERT_NO_MSG(entry != NULL);
+
+	STRUCT_SECTION_FOREACH(bt_acs_rmap_char_reg, reg) {
+		if (reg->map_id != map_id || reg->entry == NULL ||
+		    reg->entry->resource_handle != resource_handle) {
+			continue;
+		}
+
+		*kind = reg->is_cp ? ACS_RMAP_RESOURCE_CP : ACS_RMAP_RESOURCE_CHAR;
+		*entry = reg->entry;
+		return 0;
+	}
+
+	return -ENOENT;
+}
+
+bool acs_rmap_char_is_protected(uint16_t map_id, uint16_t att_handle,
+				enum bt_acs_direction direction)
+{
+	const struct bt_acs_rmap_protected *entry;
+	enum acs_rmap_resource_kind kind;
+
+	if (acs_rmap_find_protected(map_id, att_handle, &kind, &entry) != 0 ||
+	    kind != ACS_RMAP_RESOURCE_CHAR) {
+		return false;
+	}
+
+	for (uint8_t j = 0; j < entry->num_ops; j++) {
+		if (acs_att_opcode_matches_direction(entry->ops[j].opcode, direction)) {
+			return entry->ops[j].isc_id != BT_ACS_ISC_ID_NONE;
+		}
+	}
+
+	return false;
+}
+
+void acs_rmap_collect_protected_cccds(struct acs_rmap_cccd_gate *gates, size_t capacity,
+				      size_t *count)
+{
+	size_t gate_count = 0;
+
+	__ASSERT_NO_MSG(gates != NULL);
+	__ASSERT_NO_MSG(count != NULL);
+
+	STRUCT_SECTION_FOREACH(bt_acs_rmap_char_reg, reg) {
+		bool protect_notify = false;
+		bool protect_indicate = false;
+		uint16_t cccd;
+
+		if (reg->is_cp || reg->entry == NULL || reg->entry->resource_handle == 0) {
+			continue;
+		}
+
+		for (uint8_t j = 0; j < reg->entry->num_ops; j++) {
+			uint16_t op = reg->entry->ops[j].opcode;
+
+			if (op == BT_ACS_RMAP_OP_ATT_NOTIFY ||
+			    op == BT_ACS_RMAP_OP_ATT_NOTIFY_MULT) {
+				protect_notify = true;
+			} else if (op == BT_ACS_RMAP_OP_ATT_INDICATE) {
+				protect_indicate = true;
+			}
+		}
+
+		if (!protect_notify && !protect_indicate) {
+			continue;
+		}
+
+		cccd = acs_rhandle_find_cccd_for_char(reg->entry->resource_handle);
+		if (cccd == 0) {
+			LOG_WRN("No CCCD found for protected char 0x%04x",
+				reg->entry->resource_handle);
+			continue;
+		}
+
+		for (size_t k = 0; k < gate_count; k++) {
+			if (gates[k].cccd_handle == cccd) {
+				gates[k].notify_protected |= protect_notify;
+				gates[k].indicate_protected |= protect_indicate;
+				goto next_reg;
+			}
+		}
+
+		if (gate_count >= capacity) {
+			LOG_WRN("Protected CCCD gate table full (max %zu) — char 0x%04x left "
+				"ungated",
+				capacity, reg->entry->resource_handle);
+			continue;
+		}
+
+		gates[gate_count].cccd_handle = cccd;
+		gates[gate_count].char_handle = reg->entry->resource_handle;
+		gates[gate_count].notify_protected = protect_notify;
+		gates[gate_count].indicate_protected = protect_indicate;
+		gate_count++;
+
+next_reg:
+		continue;
+	}
+
+	*count = gate_count;
 }
 
 int acs_rmap_build_descriptor_response(const struct acs_rmap_get_descriptor_req *req,
@@ -258,8 +423,8 @@ static void rmap_dump_entry(const char *kind, const struct bt_acs_rmap_protected
 		bt_uuid_to_str(uuid, uuid_str, sizeof(uuid_str));
 	}
 
-	LOG_DBG("rmap:   protected %s handle=0x%04x uuid=%s num_ops=%u", kind,
-		p->resource_handle, uuid_str, p->num_ops);
+	LOG_DBG("rmap:   protected %s handle=0x%04x uuid=%s num_ops=%u", kind, p->resource_handle,
+		uuid_str, p->num_ops);
 	for (uint8_t j = 0; j < p->num_ops; j++) {
 		LOG_DBG("rmap:     op=0x%04x -> isc=0x%04x", p->ops[j].opcode, p->ops[j].isc_id);
 	}

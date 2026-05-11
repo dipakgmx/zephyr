@@ -228,14 +228,6 @@ struct bt_acs_restriction_map {
 	uint16_t map_isc_id;
 	/** Default ISC_ID (Type_ID 0x01); set to 0 to omit the Default ISC record */
 	uint16_t default_isc_id;
-	/** Protected characteristics (Type_ID 0x02 records) */
-	struct bt_acs_rmap_protected * const *chars;
-	/** Number of protected characteristic records */
-	uint8_t num_chars;
-	/** Protected Control Point procedures (Type_ID 0x03 records) */
-	struct bt_acs_rmap_protected * const *cps;
-	/** Number of protected CP procedure records */
-	uint8_t num_cps;
 };
 
 /**
@@ -249,14 +241,15 @@ struct bt_acs_restriction_map {
  * @param _name C identifier for the generated symbol (must be unique)
  * @param ...   Designated initialisers for bt_acs_restriction_map fields
  *
+ * Protected characteristics and Control Points are declared separately with
+ * BT_ACS_RMAP_PROTECT_CHAR_IN_MAP() and BT_ACS_RMAP_PROTECT_CP_IN_MAP().
+ *
  * Example:
  * @code
  *   BT_ACS_RESTRICTION_MAP_DEFINE(default_map,
  *       .map_id         = 0x0001,
  *       .map_isc_id     = 0x0000,
- *       .default_isc_id = 0x0000,
- *       .chars          = &cts_current_time,
- *       .num_chars      = 1);
+ *       .default_isc_id = 0x0000);
  * @endcode
  */
 #if defined(CONFIG_BT_ACS_FEAT_AUTHORIZATION)
@@ -338,9 +331,9 @@ struct bt_acs_rmap_char_reg {
  * @brief Declare a protected Control Point and auto-register it to a map.
  *
  * Like BT_ACS_RMAP_PROTECT_CHAR_IN_MAP() but marks the entry as a Control
- * Point (Type_ID 0x03) instead of a characteristic (Type_ID 0x02).  This
- * CP entries are auto-discovered via the iterable section — no manual
- * @c .cps / @c .num_cps wiring is needed in the restriction map.
+ * Point (Type_ID 0x03) instead of a characteristic (Type_ID 0x02). CP
+ * entries are auto-discovered via the iterable section — no manual
+ * restriction map wiring is needed.
  *
  * @param _name      C identifier used as the base name for generated symbols
  * @param _map_id    Restriction map ID this CP belongs to
@@ -352,7 +345,7 @@ struct bt_acs_rmap_char_reg {
  *   BT_ACS_RMAP_PROTECT_CP_IN_MAP(acs_cp, 0x0001, BT_UUID_GATT_ACS_CP,
  *       BT_ACS_RMAP_OP_ENTRY(BT_ACS_CP_OPCODE_GET_RESTRICTION_MAP_DESCRIPTOR, 0x0001));
  *
- *   // CP entries auto-discovered — no .cps/.num_cps needed:
+ *   // CP entries auto-discovered — no extra map fields needed:
  *   BT_ACS_RESTRICTION_MAP_DEFINE(secured_map, .map_id = 0x0001, ...);
  * @endcode
  */

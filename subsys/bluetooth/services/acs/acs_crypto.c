@@ -21,8 +21,8 @@
 LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
 
 /*
- * GCM and GMAC share the same 12-byte IV layout (4 fixed + 8 variable) and can
- * coexist.  CCM uses a 13-byte nonce and CMAC uses a different auth model;
+ * GCM and GMAC share the same 12-byte IV layout (8 fixed + 4 variable) and can
+ * coexist. CCM uses a 13-byte nonce and CMAC uses a different auth model;
  * neither can share the compile-time ACS_ACTIVE_* constants with GCM/GMAC.
  */
 BUILD_ASSERT(!(IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_CCM) &&
@@ -35,6 +35,8 @@ BUILD_ASSERT(!(IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_CMAC) &&
 		IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_GMAC) ||
 		IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_CCM))),
 	     "AES-CMAC cannot coexist with AEAD algorithms");
+BUILD_ASSERT(ACS_ACTIVE_NONCE_VAR_SIZE <= sizeof(uint32_t),
+	     "ACS runtime currently supports at most a 32-bit nonce variable part");
 
 /*
  * Per-algorithm PSA constants.  Each block is compiled when its Kconfig is
@@ -73,12 +75,112 @@ BUILD_ASSERT(!(IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_CMAC) &&
 #define ACS_PSA_TAG_LEN  ACS_PSA_GMAC_TAG_LEN
 #endif
 
-/*
- * GCM and GMAC both use PSA_ALG_GCM — the same PSA algorithm constant — so a
- * single cached key handle serves both.  CCM and CMAC use distinct algorithms
- * and are mutually exclusive with GCM/GMAC (enforced by BUILD_ASSERT above).
- * One cached key_id in bt_acs_crypto_session therefore covers every valid build.
- */
+static bool acs_key_desc_is_algorithm_record(const struct bt_acs_key_desc_record *rec)
+{
+	return rec->type_id == ACS_KEY_REC_AES_128_CCM || rec->type_id == ACS_KEY_REC_AES_128_GCM ||
+	       rec->type_id == ACS_KEY_REC_AES_128_EAX ||
+	       rec->type_id == ACS_KEY_REC_AES_128_CMAC || rec->type_id == ACS_KEY_REC_AES_128_GMAC;
+}
+
+static uint16_t acs_key_desc_parent_key_id(const struct bt_acs_key_desc_record *rec)
+{
+	switch (rec->type_id) {
+	case ACS_KEY_REC_KDF:
+		return rec->kdf.parent_key_id;
+	case ACS_KEY_REC_AES_128_CCM:
+	case ACS_KEY_REC_AES_128_GCM:
+	case ACS_KEY_REC_AES_128_EAX:
+	case ACS_KEY_REC_AES_128_CMAC:
+	case ACS_KEY_REC_AES_128_GMAC:
+		return rec->aes.parent_key_id;
+	default:
+		return 0U;
+	}
+}
+
+static int acs_current_key_id_from_key_desc(const struct bt_acs_key_desc_record *rec,
+					    uint16_t *current_key_id)
+{
+	const struct bt_acs_key_desc_record *current = rec;
+	uint8_t depth = 0U;
+
+	if (!rec || !current_key_id) {
+		LOG_ERR("current key descriptor resolution called with invalid arguments");
+		__ASSERT_NO_MSG(rec != NULL);
+		__ASSERT_NO_MSG(current_key_id != NULL);
+		return -EINVAL;
+	}
+
+	while (current && depth++ < ACS_KEY_ID_COUNT) {
+		if (!acs_key_desc_is_algorithm_record(current)) {
+			*current_key_id = current->key_id;
+			return 0;
+		}
+		current = acs_key_desc_lookup(acs_key_desc_parent_key_id(current));
+	}
+
+	LOG_ERR("Unable to resolve current key from key descriptor relation");
+	return -ENOENT;
+}
+
+int acs_crypto_current_key_lookup(struct bt_acs_conn *acs_conn, uint16_t key_id,
+				  struct bt_acs_runtime_key_state **current_key)
+{
+	if (!acs_conn || !current_key) {
+		LOG_ERR("current key lookup called with invalid arguments");
+		__ASSERT_NO_MSG(acs_conn != NULL);
+		__ASSERT_NO_MSG(current_key != NULL);
+		return -EINVAL;
+	}
+
+	for (size_t i = 0; i < ARRAY_SIZE(acs_conn->crypto.current_keys); i++) {
+		if (acs_runtime_key_id(&acs_conn->crypto.current_keys[i]) == key_id) {
+			*current_key = &acs_conn->crypto.current_keys[i];
+			return 0;
+		}
+	}
+
+	*current_key = NULL;
+	LOG_ERR("No runtime runtime key state reserved for Key_ID 0x%04x", key_id);
+	return -ENOENT;
+}
+
+int acs_crypto_current_key_from_isc(struct bt_acs_conn *acs_conn, uint16_t isc_id,
+				    struct bt_acs_runtime_key_state **current_key)
+{
+	const struct bt_acs_isc_record *isc = acs_isc_lookup(isc_id);
+	const struct bt_acs_key_desc_record *desc;
+	uint16_t current_key_id;
+	int err;
+
+	if (!acs_conn || !current_key) {
+		LOG_ERR("current key resolution from ISC called with invalid arguments");
+		__ASSERT_NO_MSG(acs_conn != NULL);
+		__ASSERT_NO_MSG(current_key != NULL);
+		return -EINVAL;
+	}
+
+	if (!isc) {
+		*current_key = NULL;
+		return -ENOENT;
+	}
+
+	desc = acs_key_desc_lookup(isc->key_id);
+	if (!desc) {
+		LOG_ERR("ISC 0x%04x references unknown key descriptor 0x%04x", isc_id, isc->key_id);
+		*current_key = NULL;
+		return -ENOENT;
+	}
+
+	err = acs_current_key_id_from_key_desc(desc, &current_key_id);
+	if (err) {
+		*current_key = NULL;
+		return err;
+	}
+
+	return acs_crypto_current_key_lookup(acs_conn, current_key_id, current_key);
+}
+
 int acs_crypto_get_server_nonce_fixed(struct bt_acs_conn *acs_conn, uint8_t *nonce_buf, size_t len)
 {
 #if IS_ENABLED(CONFIG_BT_ACS_HAS_NONCE_FIXED)
@@ -105,7 +207,7 @@ int acs_crypto_get_server_nonce_fixed(struct bt_acs_conn *acs_conn, uint8_t *non
 #endif /* CONFIG_BT_ACS_HAS_NONCE_FIXED */
 }
 
-int acs_crypto_import_session_key(struct bt_acs_conn *acs_conn)
+int acs_crypto_import_current_key(struct bt_acs_runtime_key_state *current_key)
 {
 	psa_key_attributes_t attrs = PSA_KEY_ATTRIBUTES_INIT;
 	psa_status_t status;
@@ -126,8 +228,8 @@ int acs_crypto_import_session_key(struct bt_acs_conn *acs_conn)
 	psa_set_key_type(&attrs, PSA_KEY_TYPE_AES);
 	psa_set_key_bits(&attrs, CONFIG_BT_ACS_SESSION_KEY_SIZE * BITS_PER_BYTE);
 
-	status = psa_import_key(&attrs, acs_conn->crypto.active_key, CONFIG_BT_ACS_SESSION_KEY_SIZE,
-				&acs_conn->crypto.psa_key_id);
+	status = psa_import_key(&attrs, current_key->key, CONFIG_BT_ACS_SESSION_KEY_SIZE,
+				&current_key->psa_key_id);
 	if (status != PSA_SUCCESS) {
 		LOG_ERR("Key import failed: %d", status);
 		return -EIO;
@@ -135,11 +237,18 @@ int acs_crypto_import_session_key(struct bt_acs_conn *acs_conn)
 	return 0;
 }
 
-void acs_crypto_destroy_session_key(struct bt_acs_conn *acs_conn)
+void acs_crypto_destroy_current_key(struct bt_acs_runtime_key_state *current_key)
 {
-	if (acs_conn->crypto.psa_key_id != 0) {
-		psa_destroy_key(acs_conn->crypto.psa_key_id);
-		acs_conn->crypto.psa_key_id = 0;
+	if (current_key && current_key->psa_key_id != 0) {
+		psa_destroy_key(current_key->psa_key_id);
+		current_key->psa_key_id = 0;
+	}
+}
+
+void acs_crypto_destroy_connection_keys(struct bt_acs_conn *acs_conn)
+{
+	for (size_t i = 0; i < ARRAY_SIZE(acs_conn->crypto.current_keys); i++) {
+		acs_crypto_destroy_current_key(&acs_conn->crypto.current_keys[i]);
 	}
 }
 
@@ -184,91 +293,95 @@ static void acs_build_nonce(const uint8_t *fixed, uint32_t counter, uint8_t *non
 #endif
 }
 
-static void acs_advance_tx_counter(struct bt_acs_crypto_session *crypto)
+static void acs_advance_tx_counter(struct bt_acs_runtime_key_state *current_key)
 {
 #if defined(CONFIG_BT_ACS_CCM_NONCE_SEQ_EVEN_ODD)
 	/* §3.6.2: EVEN_ODD: step by 2; sentinel 0xFFFFFFFF on wrap. */
-	crypto->tx_nonce_counter += 2U;
-	if (crypto->tx_nonce_counter == 0U) {
-		crypto->tx_nonce_counter = UINT32_MAX;
+	current_key->tx_nonce_counter += 2U;
+	if (current_key->tx_nonce_counter == 0U) {
+		current_key->tx_nonce_counter = UINT32_MAX;
 	}
 #else
-	crypto->tx_nonce_counter++;
+	current_key->tx_nonce_counter++;
 #endif
 }
 
-static void acs_advance_rx_counter(struct bt_acs_crypto_session *crypto)
+static void acs_advance_rx_counter(struct bt_acs_runtime_key_state *current_key)
 {
 #if defined(CONFIG_BT_ACS_CCM_NONCE_SEQ_EVEN_ODD)
 	/* §3.6.2: EVEN_ODD: step by 2; sentinel 0xFFFFFFFE on wrap. */
-	crypto->rx_nonce_counter += 2U;
-	if ((crypto->rx_nonce_counter & 1U) == 0U) {
-		crypto->rx_nonce_counter = UINT32_MAX - 1UL;
+	current_key->rx_nonce_counter += 2U;
+	if ((current_key->rx_nonce_counter & 1U) == 0U) {
+		current_key->rx_nonce_counter = UINT32_MAX - 1UL;
 	}
 #else
-	crypto->rx_nonce_counter++;
+	current_key->rx_nonce_counter++;
 #endif
 }
 
 /* Build the TX nonce from the server's fixed part (if present) and the counter. */
-static void acs_build_tx_nonce(struct bt_acs_conn const *acs_conn, uint8_t *nonce)
+static void acs_build_tx_nonce(struct bt_acs_conn const *acs_conn,
+			       const struct bt_acs_runtime_key_state *current_key, uint8_t *nonce)
 {
 #if IS_ENABLED(CONFIG_BT_ACS_HAS_NONCE_FIXED)
-	acs_build_nonce(acs_conn->crypto.server_nonce_fixed, acs_conn->crypto.tx_nonce_counter,
-			nonce);
+	acs_build_nonce(acs_conn->crypto.server_nonce_fixed, current_key->tx_nonce_counter, nonce);
 #else
-	acs_build_nonce(NULL, acs_conn->crypto.tx_nonce_counter, nonce);
+	acs_build_nonce(NULL, current_key->tx_nonce_counter, nonce);
 #endif
 }
 
 /* Build the RX nonce from the client's fixed part (if present) and the counter. */
-static void acs_build_rx_nonce(struct bt_acs_conn const *acs_conn, uint8_t *nonce)
+static void acs_build_rx_nonce(struct bt_acs_conn const *acs_conn,
+			       const struct bt_acs_runtime_key_state *current_key, uint8_t *nonce)
 {
 #if IS_ENABLED(CONFIG_BT_ACS_HAS_NONCE_FIXED)
-	acs_build_nonce(acs_conn->crypto.client_nonce_fixed, acs_conn->crypto.rx_nonce_counter,
-			nonce);
+	acs_build_nonce(acs_conn->crypto.client_nonce_fixed, current_key->rx_nonce_counter, nonce);
 #else
-	acs_build_nonce(NULL, acs_conn->crypto.rx_nonce_counter, nonce);
+	acs_build_nonce(NULL, current_key->rx_nonce_counter, nonce);
 #endif
 }
 
 #if IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_CCM) ||                                           \
 	IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_GCM)
 
-static int acs_crypto_aead_encrypt(struct bt_acs_conn *acs_conn, const uint8_t *plaintext,
-				   uint16_t plain_len, uint8_t *ciphertext, uint16_t *cipher_len)
+static int acs_crypto_aead_encrypt(struct bt_acs_conn *acs_conn,
+				   struct bt_acs_runtime_key_state *current_key,
+				   const uint8_t *plaintext, uint16_t plain_len,
+				   uint8_t *ciphertext, uint16_t *cipher_len)
 {
 	uint8_t nonce[ACS_ACTIVE_NONCE_SIZE];
 	psa_status_t status;
 	size_t out_len;
 
-	if (acs_conn->crypto.tx_nonce_counter > ACS_COUNTER_TX_MAX) {
+	if (current_key->tx_nonce_counter > ACS_COUNTER_TX_MAX) {
 		LOG_ERR("TX nonce space exhausted — rekey required");
 		return -ENOSPC;
 	}
 
-	acs_build_tx_nonce(acs_conn, nonce);
+	acs_build_tx_nonce(acs_conn, current_key, nonce);
 
-	status = psa_aead_encrypt(acs_conn->crypto.psa_key_id, ACS_PSA_AEAD_ALG, nonce,
+	status = psa_aead_encrypt(current_key->psa_key_id, ACS_PSA_AEAD_ALG, nonce,
 				  ACS_ACTIVE_NONCE_SIZE, NULL, 0, plaintext, plain_len, ciphertext,
 				  plain_len + ACS_PSA_TAG_LEN, &out_len);
 
 	if (status != PSA_SUCCESS) {
 		LOG_ERR("encrypt failed: status=%d, len=%u, tx_nonce_counter=0x%08x", status,
-			plain_len, acs_conn->crypto.tx_nonce_counter);
+			plain_len, current_key->tx_nonce_counter);
 		return -EIO;
 	}
 
 	*cipher_len = (uint16_t)out_len;
 
-	acs_advance_tx_counter(&acs_conn->crypto);
+	acs_advance_tx_counter(current_key);
 
 	return 0;
 }
 
-static int acs_crypto_aead_decrypt(struct bt_acs_conn *acs_conn, const uint8_t *ciphertext,
-				   uint16_t cipher_len, uint8_t *plaintext, uint16_t *plain_len,
-				   const uint8_t *aad, uint16_t aad_len)
+static int acs_crypto_aead_decrypt(struct bt_acs_conn *acs_conn,
+				   struct bt_acs_runtime_key_state *current_key,
+				   const uint8_t *ciphertext, uint16_t cipher_len,
+				   uint8_t *plaintext, uint16_t *plain_len, const uint8_t *aad,
+				   uint16_t aad_len)
 {
 	uint8_t nonce[ACS_ACTIVE_NONCE_SIZE];
 	psa_status_t status;
@@ -280,22 +393,22 @@ static int acs_crypto_aead_decrypt(struct bt_acs_conn *acs_conn, const uint8_t *
 
 #if defined(CONFIG_BT_ACS_CCM_NONCE_SEQ_EVEN_ODD)
 	/* §4.3.1: client nonces must be odd; even rx_counter indicates corruption */
-	if ((acs_conn->crypto.rx_nonce_counter & 1U) == 0U) {
+	if ((current_key->rx_nonce_counter & 1U) == 0U) {
 		LOG_ERR("Even-Odd parity violated (rx_counter=0x%08x)",
-			acs_conn->crypto.rx_nonce_counter);
+			current_key->rx_nonce_counter);
 		return -EINVAL;
 	}
 #endif
 
 	/* §3.6.2: refuse to decrypt once the nonce space is exhausted */
-	if (acs_conn->crypto.rx_nonce_counter > ACS_COUNTER_RX_MAX) {
+	if (current_key->rx_nonce_counter > ACS_COUNTER_RX_MAX) {
 		LOG_ERR("RX nonce space exhausted — rekey required");
 		return -ENOSPC;
 	}
 
-	acs_build_rx_nonce(acs_conn, nonce);
+	acs_build_rx_nonce(acs_conn, current_key, nonce);
 
-	status = psa_aead_decrypt(acs_conn->crypto.psa_key_id, ACS_PSA_AEAD_ALG, nonce,
+	status = psa_aead_decrypt(current_key->psa_key_id, ACS_PSA_AEAD_ALG, nonce,
 				  ACS_ACTIVE_NONCE_SIZE, aad, aad_len, ciphertext, cipher_len,
 				  plaintext, cipher_len - ACS_PSA_TAG_LEN, &out_len);
 
@@ -303,13 +416,13 @@ static int acs_crypto_aead_decrypt(struct bt_acs_conn *acs_conn, const uint8_t *
 		LOG_ERR("decrypt failed: %d (cipher_len=%u tag_len=%u "
 			"nonce_len=%u aad_len=%u rx_nonce_counter=%u)",
 			status, cipher_len, ACS_PSA_TAG_LEN, ACS_ACTIVE_NONCE_SIZE, aad_len,
-			acs_conn->crypto.rx_nonce_counter);
+			current_key->rx_nonce_counter);
 		return -EACCES;
 	}
 
 	*plain_len = (uint16_t)out_len;
 
-	acs_advance_rx_counter(&acs_conn->crypto);
+	acs_advance_rx_counter(current_key);
 
 	return 0;
 }
@@ -318,22 +431,24 @@ static int acs_crypto_aead_decrypt(struct bt_acs_conn *acs_conn, const uint8_t *
 
 #if IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_CMAC)
 
-static int acs_crypto_cmac_encrypt(struct bt_acs_conn *acs_conn, const uint8_t *plaintext,
-				   uint16_t plain_len, uint8_t *ciphertext, uint16_t *cipher_len)
+static int acs_crypto_cmac_encrypt(struct bt_acs_conn *acs_conn,
+				   struct bt_acs_runtime_key_state *current_key,
+				   const uint8_t *plaintext, uint16_t plain_len,
+				   uint8_t *ciphertext, uint16_t *cipher_len)
 {
 	uint8_t nonce[ACS_ACTIVE_NONCE_SIZE];
 	psa_status_t status;
 	psa_mac_operation_t op = PSA_MAC_OPERATION_INIT;
 	size_t mac_len;
 
-	if (acs_conn->crypto.tx_nonce_counter > ACS_COUNTER_TX_MAX) {
+	if (current_key->tx_nonce_counter > ACS_COUNTER_TX_MAX) {
 		LOG_ERR("TX nonce space exhausted — rekey required");
 		return -ENOSPC;
 	}
 
-	acs_build_tx_nonce(acs_conn, nonce);
+	acs_build_tx_nonce(acs_conn, current_key, nonce);
 
-	status = psa_mac_sign_setup(&op, acs_conn->crypto.psa_key_id, PSA_ALG_CMAC);
+	status = psa_mac_sign_setup(&op, current_key->psa_key_id, PSA_ALG_CMAC);
 	if (status != PSA_SUCCESS) {
 		LOG_ERR("ACS CMAC sign setup failed: %d", status);
 		return -EIO;
@@ -362,14 +477,16 @@ static int acs_crypto_cmac_encrypt(struct bt_acs_conn *acs_conn, const uint8_t *
 
 	*cipher_len = plain_len + (uint16_t)mac_len;
 
-	acs_advance_tx_counter(&acs_conn->crypto);
+	acs_advance_tx_counter(current_key);
 
 	return 0;
 }
 
-static int acs_crypto_cmac_decrypt(struct bt_acs_conn *acs_conn, const uint8_t *ciphertext,
-				   uint16_t cipher_len, uint8_t *plaintext, uint16_t *plain_len,
-				   const uint8_t *aad, uint16_t aad_len)
+static int acs_crypto_cmac_decrypt(struct bt_acs_conn *acs_conn,
+				   struct bt_acs_runtime_key_state *current_key,
+				   const uint8_t *ciphertext, uint16_t cipher_len,
+				   uint8_t *plaintext, uint16_t *plain_len, const uint8_t *aad,
+				   uint16_t aad_len)
 {
 	uint16_t data_len;
 	const uint8_t *tag;
@@ -384,7 +501,7 @@ static int acs_crypto_cmac_decrypt(struct bt_acs_conn *acs_conn, const uint8_t *
 		return -EINVAL;
 	}
 
-	if (acs_conn->crypto.rx_nonce_counter > ACS_COUNTER_RX_MAX) {
+	if (current_key->rx_nonce_counter > ACS_COUNTER_RX_MAX) {
 		LOG_ERR("RX nonce space exhausted — rekey required");
 		return -ENOSPC;
 	}
@@ -392,9 +509,9 @@ static int acs_crypto_cmac_decrypt(struct bt_acs_conn *acs_conn, const uint8_t *
 	data_len = cipher_len - ACS_PSA_CMAC_TAG_LEN;
 	tag = &ciphertext[data_len];
 
-	acs_build_rx_nonce(acs_conn, nonce);
+	acs_build_rx_nonce(acs_conn, current_key, nonce);
 
-	status = psa_mac_verify_setup(&op, acs_conn->crypto.psa_key_id, PSA_ALG_CMAC);
+	status = psa_mac_verify_setup(&op, current_key->psa_key_id, PSA_ALG_CMAC);
 	if (status != PSA_SUCCESS) {
 		LOG_ERR("ACS CMAC verify setup failed: %d", status);
 		return -EIO;
@@ -412,7 +529,7 @@ static int acs_crypto_cmac_decrypt(struct bt_acs_conn *acs_conn, const uint8_t *
 
 	if (status != PSA_SUCCESS) {
 		LOG_ERR("ACS CMAC verify failed: %d (cipher_len=%u rx_counter=%u)", status,
-			cipher_len, acs_conn->crypto.rx_nonce_counter);
+			cipher_len, current_key->rx_nonce_counter);
 		return -EACCES;
 	}
 
@@ -421,7 +538,7 @@ static int acs_crypto_cmac_decrypt(struct bt_acs_conn *acs_conn, const uint8_t *
 	}
 	*plain_len = data_len;
 
-	acs_advance_rx_counter(&acs_conn->crypto);
+	acs_advance_rx_counter(current_key);
 
 	return 0;
 }
@@ -430,22 +547,24 @@ static int acs_crypto_cmac_decrypt(struct bt_acs_conn *acs_conn, const uint8_t *
 
 #if IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_GMAC)
 
-static int acs_crypto_gmac_encrypt(struct bt_acs_conn *acs_conn, const uint8_t *plaintext,
-				   uint16_t plain_len, uint8_t *ciphertext, uint16_t *cipher_len)
+static int acs_crypto_gmac_encrypt(struct bt_acs_conn *acs_conn,
+				   struct bt_acs_runtime_key_state *current_key,
+				   const uint8_t *plaintext, uint16_t plain_len,
+				   uint8_t *ciphertext, uint16_t *cipher_len)
 {
 	uint8_t nonce[ACS_ACTIVE_NONCE_SIZE];
 	psa_status_t status;
 	uint8_t tag[ACS_PSA_GMAC_TAG_LEN];
 	size_t tag_len;
 
-	if (acs_conn->crypto.tx_nonce_counter > ACS_COUNTER_TX_MAX) {
+	if (current_key->tx_nonce_counter > ACS_COUNTER_TX_MAX) {
 		LOG_ERR("TX nonce space exhausted — rekey required");
 		return -ENOSPC;
 	}
 
-	acs_build_tx_nonce(acs_conn, nonce);
+	acs_build_tx_nonce(acs_conn, current_key, nonce);
 
-	status = psa_aead_encrypt(acs_conn->crypto.psa_key_id, ACS_PSA_GMAC_ALG, nonce,
+	status = psa_aead_encrypt(current_key->psa_key_id, ACS_PSA_GMAC_ALG, nonce,
 				  ACS_ACTIVE_NONCE_SIZE, plaintext, plain_len, NULL, 0, tag,
 				  sizeof(tag), &tag_len);
 
@@ -461,14 +580,16 @@ static int acs_crypto_gmac_encrypt(struct bt_acs_conn *acs_conn, const uint8_t *
 
 	*cipher_len = plain_len + (uint16_t)tag_len;
 
-	acs_advance_tx_counter(&acs_conn->crypto);
+	acs_advance_tx_counter(current_key);
 
 	return 0;
 }
 
-static int acs_crypto_gmac_decrypt(struct bt_acs_conn *acs_conn, const uint8_t *ciphertext,
-				   uint16_t cipher_len, uint8_t *plaintext, uint16_t *plain_len,
-				   const uint8_t *aad, uint16_t aad_len)
+static int acs_crypto_gmac_decrypt(struct bt_acs_conn *acs_conn,
+				   struct bt_acs_runtime_key_state *current_key,
+				   const uint8_t *ciphertext, uint16_t cipher_len,
+				   uint8_t *plaintext, uint16_t *plain_len, const uint8_t *aad,
+				   uint16_t aad_len)
 {
 	uint16_t data_len;
 	uint8_t nonce[ACS_ACTIVE_NONCE_SIZE];
@@ -483,22 +604,22 @@ static int acs_crypto_gmac_decrypt(struct bt_acs_conn *acs_conn, const uint8_t *
 		return -EINVAL;
 	}
 
-	if (acs_conn->crypto.rx_nonce_counter > ACS_COUNTER_RX_MAX) {
+	if (current_key->rx_nonce_counter > ACS_COUNTER_RX_MAX) {
 		LOG_ERR("RX nonce space exhausted — rekey required");
 		return -ENOSPC;
 	}
 
 	data_len = cipher_len - ACS_PSA_GMAC_TAG_LEN;
 
-	acs_build_rx_nonce(acs_conn, nonce);
+	acs_build_rx_nonce(acs_conn, current_key, nonce);
 
-	status = psa_aead_decrypt(acs_conn->crypto.psa_key_id, ACS_PSA_GMAC_ALG, nonce,
+	status = psa_aead_decrypt(current_key->psa_key_id, ACS_PSA_GMAC_ALG, nonce,
 				  ACS_ACTIVE_NONCE_SIZE, ciphertext, data_len,
 				  &ciphertext[data_len], ACS_PSA_GMAC_TAG_LEN, &empty, 0, &out_len);
 
 	if (status != PSA_SUCCESS) {
 		LOG_ERR("ACS GMAC verify failed: %d (cipher_len=%u rx_counter=%u)", status,
-			cipher_len, acs_conn->crypto.rx_nonce_counter);
+			cipher_len, current_key->rx_nonce_counter);
 		return -EACCES;
 	}
 
@@ -507,7 +628,7 @@ static int acs_crypto_gmac_decrypt(struct bt_acs_conn *acs_conn, const uint8_t *
 	}
 	*plain_len = data_len;
 
-	acs_advance_rx_counter(&acs_conn->crypto);
+	acs_advance_rx_counter(current_key);
 
 	return 0;
 }
@@ -519,6 +640,8 @@ int acs_crypto_encrypt(struct bt_acs_conn *acs_conn, uint16_t isc_id, const uint
 {
 	const struct bt_acs_isc_record *isc;
 	const struct bt_acs_key_desc_record *key;
+	struct bt_acs_runtime_key_state *current_key;
+	int err;
 
 	__ASSERT_NO_MSG(acs_conn != NULL);
 
@@ -534,26 +657,32 @@ int acs_crypto_encrypt(struct bt_acs_conn *acs_conn, uint16_t isc_id, const uint
 		return -EINVAL;
 	}
 
+	err = acs_crypto_current_key_from_isc(acs_conn, isc_id, &current_key);
+	if (err || current_key->psa_key_id == 0U) {
+		LOG_ERR("Encrypt: no current key installed for ISC 0x%04x", isc_id);
+		return -EACCES;
+	}
+
 	switch (key->type_id) {
 #if IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_CCM)
 	case ACS_KEY_REC_AES_128_CCM:
-		return acs_crypto_aead_encrypt(acs_conn, plaintext, plain_len, ciphertext,
-					       cipher_len);
+		return acs_crypto_aead_encrypt(acs_conn, current_key, plaintext, plain_len,
+					       ciphertext, cipher_len);
 #endif
 #if IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_GCM)
 	case ACS_KEY_REC_AES_128_GCM:
-		return acs_crypto_aead_encrypt(acs_conn, plaintext, plain_len, ciphertext,
-					       cipher_len);
+		return acs_crypto_aead_encrypt(acs_conn, current_key, plaintext, plain_len,
+					       ciphertext, cipher_len);
 #endif
 #if IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_CMAC)
 	case ACS_KEY_REC_AES_128_CMAC:
-		return acs_crypto_cmac_encrypt(acs_conn, plaintext, plain_len, ciphertext,
-					       cipher_len);
+		return acs_crypto_cmac_encrypt(acs_conn, current_key, plaintext, plain_len,
+					       ciphertext, cipher_len);
 #endif
 #if IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_GMAC)
 	case ACS_KEY_REC_AES_128_GMAC:
-		return acs_crypto_gmac_encrypt(acs_conn, plaintext, plain_len, ciphertext,
-					       cipher_len);
+		return acs_crypto_gmac_encrypt(acs_conn, current_key, plaintext, plain_len,
+					       ciphertext, cipher_len);
 #endif
 	default:
 		LOG_ERR("unsupported algorithm type 0x%02x for ISC 0x%04x", key->type_id, isc_id);
@@ -567,6 +696,8 @@ int acs_crypto_decrypt(struct bt_acs_conn *acs_conn, uint16_t isc_id, const uint
 {
 	const struct bt_acs_isc_record *isc;
 	const struct bt_acs_key_desc_record *key;
+	struct bt_acs_runtime_key_state *current_key;
+	int err;
 
 	__ASSERT_NO_MSG(acs_conn != NULL);
 
@@ -582,26 +713,32 @@ int acs_crypto_decrypt(struct bt_acs_conn *acs_conn, uint16_t isc_id, const uint
 		return -EINVAL;
 	}
 
+	err = acs_crypto_current_key_from_isc(acs_conn, isc_id, &current_key);
+	if (err || current_key->psa_key_id == 0U) {
+		LOG_ERR("Decrypt: no current key installed for ISC 0x%04x", isc_id);
+		return -EACCES;
+	}
+
 	switch (key->type_id) {
 #if IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_CCM)
 	case ACS_KEY_REC_AES_128_CCM:
-		return acs_crypto_aead_decrypt(acs_conn, ciphertext, cipher_len, plaintext,
-					       plain_len, aad, aad_len);
+		return acs_crypto_aead_decrypt(acs_conn, current_key, ciphertext, cipher_len,
+					       plaintext, plain_len, aad, aad_len);
 #endif
 #if IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_GCM)
 	case ACS_KEY_REC_AES_128_GCM:
-		return acs_crypto_aead_decrypt(acs_conn, ciphertext, cipher_len, plaintext,
-					       plain_len, aad, aad_len);
+		return acs_crypto_aead_decrypt(acs_conn, current_key, ciphertext, cipher_len,
+					       plaintext, plain_len, aad, aad_len);
 #endif
 #if IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_CMAC)
 	case ACS_KEY_REC_AES_128_CMAC:
-		return acs_crypto_cmac_decrypt(acs_conn, ciphertext, cipher_len, plaintext,
-					       plain_len, aad, aad_len);
+		return acs_crypto_cmac_decrypt(acs_conn, current_key, ciphertext, cipher_len,
+					       plaintext, plain_len, aad, aad_len);
 #endif
 #if IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_GMAC)
 	case ACS_KEY_REC_AES_128_GMAC:
-		return acs_crypto_gmac_decrypt(acs_conn, ciphertext, cipher_len, plaintext,
-					       plain_len, aad, aad_len);
+		return acs_crypto_gmac_decrypt(acs_conn, current_key, ciphertext, cipher_len,
+					       plaintext, plain_len, aad, aad_len);
 #endif
 	default:
 		LOG_ERR("unsupported algorithm type 0x%02x for ISC 0x%04x", key->type_id, isc_id);

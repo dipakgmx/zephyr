@@ -17,7 +17,7 @@ int acs_cp_all_active_get(struct acs_procedure *proc);
 
 /** @brief Handle Get Restriction Map Descriptor CP request (§4.4.3.2). */
 int acs_cp_handle_get_restriction_map_descriptor(struct acs_procedure *proc,
-						  struct net_buf_simple *buf);
+						 struct net_buf_simple *buf);
 
 /** @brief Handle Get Restriction Map ID List CP request (§4.4.3.3). */
 int acs_cp_handle_get_restriction_map_id_list(struct acs_procedure *proc);

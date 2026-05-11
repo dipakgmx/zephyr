@@ -34,6 +34,23 @@ struct acs_settings_cache_entry {
 
 static struct acs_settings_cache_entry acs_settings_cache[CONFIG_BT_MAX_CONN];
 
+static void acs_session_restore_key_ids(struct bt_acs_conn *acs_conn)
+{
+	size_t slot = 0;
+
+#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_ECDH)
+	acs_conn->crypto.current_keys[slot++].key_desc = acs_key_desc_lookup(ACS_KEY_ID_ECDH);
+#endif
+#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
+	acs_conn->crypto.current_keys[slot++].key_desc = acs_key_desc_lookup(ACS_KEY_ID_KDF);
+#endif
+#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_OOB)
+	acs_conn->crypto.current_keys[slot++].key_desc = acs_key_desc_lookup(ACS_KEY_ID_OOB);
+#endif
+
+	__ASSERT_NO_MSG(slot <= ARRAY_SIZE(acs_conn->crypto.current_keys));
+}
+
 bool acs_session_cache_has_room(const bt_addr_le_t *addr)
 {
 	for (int i = 0; i < CONFIG_BT_MAX_CONN; i++) {
@@ -50,40 +67,77 @@ bool acs_session_cache_has_room(const bt_addr_le_t *addr)
 void acs_session_store(struct bt_conn const *conn, struct bt_acs_conn const *acs_conn)
 {
 	const bt_addr_le_t *addr = bt_conn_get_dst(conn);
+	struct bt_acs_runtime_key_state *parent_key;
+#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_OOB)
+	struct bt_acs_runtime_key_state *oob_key;
+#endif
+#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
+	struct bt_acs_runtime_key_state *kdf_key;
+#endif
 	struct bt_conn_info info;
 	struct bt_acs_session_store store = {0};
 	int cache_found = -1;
 	int cache_empty = -1;
 	int err;
 
+	err = acs_crypto_current_key_lookup((struct bt_acs_conn *)acs_conn, ACS_KEY_ID_ECDH,
+					    &parent_key);
+	if (err) {
+		LOG_ERR("Missing ECDH runtime key state");
+		return;
+	}
+
+#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_OOB)
+	err = acs_crypto_current_key_lookup((struct bt_acs_conn *)acs_conn, ACS_KEY_ID_OOB,
+					    &oob_key);
+	if (err) {
+		LOG_ERR("Missing OOB runtime key state");
+		return;
+	}
+#endif
+
+#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
+	err = acs_crypto_current_key_lookup((struct bt_acs_conn *)acs_conn, ACS_KEY_ID_KDF,
+					    &kdf_key);
+	if (err) {
+		LOG_ERR("Missing KDF runtime key state");
+		return;
+	}
+#endif
+
 	if (bt_conn_get_info(conn, &info) < 0) {
 		return;
 	}
 
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF) && !IS_ENABLED(CONFIG_BT_ACS_KDF_SESSION_KEY)
-	if (acs_conn->kdf_child_active) {
+	if (kdf_key && kdf_key->psa_key_id != 0U) {
 		/* Two-key layout: store the ECDH parent as the base session key with zero
 		 * nonce counters (the parent is never directly used for AEAD; only the child
 		 * consumes nonces), then write the live child key and its nonce state into the
 		 * dedicated kdf_child_* fields.  On restore this lets the peer resume AEAD
 		 * with the child key immediately, while the parent remains addressable by
 		 * the Get Current Key List and Invalidate Key procedures. */
-		memcpy(store.parent_key, acs_conn->ecdh_parent_key, CONFIG_BT_ACS_SESSION_KEY_SIZE);
+		memcpy(store.parent_key, parent_key->key, CONFIG_BT_ACS_SESSION_KEY_SIZE);
+		store.parent_key_id = acs_runtime_key_id(parent_key);
 		store.tx_nonce_counter = 0;
 		store.rx_nonce_counter = 0;
 		store.kdf_child_valid = true;
-		memcpy(store.child_key, acs_conn->crypto.active_key,
-		       CONFIG_BT_ACS_SESSION_KEY_SIZE);
-		store.kdf_tx_nonce_counter = acs_conn->crypto.tx_nonce_counter;
-		store.kdf_rx_nonce_counter = acs_conn->crypto.rx_nonce_counter;
+		memcpy(store.child_key, kdf_key->key, CONFIG_BT_ACS_SESSION_KEY_SIZE);
+		store.kdf_tx_nonce_counter = kdf_key->tx_nonce_counter;
+		store.kdf_rx_nonce_counter = kdf_key->rx_nonce_counter;
 	} else
 #endif
 	{
 		/* ECDH/OOB exchange without active KDF child: session_key IS the AEAD key. */
-		memcpy(store.parent_key, acs_conn->crypto.active_key,
-		       CONFIG_BT_ACS_SESSION_KEY_SIZE);
-		store.tx_nonce_counter = acs_conn->crypto.tx_nonce_counter;
-		store.rx_nonce_counter = acs_conn->crypto.rx_nonce_counter;
+		if (!parent_key || parent_key->psa_key_id == 0U) {
+#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_OOB)
+			parent_key = oob_key;
+#endif
+		}
+		memcpy(store.parent_key, parent_key->key, CONFIG_BT_ACS_SESSION_KEY_SIZE);
+		store.parent_key_id = acs_runtime_key_id(parent_key);
+		store.tx_nonce_counter = parent_key->tx_nonce_counter;
+		store.rx_nonce_counter = parent_key->rx_nonce_counter;
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF) && !IS_ENABLED(CONFIG_BT_ACS_KDF_SESSION_KEY)
 		store.kdf_child_valid = false;
 #endif
@@ -210,7 +264,22 @@ void acs_session_restore(struct bt_conn *conn, struct bt_acs_conn *acs_conn)
 	for (int i = 0; i < CONFIG_BT_MAX_CONN; i++) {
 		if (acs_settings_cache[i].valid &&
 		    bt_addr_le_eq(&acs_settings_cache[i].addr, addr)) {
+			struct bt_acs_runtime_key_state *parent_key;
+			int err;
+#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF) && !IS_ENABLED(CONFIG_BT_ACS_KDF_SESSION_KEY)
+			struct bt_acs_runtime_key_state *kdf_key;
+#endif
+			struct bt_acs_runtime_key_state *established_key;
+
 			s = &acs_settings_cache[i].store;
+			err = acs_crypto_current_key_lookup(acs_conn, s->parent_key_id,
+							    &parent_key);
+
+			if (err) {
+				LOG_ERR("No runtime key state for restored parent Key_ID 0x%04x",
+					s->parent_key_id);
+				return;
+			}
 
 			acs_conn->restriction_map_id = s->restriction_map_id;
 #if IS_ENABLED(CONFIG_BT_ACS_HAS_NONCE_FIXED)
@@ -222,42 +291,60 @@ void acs_session_restore(struct bt_conn *conn, struct bt_acs_conn *acs_conn)
 
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF) && !IS_ENABLED(CONFIG_BT_ACS_KDF_SESSION_KEY)
 			if (s->kdf_child_valid) {
-				/* Restore the two-key state: parent key goes into the
-				 * ecdh_parent_key snapshot, child key becomes the active AEAD key
-				 * in session_key. The PSA import below installs whichever key is in
-				 * session_key, so setting it to the child here is enough to resume
-				 * protected ops with the correct key and nonce state. */
-				memcpy(acs_conn->ecdh_parent_key, s->parent_key,
+				/* Restore both current keys: the exchanged parent key remains
+				 * addressable by Key_ID, while the KDF child resumes as the live
+				 * AEAD key with its own nonce state. */
+				err = acs_crypto_current_key_lookup(acs_conn, ACS_KEY_ID_KDF,
+								    &kdf_key);
+				if (err) {
+					LOG_ERR("No runtime key state for restored KDF child");
+					return;
+				}
+
+				memcpy(parent_key->key, s->parent_key,
 				       CONFIG_BT_ACS_SESSION_KEY_SIZE);
-				memcpy(acs_conn->crypto.active_key, s->child_key,
-				       CONFIG_BT_ACS_SESSION_KEY_SIZE);
-				acs_conn->crypto.tx_nonce_counter = s->kdf_tx_nonce_counter;
-				acs_conn->crypto.rx_nonce_counter = s->kdf_rx_nonce_counter;
-				acs_conn->kdf_child_active = true;
+				parent_key->tx_nonce_counter = 0;
+				parent_key->rx_nonce_counter = 0;
+				memcpy(kdf_key->key, s->child_key, CONFIG_BT_ACS_SESSION_KEY_SIZE);
+				kdf_key->tx_nonce_counter = s->kdf_tx_nonce_counter;
+				kdf_key->rx_nonce_counter = s->kdf_rx_nonce_counter;
 			} else
 #endif
 			{
-				memcpy(acs_conn->crypto.active_key, s->parent_key,
+				memcpy(parent_key->key, s->parent_key,
 				       CONFIG_BT_ACS_SESSION_KEY_SIZE);
-				acs_conn->crypto.tx_nonce_counter = s->tx_nonce_counter;
-				acs_conn->crypto.rx_nonce_counter = s->rx_nonce_counter;
+				parent_key->tx_nonce_counter = s->tx_nonce_counter;
+				parent_key->rx_nonce_counter = s->rx_nonce_counter;
 			}
 
-			if (acs_crypto_import_session_key(acs_conn) != 0) {
+			if (acs_crypto_import_current_key(
+#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF) && !IS_ENABLED(CONFIG_BT_ACS_KDF_SESSION_KEY)
+				    s->kdf_child_valid ? kdf_key :
+#endif
+						       parent_key) != 0) {
 				LOG_ERR("Failed to import restored session key into PSA");
 				memset(&acs_conn->crypto, 0, sizeof(acs_conn->crypto));
+				acs_session_restore_key_ids(acs_conn);
 				return;
 			}
 
-			acs_conn->key_state = BT_ACS_KEY_EXCHANGE_COMPLETE;
+#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF) && !IS_ENABLED(CONFIG_BT_ACS_KDF_SESSION_KEY)
+			if (s->kdf_child_valid) {
+				if (acs_crypto_import_current_key(parent_key) != 0) {
+					LOG_ERR("Failed to import restored parent key into PSA");
+					return;
+				}
+			}
+#endif
+
+			acs_conn->crypto.key_state = BT_ACS_KEY_EXCHANGE_COMPLETE;
 
 			/* Security is only fully established when the AEAD key is
 			 * available.  With KDF configured, that means the child key
 			 * must be present; the ECDH parent alone cannot perform
-			 * protected operations (Data In rejects with Invalid Key
-			 * when kdf_child_active is false). */
+			 * protected operations. */
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
-			if (acs_conn->kdf_child_active) {
+			if (kdf_key && kdf_key->psa_key_id != 0U) {
 				acs_conn->status_flags |= BT_ACS_STATUS_SECURITY_ESTABLISHED;
 			}
 #else
@@ -269,9 +356,27 @@ void acs_session_restore(struct bt_conn *conn, struct bt_acs_conn *acs_conn)
 					? " (security established)"
 					: " (parent only, KDF child required)");
 
+			established_key = parent_key;
+#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
+			if (acs_conn->status_flags & BT_ACS_STATUS_SECURITY_ESTABLISHED) {
+				err = acs_crypto_current_key_lookup(acs_conn, ACS_KEY_ID_KDF,
+								    &established_key);
+				if (err) {
+					LOG_ERR("Missing KDF runtime key state for restored "
+						"session");
+					return;
+				}
+			}
+#endif
+
 			if ((acs_conn->status_flags & BT_ACS_STATUS_SECURITY_ESTABLISHED) && cb &&
-			    cb->security_established) {
-				cb->security_established(conn, acs_conn->crypto.active_key,
+			    cb->security_established && established_key) {
+				cb->security_established(conn,
+#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
+							 established_key->key,
+#else
+							 parent_key->key,
+#endif
 							 CONFIG_BT_ACS_SESSION_KEY_SIZE);
 			}
 			return;

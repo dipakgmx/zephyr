@@ -58,15 +58,20 @@ struct acs_rmap_id_list_entry {
 	uint16_t isc_id; /**< Information_Security_Configuration_ID, little-endian */
 } __packed;
 
-/**
- * @brief Callback type for iterating over protected resource entries in a restriction map.
- *
- * @param prot  The protected resource entry.
- * @param user_data  User-supplied context pointer.
- * @return true to continue iteration, false to stop.
- */
-typedef bool (*bt_acs_rmap_protected_cb_t)(const struct bt_acs_rmap_protected *prot,
-					   void *user_data);
+/** @brief Kind of protected resource found in a restriction map. */
+enum acs_rmap_resource_kind {
+	ACS_RMAP_RESOURCE_NONE,
+	ACS_RMAP_RESOURCE_CHAR,
+	ACS_RMAP_RESOURCE_CP,
+};
+
+/** @brief Protected CCCD gate resolved from a protected characteristic entry. */
+struct acs_rmap_cccd_gate {
+	uint16_t cccd_handle;
+	uint16_t char_handle;
+	bool notify_protected;
+	bool indicate_protected;
+};
 
 /**
  * @brief Look up a restriction map by ID.
@@ -83,32 +88,57 @@ typedef bool (*bt_acs_rmap_protected_cb_t)(const struct bt_acs_rmap_protected *p
 int acs_rmap_lookup(uint16_t map_id, struct bt_acs_restriction_map *out);
 
 /**
- * @brief Iterate the protected characteristics of a restriction map.
+ * @brief Find a protected resource entry in a restriction map by handle.
  *
- * Calls @p cb for each entry in @p map->chars[]. Stops early if @p cb
- * returns @c false.
+ * Looks for a registered protected characteristic or protected Control Point
+ * entry in @p map_id whose resource handle matches @p resource_handle.
  *
- * @param map       Restriction map to iterate (must not be NULL).
- * @param cb        Callback invoked per entry; return @c false to stop.
- * @param user_data Opaque pointer forwarded to every @p cb invocation.
+ * @param map_id            Restriction map ID to search in.
+ * @param resource_handle   Resource handle to match.
+ * @param kind              Filled with the matching resource kind on success.
+ * @param entry             Filled with the matching protected entry on success.
+ *
+ * @retval 0        Matching entry found.
+ * @retval -ENOENT  No matching entry found in the map.
  */
-void acs_rmap_foreach_char(const struct bt_acs_restriction_map *map,
-			   bool (*cb)(const struct bt_acs_rmap_protected *prot, void *user_data),
-			   void *user_data);
+int acs_rmap_find_protected(uint16_t map_id, uint16_t resource_handle,
+			    enum acs_rmap_resource_kind *kind,
+			    const struct bt_acs_rmap_protected **entry);
 
 /**
- * @brief Iterate the protected Control Point entries of a restriction map.
+ * @brief Check whether a characteristic operation requires ACS security.
  *
- * Calls @p cb for each entry in @p map->cps[] and for iterable section
- * entries registered with BT_ACS_RMAP_PROTECT_CP_IN_MAP().  Stops early
- * if @p cb returns @c false.
+ * Resolves the protected characteristic entry for @p att_handle in the
+ * specified restriction map and checks whether the ATT operations matching
+ * @p direction map to a non-zero ISC ID.
  *
- * @param map        Restriction map to iterate (must not be NULL).
- * @param cb         Callback invoked per entry; return @c false to stop.
- * @param user_data  User-supplied context pointer passed to @p cb.
+ * @param map_id      Restriction map ID to search in.
+ * @param att_handle  Characteristic value handle to check.
+ * @param direction   ATT direction to test.
+ *
+ * @retval true   The operation is protected by ACS security.
+ * @retval false  The handle is not present in the map, or the matching
+ *                operation is unprotected.
  */
-void acs_rmap_foreach_cp(const struct bt_acs_restriction_map *map, bt_acs_rmap_protected_cb_t cb,
-			 void *user_data);
+bool acs_rmap_char_is_protected(uint16_t map_id, uint16_t att_handle,
+				enum bt_acs_direction direction);
+
+/**
+ * @brief Collect protected CCCD gates derived from registered protected chars.
+ *
+ * Walks all registered protected characteristic entries, derives CCCD gates
+ * for notification/indication-protected characteristics, and writes up to
+ * @p capacity entries into @p gates.
+ *
+ * Duplicate CCCD handles are merged. If more gates are discovered than fit in
+ * @p capacity, excess gates are skipped.
+ *
+ * @param gates      Output array of CCCD gate entries.
+ * @param capacity   Number of elements available in @p gates.
+ * @param count      Filled with the number of gate entries written.
+ */
+void acs_rmap_collect_protected_cccds(struct acs_rmap_cccd_gate *gates, size_t capacity,
+				      size_t *count);
 
 /**
  * @brief Build the Restriction Map Descriptor Response payload.

@@ -30,10 +30,10 @@ extern "C" {
  * @param map_id   Active restriction map ID (used only for Data In classification).
  * @param route    [out] Populated on success.
  *
- * @return 0 on success, -ENOENT if the handle is not in the active map,
- *         -EINVAL on bad input.
+ * @return 0 on success, -ENOENT if the handle is not in the active map.
  */
-int acs_classify_frame(const struct acs_frame *frame, uint16_t map_id, struct acs_route *route);
+int acs_router_classify_frame(const struct acs_frame *frame, uint16_t map_id,
+			      struct acs_route *route);
 
 #ifdef __cplusplus
 }

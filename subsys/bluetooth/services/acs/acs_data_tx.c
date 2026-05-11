@@ -21,7 +21,6 @@
 #include <zephyr/drivers/spi_emul.h>
 #include <zephyr/logging/log.h>
 
-
 #include "acs_internal.h"
 
 #include <zephyr/logging/log.h>
@@ -74,12 +73,13 @@ static void data_tx_format_wire(uint8_t *ciphertext_and_tag, uint16_t plain_len)
  *   [ ISC_ID(2) | Nonce_Var(N) | MAC(T) | Ciphertext(LSO, same len as plaintext) ]
  */
 static int data_tx_encrypt_in_place(struct bt_acs_conn *acs_conn, uint16_t isc_id,
-					 struct net_buf *buf)
+				    struct net_buf *buf)
 {
 	uint8_t *plaintext;
 	uint16_t plain_len;
 	uint16_t cipher_len = 0;
 	uint32_t tx_counter;
+	struct bt_acs_runtime_key_state *current_key;
 	int err;
 
 	__ASSERT_NO_MSG(acs_conn != NULL);
@@ -101,8 +101,14 @@ static int data_tx_encrypt_in_place(struct bt_acs_conn *acs_conn, uint16_t isc_i
 	plaintext = buf->data;
 	plain_len = buf->len;
 
+	err = acs_crypto_current_key_from_isc(acs_conn, isc_id, &current_key);
+	if (err || current_key->psa_key_id == 0U) {
+		LOG_ERR("encrypt_in_place: no current key for isc_id 0x%04x", isc_id);
+		return -EACCES;
+	}
+
 	/* Capture the nonce variable BEFORE encrypt advances the counter. */
-	tx_counter = acs_conn->crypto.tx_nonce_counter;
+	tx_counter = current_key->tx_nonce_counter;
 
 	/* Reverse plaintext to LSO order for wire (spec §3.2). */
 	sys_mem_swap(plaintext, plain_len);
@@ -135,8 +141,8 @@ static int data_tx_encrypt_in_place(struct bt_acs_conn *acs_conn, uint16_t isc_i
 }
 
 /* Forward declarations for the DOI drain loop and dispatch helpers. */
-static void data_tx_completion_cb(struct bt_conn *conn, const struct bt_gatt_attr *attr,
-					  int err, void *user_data);
+static void data_tx_completion_cb(struct bt_conn *conn, const struct bt_gatt_attr *attr, int err,
+				  void *user_data);
 #if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_NOTIFICATION)
 static int data_tx_send_notify(struct acs_procedure *req);
 #endif
@@ -190,7 +196,8 @@ static void data_tx_drain_doi_queue(struct bt_acs_conn *acs_conn)
 			return;
 		}
 		atomic_ptr_cas(&acs_conn->active_indication, req, NULL);
-		LOG_WRN("DOI seg_tx_send failed: %d (handle 0x%04x)", err, req->route.resource_handle);
+		LOG_WRN("DOI seg_tx_send failed: %d (handle 0x%04x)", err,
+			req->route.resource_handle);
 		acs_procedure_tx_done(req);
 	}
 #else
@@ -213,8 +220,7 @@ static void data_tx_drain_doi_queue(struct bt_acs_conn *acs_conn)
  */
 static void data_tx_seq_continue_work(struct k_work *work)
 {
-	struct acs_procedure *req =
-		CONTAINER_OF(work, struct acs_procedure, work);
+	struct acs_procedure *req = CONTAINER_OF(work, struct acs_procedure, work);
 	struct bt_acs_conn *acs_conn = req->acs_conn;
 	struct bt_conn *conn = acs_conn ? acs_conn->conn : NULL;
 
@@ -242,8 +248,8 @@ drain:
  * defers the next reply-sequence step to a work item or drains the next
  * independent request from the FIFO.
  */
-static void data_tx_completion_cb(struct bt_conn *conn, const struct bt_gatt_attr *attr,
-					  int err, void *user_data)
+static void data_tx_completion_cb(struct bt_conn *conn, const struct bt_gatt_attr *attr, int err,
+				  void *user_data)
 {
 	struct acs_procedure *req = user_data;
 	struct bt_acs_conn *acs_conn = req ? req->acs_conn : NULL;
@@ -302,7 +308,8 @@ static int data_tx_send_notify(struct acs_procedure *req)
 
 	err = data_tx_encrypt_in_place(acs_conn, req->route.isc_id, buf);
 	if (err) {
-		LOG_WRN("DON encrypt failed for handle 0x%04x: %d", req->route.resource_handle, err);
+		LOG_WRN("DON encrypt failed for handle 0x%04x: %d", req->route.resource_handle,
+			err);
 		acs_procedure_tx_done(req);
 		return err;
 	}
@@ -447,7 +454,8 @@ int acs_tx_submit(struct acs_procedure *proc, const struct acs_reply *reply)
 			 "ACS_REPLY_CP requires plain-CP proc");
 		__ASSERT(proc != NULL, "plain-CP proc missing procedure");
 		__ASSERT(reply->plaintext == proc->buffers.response_buf,
-			 "ACS_REPLY_CP plaintext must be the staged plain_cp_proc.buffers.response_buf");
+			 "ACS_REPLY_CP plaintext must be the staged "
+			 "plain_cp_proc.buffers.response_buf");
 		__ASSERT(!reply->encrypted, "ACS_REPLY_CP must be unencrypted (plain transport)");
 		__ASSERT(reply->needs_confirm,
 			 "ACS_REPLY_CP is always confirmed (segmented indication)");
@@ -460,8 +468,7 @@ int acs_tx_submit(struct acs_procedure *proc, const struct acs_reply *reply)
 		__ASSERT(reply->plaintext == proc->buffers.response_buf,
 			 "ACS_REPLY_DON plaintext must be the staged req->buffers.response_buf");
 		__ASSERT(reply->encrypted, "ACS_REPLY_DON must be encrypted");
-		__ASSERT(!reply->needs_confirm,
-			 "ACS_REPLY_DON is unconfirmed (notification)");
+		__ASSERT(!reply->needs_confirm, "ACS_REPLY_DON is unconfirmed (notification)");
 		return data_tx_send_notify(proc);
 #endif
 #if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION)
@@ -501,7 +508,8 @@ static int data_tx_send_indicate(struct acs_procedure *req)
 
 	err = data_tx_encrypt_in_place(acs_conn, req->route.isc_id, buf);
 	if (err) {
-		LOG_WRN("DOI encrypt failed for handle 0x%04x: %d", req->route.resource_handle, err);
+		LOG_WRN("DOI encrypt failed for handle 0x%04x: %d", req->route.resource_handle,
+			err);
 		return err;
 	}
 

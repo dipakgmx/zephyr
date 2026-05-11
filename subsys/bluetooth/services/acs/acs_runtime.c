@@ -15,7 +15,7 @@
 
 #include "acs_channel_rx.h"
 #include "acs_internal.h"
-#include "acs_protected_resource_router.h"
+#include "acs_router.h"
 
 #include <zephyr/logging/log.h>
 LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
@@ -48,8 +48,8 @@ int acs_runtime_dispatch_protected_cp_frame(struct acs_frame *frame, struct bt_a
 		frame->resource_handle);
 
 	data_offset = (uint16_t)(frame->payload - acs_conn->data_rx.buf->data);
-	req_ctx = acs_procedure_alloc(acs_conn, frame->resource_handle, frame->isc_id,
-				      data_offset, frame->payload_len);
+	req_ctx = acs_procedure_alloc(acs_conn, frame->resource_handle, frame->isc_id, data_offset,
+				      frame->payload_len);
 	if (!req_ctx) {
 		LOG_WRN("Data In: no free CP request context for handle 0x%04x",
 			frame->resource_handle);
@@ -81,8 +81,7 @@ int acs_runtime_dispatch_protected_cp_frame(struct acs_frame *frame, struct bt_a
 	return sub_err;
 }
 
-int acs_runtime_dispatch_protected_char_frame(struct acs_frame *frame,
-					      struct bt_acs_conn *acs_conn)
+int acs_runtime_dispatch_protected_char_frame(struct acs_frame *frame, struct bt_acs_conn *acs_conn)
 {
 	struct acs_procedure *req_ctx;
 	uint16_t data_offset;
@@ -106,8 +105,8 @@ int acs_runtime_dispatch_protected_char_frame(struct acs_frame *frame,
 	}
 
 	data_offset = (uint16_t)(frame->payload - acs_conn->data_rx.buf->data);
-	req_ctx = acs_procedure_alloc(acs_conn, frame->resource_handle, frame->isc_id,
-				      data_offset, frame->payload_len);
+	req_ctx = acs_procedure_alloc(acs_conn, frame->resource_handle, frame->isc_id, data_offset,
+				      frame->payload_len);
 	if (!req_ctx) {
 		LOG_WRN("Data In: no free request context for handle 0x%04x",
 			frame->resource_handle);
@@ -124,17 +123,16 @@ int acs_runtime_dispatch_protected_char_frame(struct acs_frame *frame,
 
 int acs_runtime_dispatch_frame(struct acs_frame *frame, struct bt_acs_conn *acs_conn)
 {
-	struct acs_route route;
+	struct acs_route route = {0};
 	uint16_t map_id;
 	int err;
 
-	if (!frame || !acs_conn) {
-		return -EINVAL;
-	}
+	__ASSERT_NO_MSG(frame != NULL);
+	__ASSERT_NO_MSG(acs_conn != NULL);
 
 	map_id = (frame->source_channel == ACS_SRC_CP) ? 0U : acs_conn->restriction_map_id;
 
-	err = acs_classify_frame(frame, map_id, &route);
+	err = acs_router_classify_frame(frame, map_id, &route);
 	if (err == -ENOENT) {
 		LOG_WRN("Runtime dispatch: handle 0x%04x not in restriction map",
 			frame->resource_handle);
@@ -215,8 +213,7 @@ ssize_t acs_cp_write(struct bt_conn *conn, const struct bt_gatt_attr *attr, cons
 		 * Abort command must preempt any in-progress procedure per §4.4.4: it bypasses the
 		 * plain_cp_proc lock and the handler owns the lock semantics itself.
 		 */
-		is_abort = (frame.payload_len > 0 &&
-			    frame.payload[0] == BT_ACS_CP_OPCODE_ABORT);
+		is_abort = (frame.payload_len > 0 && frame.payload[0] == BT_ACS_CP_OPCODE_ABORT);
 #endif
 		if (!is_abort && !atomic_cas(&acs_conn->plain_cp_proc.plain_cp.locked, 0, 1)) {
 			acs_seg_rx_reset(&acs_conn->cp_rx);
@@ -259,8 +256,8 @@ ssize_t acs_data_in_write(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 {
 	struct bt_acs_conn *acs_conn;
 	enum acs_seg_rx_result res;
-	int proc_err;
-	uint16_t attr_handle;
+	int err;
+	uint16_t attr_handle = attr ? attr->handle : 0U;
 
 	ARG_UNUSED(flags);
 
@@ -294,54 +291,54 @@ ssize_t acs_data_in_write(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 		net_buf_simple_init_with_data(&simple, acs_conn->data_rx.buf->data,
 					      acs_conn->data_rx.buf->len);
 
-		proc_err = acs_data_in_unwrap_and_route(conn, acs_conn, &simple);
+		err = acs_data_in_unwrap_and_route(acs_conn, &simple);
 
 		/*
 		 * On success the buffer is either owned by the request context
 		 * (regular protected resource) or already freed (protected CP).
 		 * On error, release the buffer back to the pool.
 		 */
-		if (proc_err && acs_conn->data_rx.buf) {
+		if (err && acs_conn->data_rx.buf) {
 			acs_seg_rx_reset(&acs_conn->data_rx);
 		}
 
-		if (proc_err == ACS_DATA_ERR_NOT_AUTHORIZED) {
+		if (err == ACS_DATA_ERR_NOT_AUTHORIZED) {
 			LOG_WRN("Data In ATT write to handle 0x%04x: no security established",
 				attr_handle);
 			return BT_GATT_ERR(BT_ATT_ERR_AUTHORIZATION);
 		}
-		if (proc_err == ACS_DATA_ERR_INVALID_KEY) {
+		if (err == ACS_DATA_ERR_INVALID_KEY) {
 			LOG_ERR("Data In ATT write to handle 0x%04x failed with Invalid Key; inner "
 				"protected resource handle is unavailable unless decryption "
 				"succeeds",
 				attr_handle);
 			return BT_GATT_ERR(BT_ACS_ATT_ERR_INVALID_KEY);
 		}
-		if (proc_err == ACS_DATA_ERR_CCC_IMPROPER_CONF) {
+		if (err == ACS_DATA_ERR_CCC_IMPROPER_CONF) {
 			LOG_WRN("Data In ATT write to handle 0x%04x: required CCC not configured",
 				attr_handle);
 			return BT_GATT_ERR(BT_ATT_ERR_CCC_IMPROPER_CONF);
 		}
-		if (proc_err == ACS_DATA_ERR_RESOURCE_NOT_PROTECTED) {
+		if (err == ACS_DATA_ERR_RESOURCE_NOT_PROTECTED) {
 			LOG_WRN("Data In ATT write to handle 0x%04x: resource handle not protected "
 				"by active map",
 				attr_handle);
 			return BT_GATT_ERR(BT_ACS_ATT_ERR_RESOURCE_NOT_PROTECTED);
 		}
-		if (proc_err == ACS_DATA_ERR_INCORRECT_SECURITY_CONFIG) {
+		if (err == ACS_DATA_ERR_INCORRECT_SECURITY_CONFIG) {
 			LOG_WRN("Data In ATT write to handle 0x%04x: ISC_ID not found or security "
 				"config mismatch",
 				attr_handle);
 			return BT_GATT_ERR(BT_ACS_ATT_ERR_INCORRECT_SECURITY_CONFIG);
 		}
-		if (proc_err == -ENOMEM) {
+		if (err == -ENOMEM) {
 			LOG_WRN("Data In ATT write to handle 0x%04x: no free request context for "
 				"protected resource",
 				attr_handle);
 			return BT_GATT_ERR(BT_ATT_ERR_INSUFFICIENT_RESOURCES);
 		}
-		if (proc_err) {
-			LOG_ERR("Data In processing failed: %d", proc_err);
+		if (err) {
+			LOG_ERR("Data In processing failed: %d", err);
 			return BT_GATT_ERR(BT_ATT_ERR_UNLIKELY);
 		}
 		break;

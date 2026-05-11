@@ -24,7 +24,7 @@ LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
  * as the seg-TX completion callback for plain-CP indications.
  */
 void acs_cp_completion_cb(struct bt_conn *conn, const struct bt_gatt_attr *attr, int err,
-			     void *user_data);
+			  void *user_data);
 
 int acs_cp_send_reply(struct acs_procedure *proc)
 {
@@ -70,7 +70,7 @@ int acs_cp_send_reply(struct acs_procedure *proc)
  * @param user_data Unused.
  */
 void acs_cp_completion_cb(struct bt_conn *conn, const struct bt_gatt_attr *attr, int err,
-			     void *user_data)
+			  void *user_data)
 {
 	struct net_buf *rsp_buf = user_data;
 	struct bt_acs_conn *acs_conn = acs_conn_lookup(conn);
@@ -104,15 +104,15 @@ void acs_cp_completion_cb(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 		}
 
 		/* Tear down KEX if in progress. */
-		if (acs_conn->key_state != BT_ACS_KEY_EXCHANGE_IDLE &&
-		    acs_conn->key_state != BT_ACS_KEY_EXCHANGE_COMPLETE) {
-			acs_conn->key_state = BT_ACS_KEY_EXCHANGE_IDLE;
-			if (acs_conn->kex) {
-				if (acs_conn->kex->ecdh_key_id != 0) {
-					psa_destroy_key(acs_conn->kex->ecdh_key_id);
+		if (acs_conn->crypto.key_state != BT_ACS_KEY_EXCHANGE_IDLE &&
+		    acs_conn->crypto.key_state != BT_ACS_KEY_EXCHANGE_COMPLETE) {
+			acs_conn->crypto.key_state = BT_ACS_KEY_EXCHANGE_IDLE;
+			if (acs_conn->crypto.kex) {
+				if (acs_conn->crypto.kex->ecdh_key_id != 0) {
+					psa_destroy_key(acs_conn->crypto.kex->ecdh_key_id);
 				}
-				acs_kex_free(acs_conn->kex);
-				acs_conn->kex = NULL;
+				acs_kex_free(acs_conn->crypto.kex);
+				acs_conn->crypto.kex = NULL;
 			}
 		}
 

@@ -23,7 +23,7 @@ zephyr_sources_ifdef(
   acs_request.c
   acs_data_rx.c
   acs_data_tx.c
-  acs_protected_resource_router.c
+  acs_router.c
 )
 
 # Key exchange — compiled when any KEx method is enabled.

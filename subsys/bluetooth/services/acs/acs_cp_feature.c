@@ -137,16 +137,15 @@ int acs_cp_handle_get_feature(struct acs_procedure *proc, struct net_buf_simple 
 
 	if (buf->len != 0) {
 		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_GET_FEATURE,
-				  BT_ACS_CP_RESPONSE_INVALID_OPERAND);
+					 BT_ACS_CP_RESPONSE_INVALID_OPERAND);
 	}
 
-	LOG_DBG("feat=0x%02x prot=0x%02x", acs_features.features,
-		acs_features.protection_methods);
+	LOG_DBG("feat=0x%02x prot=0x%02x", acs_features.features, acs_features.protection_methods);
 
 	rsp_buf = acs_prepare_reply_buf(proc, reply_mode.encrypted);
 	if (!rsp_buf) {
 		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_GET_FEATURE,
-				  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
+					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 	}
 	net_buf_add_u8(rsp_buf, BT_ACS_CP_OPCODE_ACS_FEATURE_RESPONSE);
 	net_buf_add_mem(rsp_buf, &acs_features, sizeof(acs_features));
@@ -227,10 +226,10 @@ int acs_cp_handle_set_client_nonce_fixed(struct acs_procedure *proc, struct net_
 	 * COMPLETE (restored session — client wants to re-key with a fresh nonce).
 	 * TODO: The exchange complete flag needs to be pruned. It is incorrect!!!
 	 */
-	if (acs_conn->key_state != BT_ACS_KEY_EXCHANGE_IDLE &&
-	    acs_conn->key_state != BT_ACS_KEY_EXCHANGE_COMPLETE) {
+	if (acs_conn->crypto.key_state != BT_ACS_KEY_EXCHANGE_IDLE &&
+	    acs_conn->crypto.key_state != BT_ACS_KEY_EXCHANGE_COMPLETE) {
 		LOG_WRN("Set client nonce fixed rejected: key exchange in progress (state %d)",
-			acs_conn->key_state);
+			acs_conn->crypto.key_state);
 		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_SET_CLIENT_NONCE_FIXED,
 					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE);
 	}

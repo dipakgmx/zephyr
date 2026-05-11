@@ -73,8 +73,7 @@ static int all_active_step_key(struct acs_procedure *proc)
 
 	uint8_t server_nonce[CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE];
 
-	err = acs_crypto_get_server_nonce_fixed(proc->acs_conn, server_nonce,
-						sizeof(server_nonce));
+	err = acs_crypto_get_server_nonce_fixed(proc->acs_conn, server_nonce, sizeof(server_nonce));
 	if (err) {
 		return err;
 	}

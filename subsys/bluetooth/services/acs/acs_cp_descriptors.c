@@ -130,7 +130,8 @@ int acs_cp_handle_get_svc_char_uuids(struct acs_procedure *proc, struct net_buf_
 
 	if (buf->len < 2) {
 		return acs_cp_rsp_status(
-			proc, BT_ACS_CP_OPCODE_GET_SERVICE_CHARACTERISTIC_UUIDS_CHAR_RESOURCE_HANDLE,
+			proc,
+			BT_ACS_CP_OPCODE_GET_SERVICE_CHARACTERISTIC_UUIDS_CHAR_RESOURCE_HANDLE,
 			BT_ACS_CP_RESPONSE_INVALID_OPERAND);
 	}
 
@@ -139,7 +140,8 @@ int acs_cp_handle_get_svc_char_uuids(struct acs_procedure *proc, struct net_buf_
 	rsp_buf = acs_prepare_reply_buf(proc, reply_mode.encrypted);
 	if (!rsp_buf) {
 		return acs_cp_rsp_status(
-			proc, BT_ACS_CP_OPCODE_GET_SERVICE_CHARACTERISTIC_UUIDS_CHAR_RESOURCE_HANDLE,
+			proc,
+			BT_ACS_CP_OPCODE_GET_SERVICE_CHARACTERISTIC_UUIDS_CHAR_RESOURCE_HANDLE,
 			BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 	}
 	net_buf_add_u8(rsp_buf,
@@ -149,11 +151,13 @@ int acs_cp_handle_get_svc_char_uuids(struct acs_procedure *proc, struct net_buf_
 
 	if (err == -ENOENT) {
 		return acs_cp_rsp_status(
-			proc, BT_ACS_CP_OPCODE_GET_SERVICE_CHARACTERISTIC_UUIDS_CHAR_RESOURCE_HANDLE,
+			proc,
+			BT_ACS_CP_OPCODE_GET_SERVICE_CHARACTERISTIC_UUIDS_CHAR_RESOURCE_HANDLE,
 			BT_ACS_CP_RESPONSE_PARAMETER_OUT_OF_RANGE);
 	} else if (err) {
 		return acs_cp_rsp_status(
-			proc, BT_ACS_CP_OPCODE_GET_SERVICE_CHARACTERISTIC_UUIDS_CHAR_RESOURCE_HANDLE,
+			proc,
+			BT_ACS_CP_OPCODE_GET_SERVICE_CHARACTERISTIC_UUIDS_CHAR_RESOURCE_HANDLE,
 			errno_to_acs_status(err));
 	} else {
 		int send_err = acs_cp_send_reply(proc);
