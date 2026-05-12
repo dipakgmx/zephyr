@@ -37,6 +37,7 @@ static struct acs_settings_cache_entry acs_settings_cache[CONFIG_BT_MAX_CONN];
 static void acs_session_restore_key_ids(struct bt_acs_conn *acs_conn)
 {
 	size_t slot = 0;
+	size_t record_slot = 0;
 
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_ECDH)
 	acs_conn->crypto.current_keys[slot++].key_desc = acs_key_desc_lookup(ACS_KEY_ID_ECDH);
@@ -49,6 +50,15 @@ static void acs_session_restore_key_ids(struct bt_acs_conn *acs_conn)
 #endif
 
 	__ASSERT_NO_MSG(slot <= ARRAY_SIZE(acs_conn->crypto.current_keys));
+
+	STRUCT_SECTION_FOREACH(bt_acs_key_desc_record, rec) {
+		if (!acs_key_desc_has_nonce_record(rec)) {
+			continue;
+		}
+
+		__ASSERT_NO_MSG(record_slot < ARRAY_SIZE(acs_conn->crypto.record_states));
+		acs_conn->crypto.record_states[record_slot++].key_desc = rec;
+	}
 }
 
 bool acs_session_cache_has_room(const bt_addr_le_t *addr)
@@ -119,12 +129,8 @@ void acs_session_store(struct bt_conn const *conn, struct bt_acs_conn const *acs
 		 * the Get Current Key List and Invalidate Key procedures. */
 		memcpy(store.parent_key, parent_key->key, CONFIG_BT_ACS_SESSION_KEY_SIZE);
 		store.parent_key_id = acs_runtime_key_id(parent_key);
-		store.tx_nonce_counter = 0;
-		store.rx_nonce_counter = 0;
 		store.kdf_child_valid = true;
 		memcpy(store.child_key, kdf_key->key, CONFIG_BT_ACS_SESSION_KEY_SIZE);
-		store.kdf_tx_nonce_counter = kdf_key->tx_nonce_counter;
-		store.kdf_rx_nonce_counter = kdf_key->rx_nonce_counter;
 	} else
 #endif
 	{
@@ -136,19 +142,35 @@ void acs_session_store(struct bt_conn const *conn, struct bt_acs_conn const *acs
 		}
 		memcpy(store.parent_key, parent_key->key, CONFIG_BT_ACS_SESSION_KEY_SIZE);
 		store.parent_key_id = acs_runtime_key_id(parent_key);
-		store.tx_nonce_counter = parent_key->tx_nonce_counter;
-		store.rx_nonce_counter = parent_key->rx_nonce_counter;
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF) && !IS_ENABLED(CONFIG_BT_ACS_KDF_SESSION_KEY)
 		store.kdf_child_valid = false;
 #endif
 	}
-#if IS_ENABLED(CONFIG_BT_ACS_HAS_NONCE_FIXED)
-	memcpy(store.server_nonce_fixed, acs_conn->crypto.server_nonce_fixed,
-	       CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE);
-	memcpy(store.client_nonce_fixed, acs_conn->crypto.client_nonce_fixed,
-	       CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE);
-#endif /* BT_ACS_HAS_NONCE_FIXED */
 	store.restriction_map_id = acs_conn->restriction_map_id;
+	for (size_t i = 0; i < ARRAY_SIZE(acs_conn->crypto.record_states); i++) {
+		const struct bt_acs_record_state *record_state = &acs_conn->crypto.record_states[i];
+		struct bt_acs_session_store_record_state *stored_record;
+
+		if (!record_state->key_desc) {
+			continue;
+		}
+
+		if (store.nonce_record_count >= ARRAY_SIZE(store.nonce_records)) {
+			LOG_WRN("Dropping nonce record state for Key_ID 0x%04x due to store capacity",
+				acs_record_key_id(record_state));
+			break;
+		}
+
+		stored_record = &store.nonce_records[store.nonce_record_count++];
+		stored_record->key_id = acs_record_key_id(record_state);
+		stored_record->client_nonce_set = record_state->client_nonce_set;
+		memcpy(stored_record->server_nonce_fixed, record_state->server_nonce_fixed,
+		       sizeof(stored_record->server_nonce_fixed));
+		memcpy(stored_record->client_nonce_fixed, record_state->client_nonce_fixed,
+		       sizeof(stored_record->client_nonce_fixed));
+		stored_record->tx_nonce_counter = record_state->tx_nonce_counter;
+		stored_record->rx_nonce_counter = record_state->rx_nonce_counter;
+	}
 
 	err = bt_settings_store("acs", info.id, addr, &store, sizeof(store));
 	if (err) {
@@ -266,8 +288,8 @@ void acs_session_restore(struct bt_conn *conn, struct bt_acs_conn *acs_conn)
 		    bt_addr_le_eq(&acs_settings_cache[i].addr, addr)) {
 			struct bt_acs_runtime_key_state *parent_key;
 			int err;
-#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF) && !IS_ENABLED(CONFIG_BT_ACS_KDF_SESSION_KEY)
-			struct bt_acs_runtime_key_state *kdf_key;
+#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
+			struct bt_acs_runtime_key_state *kdf_key = NULL;
 #endif
 			struct bt_acs_runtime_key_state *established_key;
 
@@ -282,12 +304,6 @@ void acs_session_restore(struct bt_conn *conn, struct bt_acs_conn *acs_conn)
 			}
 
 			acs_conn->restriction_map_id = s->restriction_map_id;
-#if IS_ENABLED(CONFIG_BT_ACS_HAS_NONCE_FIXED)
-			memcpy(acs_conn->crypto.server_nonce_fixed, s->server_nonce_fixed,
-			       CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE);
-			memcpy(acs_conn->crypto.client_nonce_fixed, s->client_nonce_fixed,
-			       CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE);
-#endif
 
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF) && !IS_ENABLED(CONFIG_BT_ACS_KDF_SESSION_KEY)
 			if (s->kdf_child_valid) {
@@ -303,18 +319,12 @@ void acs_session_restore(struct bt_conn *conn, struct bt_acs_conn *acs_conn)
 
 				memcpy(parent_key->key, s->parent_key,
 				       CONFIG_BT_ACS_SESSION_KEY_SIZE);
-				parent_key->tx_nonce_counter = 0;
-				parent_key->rx_nonce_counter = 0;
 				memcpy(kdf_key->key, s->child_key, CONFIG_BT_ACS_SESSION_KEY_SIZE);
-				kdf_key->tx_nonce_counter = s->kdf_tx_nonce_counter;
-				kdf_key->rx_nonce_counter = s->kdf_rx_nonce_counter;
 			} else
 #endif
 			{
 				memcpy(parent_key->key, s->parent_key,
 				       CONFIG_BT_ACS_SESSION_KEY_SIZE);
-				parent_key->tx_nonce_counter = s->tx_nonce_counter;
-				parent_key->rx_nonce_counter = s->rx_nonce_counter;
 			}
 
 			if (acs_crypto_import_current_key(
@@ -336,6 +346,35 @@ void acs_session_restore(struct bt_conn *conn, struct bt_acs_conn *acs_conn)
 				}
 			}
 #endif
+
+			if (acs_crypto_rebind_record_states(acs_conn) != 0) {
+				LOG_ERR("Failed to import restored record-state keys into PSA");
+				memset(&acs_conn->crypto, 0, sizeof(acs_conn->crypto));
+				acs_session_restore_key_ids(acs_conn);
+				return;
+			}
+
+			for (size_t rec_idx = 0; rec_idx < s->nonce_record_count; rec_idx++) {
+				struct bt_acs_record_state *record_state;
+				const struct bt_acs_session_store_record_state *stored_record =
+					&s->nonce_records[rec_idx];
+
+				err = acs_crypto_record_state_lookup(acs_conn, stored_record->key_id,
+								     &record_state);
+				if (err) {
+					LOG_WRN("No runtime record state for restored Key_ID 0x%04x",
+						stored_record->key_id);
+					continue;
+				}
+
+				record_state->client_nonce_set = stored_record->client_nonce_set;
+				memcpy(record_state->server_nonce_fixed, stored_record->server_nonce_fixed,
+				       sizeof(record_state->server_nonce_fixed));
+				memcpy(record_state->client_nonce_fixed, stored_record->client_nonce_fixed,
+				       sizeof(record_state->client_nonce_fixed));
+				record_state->tx_nonce_counter = stored_record->tx_nonce_counter;
+				record_state->rx_nonce_counter = stored_record->rx_nonce_counter;
+			}
 
 			acs_conn->crypto.key_state = BT_ACS_KEY_EXCHANGE_COMPLETE;
 

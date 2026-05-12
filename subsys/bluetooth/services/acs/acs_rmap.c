@@ -305,7 +305,7 @@ int acs_rmap_build_descriptor_response(const struct acs_rmap_get_descriptor_req 
 
 	if (acs_rmap_lookup(map_id, &map) != 0) {
 		LOG_WRN("Restriction map 0x%04x not found", map_id);
-		return -ERANGE;
+		return -ENOENT;
 	}
 
 	hdr.type_id = ACS_RMAP_TYPE_ID;

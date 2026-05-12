@@ -50,6 +50,7 @@ int acs_cp_handle_get_restriction_map_descriptor(struct acs_procedure *proc,
 						 struct net_buf_simple *buf)
 {
 	struct acs_rmap_get_descriptor_req desc_req;
+	struct bt_acs_restriction_map map = {0};
 	struct net_buf *rsp_buf;
 	struct acs_reply_mode reply_mode = acs_proc_reply_mode(proc);
 	int build_err;
@@ -62,6 +63,18 @@ int acs_cp_handle_get_restriction_map_descriptor(struct acs_procedure *proc,
 	/* Pull all operand data before response buffer init to avoid aliasing. */
 	desc_req.map_id = net_buf_simple_pull_le16(buf);
 	desc_req.resource_handle_filter = net_buf_simple_pull_le16(buf);
+
+	if (acs_rmap_lookup(desc_req.map_id, &map) != 0) {
+		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_GET_RESTRICTION_MAP_DESCRIPTOR,
+					 BT_ACS_CP_RESPONSE_NO_RECORDS_FOUND);
+	}
+
+	if (map.map_isc_id != 0 && proc->kind == ACS_PROC_KIND_PLAIN_CP) {
+		LOG_WRN("Get Restriction Map Descriptor: protected map 0x%04x requires Data In",
+			desc_req.map_id);
+		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_GET_RESTRICTION_MAP_DESCRIPTOR,
+					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE);
+	}
 
 	rsp_buf = acs_prepare_reply_buf(proc, reply_mode.encrypted);
 	if (!rsp_buf) {
@@ -112,14 +125,9 @@ int acs_cp_handle_activate_restriction_map(struct acs_procedure *proc, struct ne
 					 BT_ACS_CP_RESPONSE_PARAMETER_OUT_OF_RANGE);
 	}
 
-	/* Protected maps (ISC ID != 0) require ACS security to be established.
-	 * On the data channel (proc != NULL) security was verified during
-	 * decryption.  On the plain CP the peer must have completed key exchange.
-	 */
-	if (map.map_isc_id != 0 && proc == NULL &&
-	    proc->acs_conn->crypto.key_state != BT_ACS_KEY_EXCHANGE_COMPLETE) {
+	if (map.map_isc_id != 0 && proc->kind == ACS_PROC_KIND_PLAIN_CP) {
 		LOG_WRN("Activate Restriction Map: map 0x%04x is protected (ISC 0x%04x) — "
-			"security not established",
+			"plain CP is not applicable",
 			map_id, map.map_isc_id);
 		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_ACTIVATE_RESTRICTION_MAP,
 					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE);

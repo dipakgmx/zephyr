@@ -180,11 +180,14 @@ int acs_cp_handle_att_mtu(struct acs_procedure *proc)
 int acs_cp_handle_set_client_nonce_fixed(struct acs_procedure *proc, struct net_buf_simple *buf)
 {
 	struct bt_acs_conn *acs_conn = proc->acs_conn;
-	struct acs_cp_set_client_nonce_req req_data;
+	struct bt_acs_record_state *record_state;
+	const struct bt_acs_key_desc_record *key_desc;
+	uint8_t server_nonce_fixed[ACS_NONCE_SIZE];
 	uint16_t key_id;
-	bool key_id_valid;
 	const uint8_t *nonce_value;
+	uint8_t nonce_fixed_size;
 	uint8_t this_idx;
+	int err;
 
 	if (!acs_conn) {
 		LOG_ERR("Request to set client nonce fixed received for unknown connection");
@@ -193,52 +196,60 @@ int acs_cp_handle_set_client_nonce_fixed(struct acs_procedure *proc, struct net_
 	}
 
 	/* Operand (§4.4.4.36, Table 4.77): Key_ID(2) + AC_Client_Nonce_Fixed_Value */
-	if (buf->len != sizeof(struct acs_cp_set_client_nonce_req)) {
+	if (buf->len < sizeof(key_id)) {
 		LOG_WRN("Set client nonce fixed operand invalid length: %u", buf->len);
 		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_SET_CLIENT_NONCE_FIXED,
 					 BT_ACS_CP_RESPONSE_INVALID_OPERAND);
 	}
 
-	/* Pull all operand data before any response buffer init to avoid aliasing. */
-	memcpy(&req_data, net_buf_simple_pull_mem(buf, sizeof(req_data)), sizeof(req_data));
-
-	key_id = sys_le16_to_cpu(req_data.key_id);
-
-	/* §4.4.4.36.1: Key_ID must reference an AES algorithm record whose
-	 * Nonce_Type is SEQ_DIFF_FIXED (Table 4.45). Only cipher key_ids
-	 * that use a fixed nonce part are valid here.
-	 */
-	key_id_valid =
-		(IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_GCM) && key_id == ACS_KEY_ID_GCM) ||
-		(IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_CCM) &&
-		 IS_ENABLED(CONFIG_BT_ACS_CCM_NONCE_SEQ_DIFF_FIXED) && key_id == ACS_KEY_ID_CCM) ||
-		(IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_GMAC) && key_id == ACS_KEY_ID_GMAC);
-
-	if (!key_id_valid) {
-		LOG_WRN("Set client nonce fixed: Key_ID 0x%04X is not a SEQ_DIFF_FIXED cipher",
-			key_id);
+	key_id = sys_get_le16(buf->data);
+	key_desc = acs_key_desc_lookup(key_id);
+	if (!key_desc) {
+		LOG_WRN("Set client nonce fixed: unknown Key_ID 0x%04x", key_id);
 		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_SET_CLIENT_NONCE_FIXED,
 					 BT_ACS_CP_RESPONSE_PARAMETER_OUT_OF_RANGE);
 	}
 
-	/* §4.4.3.18: reject while a key exchange is in progress (state between
-	 * STARTED and PENDING_STATUS).  Allow in IDLE (normal case) and in
-	 * COMPLETE (restored session — client wants to re-key with a fresh nonce).
-	 * TODO: The exchange complete flag needs to be pruned. It is incorrect!!!
-	 */
-	if (acs_conn->crypto.key_state != BT_ACS_KEY_EXCHANGE_IDLE &&
-	    acs_conn->crypto.key_state != BT_ACS_KEY_EXCHANGE_COMPLETE) {
+	if (!acs_key_desc_has_nonce_record(key_desc) ||
+	    key_desc->aes.nonce_type != ACS_NONCE_SEQ_DIFF_FIXED) {
+		LOG_WRN("Set client nonce fixed: Key_ID 0x%04x does not support SEQ_DIFF_FIXED",
+			key_id);
+		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_SET_CLIENT_NONCE_FIXED,
+					 BT_ACS_CP_RESPONSE_OPCODE_NOT_SUPPORTED);
+	}
+
+	if (acs_conn->crypto.key_state != BT_ACS_KEY_EXCHANGE_IDLE) {
 		LOG_WRN("Set client nonce fixed rejected: key exchange in progress (state %d)",
 			acs_conn->crypto.key_state);
 		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_SET_CLIENT_NONCE_FIXED,
 					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE);
 	}
 
-	nonce_value = req_data.nonce_fixed;
+	err = acs_crypto_record_state_lookup(acs_conn, key_id, &record_state);
+	if (err) {
+		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_SET_CLIENT_NONCE_FIXED,
+					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
+	}
+
+	nonce_fixed_size = acs_key_desc_nonce_fixed_size(key_desc);
+	if (buf->len != (uint16_t)(sizeof(key_id) + nonce_fixed_size)) {
+		LOG_WRN("Set client nonce fixed operand invalid length: %u (expected %u)", buf->len,
+			(uint16_t)(sizeof(key_id) + nonce_fixed_size));
+		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_SET_CLIENT_NONCE_FIXED,
+					 BT_ACS_CP_RESPONSE_INVALID_OPERAND);
+	}
+
+	net_buf_simple_pull_le16(buf);
+	nonce_value = net_buf_simple_pull_mem(buf, nonce_fixed_size);
 
 	/* §4.4.3.18: reject if equal to any AC_Server_Nonce_Fixed_Value */
-	if (memcmp(nonce_value, acs_conn->crypto.server_nonce_fixed,
-		   CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE) == 0) {
+	err = acs_crypto_get_server_nonce_fixed(acs_conn, key_id, server_nonce_fixed, nonce_fixed_size);
+	if (err) {
+		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_SET_CLIENT_NONCE_FIXED,
+					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
+	}
+
+	if (memcmp(nonce_value, server_nonce_fixed, nonce_fixed_size) == 0) {
 		LOG_WRN("Client nonce fixed equals server nonce fixed");
 		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_SET_CLIENT_NONCE_FIXED,
 					 BT_ACS_CP_RESPONSE_INVALID_OPERAND);
@@ -261,21 +272,43 @@ int acs_cp_handle_set_client_nonce_fixed(struct acs_procedure *proc, struct net_
 		if (!other || !other->conn) {
 			continue;
 		}
-		if (idx == this_idx && !other->crypto.client_nonce_set) {
-			continue;
-		}
-		if (memcmp(nonce_value, other->crypto.client_nonce_fixed,
-			   CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE) == 0) {
-			LOG_WRN("Client nonce fixed conflicts with %s connection",
-				idx == this_idx ? "current" : "another");
-			return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_SET_CLIENT_NONCE_FIXED,
-						 BT_ACS_CP_RESPONSE_INVALID_OPERAND);
+
+		for (size_t rec_idx = 0; rec_idx < ARRAY_SIZE(other->crypto.record_states); rec_idx++) {
+			struct bt_acs_record_state const *other_record =
+				&other->crypto.record_states[rec_idx];
+			uint8_t other_fixed_size;
+
+			if (!other_record->key_desc) {
+				continue;
+			}
+
+			other_fixed_size = acs_key_desc_nonce_fixed_size(other_record->key_desc);
+			if (other_fixed_size != nonce_fixed_size) {
+				continue;
+			}
+
+			if (memcmp(nonce_value, other_record->server_nonce_fixed, nonce_fixed_size) == 0) {
+				LOG_WRN("Client nonce fixed conflicts with server fixed value on %s connection",
+					idx == this_idx ? "current" : "another");
+				return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_SET_CLIENT_NONCE_FIXED,
+							 BT_ACS_CP_RESPONSE_INVALID_OPERAND);
+			}
+
+			if (idx == this_idx && !other_record->client_nonce_set) {
+				continue;
+			}
+
+			if (memcmp(nonce_value, other_record->client_nonce_fixed, nonce_fixed_size) == 0) {
+				LOG_WRN("Client nonce fixed conflicts with %s connection",
+					idx == this_idx ? "current" : "another");
+				return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_SET_CLIENT_NONCE_FIXED,
+							 BT_ACS_CP_RESPONSE_INVALID_OPERAND);
+			}
 		}
 	}
 
-	memcpy(acs_conn->crypto.client_nonce_fixed, nonce_value,
-	       CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE);
-	acs_conn->crypto.client_nonce_set = true;
+	memcpy(record_state->client_nonce_fixed, nonce_value, nonce_fixed_size);
+	record_state->client_nonce_set = true;
 
 	LOG_DBG("Client nonce fixed part stored");
 

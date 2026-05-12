@@ -50,6 +50,20 @@ static void acs_conn_init_current_keys(struct bt_acs_conn *acs_conn)
 	__ASSERT_NO_MSG(slot <= ARRAY_SIZE(acs_conn->crypto.current_keys));
 }
 
+static void acs_conn_init_record_states(struct bt_acs_conn *acs_conn)
+{
+	size_t slot = 0;
+
+	STRUCT_SECTION_FOREACH(bt_acs_key_desc_record, rec) {
+		if (!acs_key_desc_has_nonce_record(rec)) {
+			continue;
+		}
+
+		__ASSERT_NO_MSG(slot < ARRAY_SIZE(acs_conn->crypto.record_states));
+		acs_conn->crypto.record_states[slot++].key_desc = rec;
+	}
+}
+
 #if defined(CONFIG_BT_SETTINGS) && IS_ENABLED(CONFIG_BT_ACS_KDF_SESSION_KEY)
 static bool acs_conn_has_current_key(struct bt_acs_conn *acs_conn, uint16_t key_id)
 {
@@ -127,23 +141,17 @@ struct bt_acs_conn *acs_conn_alloc(struct bt_conn *conn)
 
 #if IS_ENABLED(CONFIG_BT_ACS_HAS_NONCE_FIXED)
 	{
-		uint8_t saved_snf[CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE];
-		uint8_t saved_cnf[CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE];
+		struct bt_acs_record_state saved_record_states[CONFIG_BT_ACS_MAX_NONCE_RECORDS];
 
-		memcpy(saved_snf, acs_conn->crypto.server_nonce_fixed,
-		       CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE);
-		memcpy(saved_cnf, acs_conn->crypto.client_nonce_fixed,
-		       CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE);
+		memcpy(saved_record_states, acs_conn->crypto.record_states, sizeof(saved_record_states));
 		memset(acs_conn, 0, sizeof(*acs_conn));
-		memcpy(acs_conn->crypto.server_nonce_fixed, saved_snf,
-		       CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE);
-		memcpy(acs_conn->crypto.client_nonce_fixed, saved_cnf,
-		       CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE);
+		memcpy(acs_conn->crypto.record_states, saved_record_states, sizeof(saved_record_states));
 	}
 #else
 	memset(acs_conn, 0, sizeof(*acs_conn));
 #endif
 	acs_conn_init_current_keys(acs_conn);
+	acs_conn_init_record_states(acs_conn);
 	acs_conn->conn = conn;
 	acs_conn->attr_cp = acs_attr_cp();
 	acs_conn->attr_status = acs_attr_status();
@@ -203,29 +211,24 @@ void acs_conn_cleanup(struct bt_acs_conn *acs_conn)
 	}
 
 	acs_crypto_destroy_connection_keys(acs_conn);
+	acs_crypto_destroy_connection_record_keys(acs_conn);
 	/* Preserve nonce fixed parts across disconnect — they are set once per
 	 * device pair and reused on reconnect (§3.6.4: "does not change for
 	 * the life of the key").  Session key and counters are wiped.
 	 */
 #if IS_ENABLED(CONFIG_BT_ACS_HAS_NONCE_FIXED)
 	{
-		uint8_t saved_snf[CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE];
-		uint8_t saved_cnf[CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE];
+		struct bt_acs_record_state saved_record_states[CONFIG_BT_ACS_MAX_NONCE_RECORDS];
 
-		memcpy(saved_snf, acs_conn->crypto.server_nonce_fixed,
-		       CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE);
-		memcpy(saved_cnf, acs_conn->crypto.client_nonce_fixed,
-		       CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE);
+		memcpy(saved_record_states, acs_conn->crypto.record_states, sizeof(saved_record_states));
 		memset(&acs_conn->crypto, 0, sizeof(acs_conn->crypto));
-		memcpy(acs_conn->crypto.server_nonce_fixed, saved_snf,
-		       CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE);
-		memcpy(acs_conn->crypto.client_nonce_fixed, saved_cnf,
-		       CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE);
+		memcpy(acs_conn->crypto.record_states, saved_record_states, sizeof(saved_record_states));
 	}
 #else
 	memset(&acs_conn->crypto, 0, sizeof(acs_conn->crypto));
 #endif
 	acs_conn_init_current_keys(acs_conn);
+	acs_conn_init_record_states(acs_conn);
 	/* Abort request contexts before freeing the shared I/O slot so queued/in-flight
 	 * ACS Data Out activity cannot outlive the buffers it references.
 	 */

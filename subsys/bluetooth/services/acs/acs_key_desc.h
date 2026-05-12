@@ -12,6 +12,8 @@
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/bluetooth/services/acs.h>
 
+struct bt_acs_conn;
+
 /* Special filter value: include all records (Table 4.34) */
 #define BT_ACS_GET_KEY_DESC_ALL_RECORDS_FILTER 0xFFFF
 
@@ -261,7 +263,7 @@ enum acs_oob_method {
  * @return -ENOMEM if the provided buffer does not have enough space for the response
  */
 int acs_key_desc_build_response(struct net_buf_simple *operand, struct net_buf_simple *buf,
-				const uint8_t *server_fixed_nonce);
+				struct bt_acs_conn *acs_conn);
 
 /**
  * @brief Look up a key descriptor record by Key ID.
@@ -274,5 +276,13 @@ int acs_key_desc_build_response(struct net_buf_simple *operand, struct net_buf_s
  * @retval pointer to the matching record, or NULL if not found.
  */
 const struct bt_acs_key_desc_record *acs_key_desc_lookup(uint16_t key_id);
+
+bool acs_key_desc_is_algorithm_record(const struct bt_acs_key_desc_record *rec);
+bool acs_key_desc_has_nonce_record(const struct bt_acs_key_desc_record *rec);
+uint16_t acs_key_desc_parent_key_id(const struct bt_acs_key_desc_record *rec);
+uint8_t acs_key_desc_nonce_size(const struct bt_acs_key_desc_record *rec);
+uint8_t acs_key_desc_nonce_var_size(const struct bt_acs_key_desc_record *rec);
+uint8_t acs_key_desc_nonce_fixed_size(const struct bt_acs_key_desc_record *rec);
+uint8_t acs_key_desc_auth_tag_size(const struct bt_acs_key_desc_record *rec);
 
 #endif /* BT_GATT_ACS_KEY_DESC_H_ */

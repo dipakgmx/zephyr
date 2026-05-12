@@ -22,16 +22,17 @@
 #include <zephyr/logging/log.h>
 
 #include "acs_internal.h"
+#include "acs_isc.h"
 
 #include <zephyr/logging/log.h>
 LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
 
-static void data_tx_put_nonce_var(uint8_t *secure_data, uint8_t nonce_var_size, uint32_t tx_counter)
+static void data_tx_put_nonce_var(uint8_t *secure_data, uint8_t nonce_var_size, uint64_t tx_counter)
 {
-	memset(secure_data, 0, nonce_var_size);
-	for (size_t i = 0; i < MIN((uint8_t)sizeof(tx_counter), nonce_var_size); i++) {
-		secure_data[i] = (tx_counter >> (BITS_PER_BYTE * i)) & UINT8_MAX;
-	}
+	__ASSERT_NO_MSG(secure_data != NULL);
+	__ASSERT_NO_MSG(nonce_var_size <= sizeof(tx_counter));
+
+	sys_put_le(secure_data, &tx_counter, nonce_var_size);
 }
 
 /*
@@ -39,23 +40,15 @@ static void data_tx_put_nonce_var(uint8_t *secure_data, uint8_t nonce_var_size, 
  * MAC(LSO) || Ciphertext-or-Data(LSO). All currently supported algorithms
  * (CCM, GCM, GMAC, CMAC) place the MAC before the payload (spec §3.2).
  */
-static void data_tx_format_wire(uint8_t *ciphertext_and_tag, uint16_t plain_len)
+static void data_tx_format_wire(uint8_t *ciphertext_and_tag, uint16_t plain_len, uint8_t tag_size)
 {
-#if defined(CONFIG_BT_ACS_DATA_PROTECTION_AES_CCM) ||                                              \
-	defined(CONFIG_BT_ACS_DATA_PROTECTION_AES_GCM) ||                                          \
-	defined(CONFIG_BT_ACS_DATA_PROTECTION_AES_GMAC) ||                                         \
-	defined(CONFIG_BT_ACS_DATA_PROTECTION_AES_CMAC)
-	uint8_t tag_tmp[ACS_ACTIVE_AUTH_TAG_SIZE];
+	uint8_t tag_tmp[ACS_MAX_AUTH_TAG_SIZE];
 
-	memcpy(tag_tmp, ciphertext_and_tag + plain_len, ACS_ACTIVE_AUTH_TAG_SIZE);
-	sys_mem_swap(tag_tmp, ACS_ACTIVE_AUTH_TAG_SIZE);
+	memcpy(tag_tmp, ciphertext_and_tag + plain_len, tag_size);
+	sys_mem_swap(tag_tmp, tag_size);
 	sys_mem_swap(ciphertext_and_tag, plain_len);
-	memmove(ciphertext_and_tag + ACS_ACTIVE_AUTH_TAG_SIZE, ciphertext_and_tag, plain_len);
-	memcpy(ciphertext_and_tag, tag_tmp, ACS_ACTIVE_AUTH_TAG_SIZE);
-#else
-	sys_mem_swap(ciphertext_and_tag, plain_len);
-	sys_mem_swap(ciphertext_and_tag + plain_len, ACS_ACTIVE_AUTH_TAG_SIZE);
-#endif
+	memmove(ciphertext_and_tag + tag_size, ciphertext_and_tag, plain_len);
+	memcpy(ciphertext_and_tag, tag_tmp, tag_size);
 }
 
 /**
@@ -78,8 +71,12 @@ static int data_tx_encrypt_in_place(struct bt_acs_conn *acs_conn, uint16_t isc_i
 	uint8_t *plaintext;
 	uint16_t plain_len;
 	uint16_t cipher_len = 0;
-	uint32_t tx_counter;
-	struct bt_acs_runtime_key_state *current_key;
+	uint64_t tx_counter;
+	const struct bt_acs_isc_record *isc;
+	struct bt_acs_record_state *record_state;
+	const struct bt_acs_key_desc_record *key_desc;
+	uint8_t nonce_var_size;
+	uint8_t auth_tag_size;
 	int err;
 
 	__ASSERT_NO_MSG(acs_conn != NULL);
@@ -92,23 +89,35 @@ static int data_tx_encrypt_in_place(struct bt_acs_conn *acs_conn, uint16_t isc_i
 		return -ENOMEM;
 	}
 
-	if (net_buf_tailroom(buf) < ACS_ACTIVE_AUTH_TAG_SIZE) {
+	isc = acs_isc_lookup(isc_id);
+	if (!isc) {
+		return -EINVAL;
+	}
+
+	key_desc = acs_key_desc_lookup(isc->key_id);
+	if (!key_desc) {
+		return -EINVAL;
+	}
+	nonce_var_size = acs_key_desc_nonce_var_size(key_desc);
+	auth_tag_size = acs_key_desc_auth_tag_size(key_desc);
+
+	if (net_buf_tailroom(buf) < auth_tag_size) {
 		LOG_ERR("encrypt_in_place: insufficient tailroom for auth tag (%zu < %u)",
-			net_buf_tailroom(buf), ACS_ACTIVE_AUTH_TAG_SIZE);
+			net_buf_tailroom(buf), auth_tag_size);
 		return -ENOMEM;
 	}
 
 	plaintext = buf->data;
 	plain_len = buf->len;
 
-	err = acs_crypto_current_key_from_isc(acs_conn, isc_id, &current_key);
-	if (err || current_key->psa_key_id == 0U) {
-		LOG_ERR("encrypt_in_place: no current key for isc_id 0x%04x", isc_id);
+	err = acs_crypto_record_state_from_isc(acs_conn, isc_id, &record_state);
+	if (err || record_state->psa_key_id == 0U) {
+		LOG_ERR("encrypt_in_place: no record state for isc_id 0x%04x", isc_id);
 		return -EACCES;
 	}
 
 	/* Capture the nonce variable BEFORE encrypt advances the counter. */
-	tx_counter = current_key->tx_nonce_counter;
+	tx_counter = record_state->tx_nonce_counter;
 
 	/* Reverse plaintext to LSO order for wire (spec §3.2). */
 	sys_mem_swap(plaintext, plain_len);
@@ -124,17 +133,17 @@ static int data_tx_encrypt_in_place(struct bt_acs_conn *acs_conn, uint16_t isc_i
 	}
 
 	/* Reorder PSA output to wire: MAC(LSO) || Ciphertext(LSO). */
-	data_tx_format_wire(plaintext, plain_len);
+	data_tx_format_wire(plaintext, plain_len, auth_tag_size);
 
 	/* Extend buffer length to include the auth tag. */
-	net_buf_add(buf, ACS_ACTIVE_AUTH_TAG_SIZE);
+	net_buf_add(buf, auth_tag_size);
 
 	/* Push Nonce_Var and ISC_ID into the reserved headroom. */
 	{
-		uint8_t *hdr = net_buf_push(buf, ACS_ACTIVE_NONCE_VAR_SIZE + 2U);
+		uint8_t *hdr = net_buf_push(buf, nonce_var_size + 2U);
 
 		sys_put_le16(isc_id, hdr);
-		data_tx_put_nonce_var(hdr + 2U, ACS_ACTIVE_NONCE_VAR_SIZE, tx_counter);
+		data_tx_put_nonce_var(hdr + 2U, nonce_var_size, tx_counter);
 	}
 
 	return 0;

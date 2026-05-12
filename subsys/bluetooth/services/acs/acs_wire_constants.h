@@ -30,7 +30,7 @@ extern "C" {
 
 /** @brief TX buffer size for per-connection indication / notification contexts. */
 #define ACS_DATA_IND_BUF_SIZE                                                                      \
-	(CONFIG_BT_ACS_MAX_SEGMENT_SIZE + ACS_CRYPTO_AUTH_TAG_SIZE + ACS_ACTIVE_NONCE_VAR_SIZE)
+	(CONFIG_BT_ACS_MAX_SEGMENT_SIZE + ACS_MAX_AUTH_TAG_SIZE + ACS_MAX_NONCE_VAR_SIZE)
 
 /**
  * @brief Shared buffer pool buffer size.

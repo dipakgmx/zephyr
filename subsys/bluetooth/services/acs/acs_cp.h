@@ -263,23 +263,11 @@ struct acs_cp_ecdh_confirm_rand_req {
 						   octets, LSO…MSO) */
 } __packed;
 
-/** SET_CLIENT_NONCE_FIXED operand — fixed header only; nonce bytes follow */
-
-/**
- * @brief Wire-format operand of the SET_CLIENT_NONCE_FIXED opcode (§4.4.4.36, Table 4.77).
+/** SET_CLIENT_NONCE_FIXED operand — Key_ID followed by variable-length nonce bytes.
  *
- * The AC_Client_Nonce_Fixed_Value size is fixed at compile time by
- * CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE, which is determined by the selected nonce scheme
- * (§4.4.4.36.2). Present when any algorithm that mandates SEQ_DIFF_FIXED nonces is compiled in:
- * AES-CCM (with SEQ_DIFF_FIXED selected), AES-GCM, or AES-GMAC.
+ * The AC_Client_Nonce_Fixed_Value length is descriptor-defined, not globally fixed:
+ * the handler resolves the operand size from the referenced Key Descriptor record.
  */
-#if IS_ENABLED(CONFIG_BT_ACS_HAS_NONCE_FIXED)
-struct acs_cp_set_client_nonce_req {
-	uint16_t key_id;                                         /**< Key_ID (uint16, LSO…MSO) */
-	uint8_t nonce_fixed[CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE]; /**< AC_Client_Nonce_Fixed_Value
-								    (LSO…MSO) */
-} __packed;
-#endif /* BT_ACS_HAS_NONCE_FIXED */
 
 BUILD_ASSERT(sizeof(struct acs_cp_start_key_exchange_req) == 4,
 	     "START_KEY_EXCHANGE operand struct size mismatch");
@@ -287,11 +275,6 @@ BUILD_ASSERT(sizeof(struct acs_cp_ecdh_confirm_code_req) == 2 + ACS_CONFIRM_VALU
 	     "ECDH_CONFIRM_CODE operand struct size mismatch");
 BUILD_ASSERT(sizeof(struct acs_cp_ecdh_confirm_rand_req) == 2 + ACS_CONFIRM_VALUE_SIZE,
 	     "ECDH_CONFIRM_RAND operand struct size mismatch");
-#if IS_ENABLED(CONFIG_BT_ACS_HAS_NONCE_FIXED)
-BUILD_ASSERT(sizeof(struct acs_cp_set_client_nonce_req) == 2 + CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE,
-	     "SET_CLIENT_NONCE_FIXED operand struct size mismatch");
-#endif /* BT_ACS_HAS_NONCE_FIXED */
-
 /**
  * @brief Selected_Confirmation_Method field values (Table 4.50)
  *

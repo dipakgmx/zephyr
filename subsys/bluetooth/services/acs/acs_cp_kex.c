@@ -837,13 +837,13 @@ int acs_cp_kex_ecdh_confirm_rand(struct acs_procedure *proc, struct net_buf_simp
 
 		memcpy(ecdh_key->key, acs_conn->crypto.kex->ecdh_key,
 		       CONFIG_BT_ACS_SESSION_KEY_SIZE);
-		ecdh_key->tx_nonce_counter = 0;
-#if defined(CONFIG_BT_ACS_CCM_NONCE_SEQ_EVEN_ODD)
-		ecdh_key->rx_nonce_counter = 1;
-#else
-		ecdh_key->rx_nonce_counter = 0;
-#endif
 		err = acs_crypto_import_current_key(ecdh_key);
+		if (err == 0) {
+			err = acs_crypto_rebind_record_states(acs_conn);
+			if (err == 0) {
+				acs_crypto_reset_record_counters(acs_conn, ACS_KEY_ID_ECDH);
+			}
+		}
 		if (err) {
 			LOG_ERR("Failed to import ECDH current key: %d", err);
 			acs_conn->crypto.key_state = BT_ACS_KEY_EXCHANGE_IDLE;

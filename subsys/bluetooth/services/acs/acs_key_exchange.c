@@ -37,6 +37,20 @@ static void acs_key_exchange_init_current_keys(struct bt_acs_conn *acs_conn)
 	__ASSERT_NO_MSG(slot <= ARRAY_SIZE(acs_conn->crypto.current_keys));
 }
 
+static void acs_key_exchange_init_record_states(struct bt_acs_conn *acs_conn)
+{
+	size_t slot = 0;
+
+	STRUCT_SECTION_FOREACH(bt_acs_key_desc_record, rec) {
+		if (!acs_key_desc_has_nonce_record(rec)) {
+			continue;
+		}
+
+		__ASSERT_NO_MSG(slot < ARRAY_SIZE(acs_conn->crypto.record_states));
+		acs_conn->crypto.record_states[slot++].key_desc = rec;
+	}
+}
+
 static int check_state(struct bt_acs_conn const *acs_conn, enum bt_acs_key_exchange_state expected)
 {
 	if (acs_conn->crypto.key_state != expected) {
@@ -391,14 +405,15 @@ int acs_crypto_derive_session_key(struct bt_acs_conn *acs_conn)
 		return ret;
 	}
 
-	exchange_key->tx_nonce_counter = 0;
-#if defined(CONFIG_BT_ACS_CCM_NONCE_SEQ_EVEN_ODD)
-	exchange_key->rx_nonce_counter = 1; /* client uses odd counters: 1, 3, 5 ... */
-#else
-	exchange_key->rx_nonce_counter = 0;
-#endif
+	ret = acs_crypto_import_current_key(exchange_key);
+	if (ret == 0) {
+		ret = acs_crypto_rebind_record_states(acs_conn);
+		if (ret == 0) {
+			acs_crypto_reset_record_counters(acs_conn, acs_runtime_key_id(exchange_key));
+		}
+	}
 
-	return acs_crypto_import_current_key(exchange_key);
+	return ret;
 }
 
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
@@ -441,15 +456,17 @@ static int bt_acs_crypto_derive_kdf_child_key(struct bt_acs_conn *acs_conn)
 	}
 
 	memcpy(kdf_key->key, child_key, CONFIG_BT_ACS_SESSION_KEY_SIZE);
-	kdf_key->tx_nonce_counter = 0;
-#if defined(CONFIG_BT_ACS_CCM_NONCE_SEQ_EVEN_ODD)
-	kdf_key->rx_nonce_counter = 1; /* client uses odd counters: 1, 3, 5 ... */
-#else
-	kdf_key->rx_nonce_counter = 0;
-#endif
 
 	acs_crypto_destroy_current_key(kdf_key);
-	return acs_crypto_import_current_key(kdf_key);
+	ret = acs_crypto_import_current_key(kdf_key);
+	if (ret == 0) {
+		ret = acs_crypto_rebind_record_states(acs_conn);
+		if (ret == 0) {
+			acs_crypto_reset_record_counters(acs_conn, ACS_KEY_ID_KDF);
+		}
+	}
+
+	return ret;
 }
 #endif /* CONFIG_BT_ACS_KEY_EXCHANGE_KDF */
 
@@ -468,15 +485,24 @@ int acs_key_exchange_ecdh_start(struct bt_acs_conn *acs_conn, uint16_t key_id)
 	 *   - A previous session was restored from NVS (nonces persisted).
 	 */
 	{
-		bool cnf_zero = true;
+		bool missing_client_nonce = false;
 
-		for (int i = 0; i < CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE; i++) {
-			if (acs_conn->crypto.client_nonce_fixed[i] != 0) {
-				cnf_zero = false;
+		for (size_t i = 0; i < ARRAY_SIZE(acs_conn->crypto.record_states); i++) {
+			const struct bt_acs_record_state *record_state =
+				&acs_conn->crypto.record_states[i];
+
+			if (!record_state->key_desc ||
+			    record_state->key_desc->aes.nonce_type != ACS_NONCE_SEQ_DIFF_FIXED) {
+				continue;
+			}
+
+			if (!record_state->client_nonce_set) {
+				missing_client_nonce = true;
 				break;
 			}
 		}
-		if (cnf_zero) {
+
+		if (missing_client_nonce) {
 			LOG_WRN("client nonce fixed not set");
 			return -EALREADY;
 		}
@@ -491,22 +517,16 @@ int acs_key_exchange_ecdh_start(struct bt_acs_conn *acs_conn, uint16_t key_id)
 
 	/* Reset current keys; preserve nonce fixed parts across exchanges (§4.4.3.18). */
 	acs_crypto_destroy_connection_keys(acs_conn);
+	acs_crypto_destroy_connection_record_keys(acs_conn);
 	struct bt_acs_kex_ctx *kex = acs_conn->crypto.kex;
-#if IS_ENABLED(CONFIG_BT_ACS_HAS_NONCE_FIXED)
-	uint8_t saved_snf[CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE];
-	uint8_t saved_cnf[CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE];
+	struct bt_acs_record_state saved_record_states[CONFIG_BT_ACS_MAX_NONCE_RECORDS];
 
-	memcpy(saved_snf, acs_conn->crypto.server_nonce_fixed, CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE);
-	memcpy(saved_cnf, acs_conn->crypto.client_nonce_fixed, CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE);
+	memcpy(saved_record_states, acs_conn->crypto.record_states, sizeof(saved_record_states));
 	memset(&acs_conn->crypto, 0, sizeof(acs_conn->crypto));
 	acs_conn->crypto.kex = kex;
-	memcpy(acs_conn->crypto.server_nonce_fixed, saved_snf, CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE);
-	memcpy(acs_conn->crypto.client_nonce_fixed, saved_cnf, CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE);
-#else
-	memset(&acs_conn->crypto, 0, sizeof(acs_conn->crypto));
-	acs_conn->crypto.kex = kex;
-#endif /* BT_ACS_HAS_NONCE_FIXED */
+	memcpy(acs_conn->crypto.record_states, saved_record_states, sizeof(saved_record_states));
 	acs_key_exchange_init_current_keys(acs_conn);
+	acs_key_exchange_init_record_states(acs_conn);
 
 	if (acs_conn->crypto.kex) {
 		memset(&acs_conn->crypto.kex->server_pubkey, 0,

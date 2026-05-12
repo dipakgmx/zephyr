@@ -71,17 +71,10 @@ static int all_active_step_key(struct acs_procedure *proc)
 		return -ENOMEM;
 	}
 
-	uint8_t server_nonce[CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE];
-
-	err = acs_crypto_get_server_nonce_fixed(proc->acs_conn, server_nonce, sizeof(server_nonce));
-	if (err) {
-		return err;
-	}
-
 	net_buf_add_u8(buf, BT_ACS_CP_OPCODE_KEY_DESCRIPTOR_RESPONSE);
 	net_buf_simple_init_with_data(&operand, (void *)filter, sizeof(filter));
 
-	err = acs_key_desc_build_response(&operand, &buf->b, server_nonce);
+	err = acs_key_desc_build_response(&operand, &buf->b, proc->acs_conn);
 
 	if (err == -ENOENT) {
 		acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_GET_ALL_ACTIVE_DESCRIPTORS,

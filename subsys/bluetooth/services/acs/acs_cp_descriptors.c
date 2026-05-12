@@ -33,17 +33,9 @@ int acs_cp_handle_get_key_descriptor(struct acs_procedure *proc, struct net_buf_
 		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_GET_KEY_DESCRIPTOR,
 					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 	}
-	uint8_t server_nonce[CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE];
-
-	build_err = acs_crypto_get_server_nonce_fixed(proc->acs_conn, server_nonce,
-						      sizeof(server_nonce));
-	if (build_err) {
-		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_GET_KEY_DESCRIPTOR,
-					 errno_to_acs_status(build_err));
-	}
 
 	net_buf_add_u8(rsp_buf, BT_ACS_CP_OPCODE_KEY_DESCRIPTOR_RESPONSE);
-	build_err = acs_key_desc_build_response(buf, &rsp_buf->b, server_nonce);
+	build_err = acs_key_desc_build_response(buf, &rsp_buf->b, proc->acs_conn);
 	if (build_err) {
 		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_GET_KEY_DESCRIPTOR,
 					 errno_to_acs_status(build_err));

@@ -99,10 +99,9 @@ BT_ACS_KEY_DESC_DEFINE(acs_key_desc_cmac, .type_id = ACS_KEY_REC_AES_128_CMAC,
 			       .parent_key_id = ACS_KEY_DESC_ALG_PARENT_KEY_ID,
 			       .msg_type = ACS_MSG_TYPE_PROTECTED,
 			       .mac_size = ACS_CRYPTO_AUTH_TAG_SIZE,
-			       .nonce_type = ACS_NONCE_SEQ_DIFF_FIXED,
-			       .nonce_var_size = ACS_ACTIVE_NONCE_SIZE -
-						 CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE,
-			       .nonce_fixed_size = CONFIG_BT_ACS_NONCE_FIXED_BUF_SIZE,
+			       .nonce_type = ACS_NONCE_PROFILE_DEF,
+			       .nonce_var_size = 0U,
+			       .nonce_fixed_size = 0U,
 		       });
 #endif
 
@@ -151,6 +150,74 @@ const struct bt_acs_key_desc_record *acs_key_desc_lookup(uint16_t key_id)
 	return NULL;
 }
 
+bool acs_key_desc_is_algorithm_record(const struct bt_acs_key_desc_record *rec)
+{
+	return rec && (rec->type_id == ACS_KEY_REC_AES_128_CCM ||
+		       rec->type_id == ACS_KEY_REC_AES_128_GCM ||
+		       rec->type_id == ACS_KEY_REC_AES_128_EAX ||
+		       rec->type_id == ACS_KEY_REC_AES_128_CMAC ||
+		       rec->type_id == ACS_KEY_REC_AES_128_GMAC);
+}
+
+bool acs_key_desc_has_nonce_record(const struct bt_acs_key_desc_record *rec)
+{
+	return acs_key_desc_is_algorithm_record(rec) && rec->type_id != ACS_KEY_REC_AES_128_CMAC &&
+	       rec->aes.nonce_type != ACS_NONCE_PROFILE_DEF && rec->aes.nonce_var_size > 0U;
+}
+
+uint16_t acs_key_desc_parent_key_id(const struct bt_acs_key_desc_record *rec)
+{
+	if (!rec) {
+		return 0U;
+	}
+
+	switch (rec->type_id) {
+	case ACS_KEY_REC_KDF:
+		return rec->kdf.parent_key_id;
+	case ACS_KEY_REC_AES_128_CCM:
+	case ACS_KEY_REC_AES_128_GCM:
+	case ACS_KEY_REC_AES_128_EAX:
+	case ACS_KEY_REC_AES_128_CMAC:
+	case ACS_KEY_REC_AES_128_GMAC:
+		return rec->aes.parent_key_id;
+	default:
+		return 0U;
+	}
+}
+
+uint8_t acs_key_desc_nonce_size(const struct bt_acs_key_desc_record *rec)
+{
+	if (!rec) {
+		return 0U;
+	}
+
+	switch (rec->type_id) {
+	case ACS_KEY_REC_AES_128_CCM:
+		return ACS_NONCE_SIZE;
+	case ACS_KEY_REC_AES_128_GCM:
+		return ACS_GCM_NONCE_SIZE;
+	case ACS_KEY_REC_AES_128_GMAC:
+		return ACS_GMAC_NONCE_SIZE;
+	default:
+		return 0U;
+	}
+}
+
+uint8_t acs_key_desc_nonce_var_size(const struct bt_acs_key_desc_record *rec)
+{
+	return rec ? rec->aes.nonce_var_size : 0U;
+}
+
+uint8_t acs_key_desc_nonce_fixed_size(const struct bt_acs_key_desc_record *rec)
+{
+	return rec ? rec->aes.nonce_fixed_size : 0U;
+}
+
+uint8_t acs_key_desc_auth_tag_size(const struct bt_acs_key_desc_record *rec)
+{
+	return rec ? rec->aes.mac_size : 0U;
+}
+
 /**
  * @brief Serialize an AES algorithm record into the response buffer.
  *
@@ -160,7 +227,7 @@ const struct bt_acs_key_desc_record *acs_key_desc_lookup(uint16_t key_id)
  * MAC_Size (4 bytes).
  */
 static int append_aes_record(const struct bt_acs_key_desc_record *rec, struct net_buf_simple *buf,
-			     const uint8_t *server_fixed_nonce)
+			     struct bt_acs_conn *acs_conn)
 {
 	if (rec->type_id == ACS_KEY_REC_AES_128_CMAC) {
 		/* CMAC: nonce fields excluded (Table 4.45 C.1) */
@@ -216,7 +283,15 @@ static int append_aes_record(const struct bt_acs_key_desc_record *rec, struct ne
 
 	net_buf_simple_add_mem(buf, &wire, sizeof(wire));
 
-	if (rec->aes.nonce_fixed_size > 0 && server_fixed_nonce) {
+	if (rec->aes.nonce_fixed_size > 0) {
+		uint8_t server_fixed_nonce[ACS_NONCE_SIZE];
+		int err = acs_crypto_get_server_nonce_fixed(acs_conn, rec->key_id, server_fixed_nonce,
+							     rec->aes.nonce_fixed_size);
+
+		if (err) {
+			return err;
+		}
+
 		net_buf_simple_add_mem(buf, server_fixed_nonce, rec->aes.nonce_fixed_size);
 	}
 
@@ -236,7 +311,7 @@ static bool is_aes_type(uint8_t type_id)
 }
 
 int acs_key_desc_build_response(struct net_buf_simple *operand, struct net_buf_simple *buf,
-				const uint8_t *server_fixed_nonce __maybe_unused)
+				struct bt_acs_conn *acs_conn)
 {
 	bool record_found;
 	uint16_t filter_id;
@@ -327,7 +402,7 @@ int acs_key_desc_build_response(struct net_buf_simple *operand, struct net_buf_s
 				rec->kdf.parent_key_id, rec->kdf.kdf_algorithm);
 
 		} else if (is_aes_type(rec->type_id)) {
-			err = append_aes_record(rec, buf, server_fixed_nonce);
+			err = append_aes_record(rec, buf, acs_conn);
 			if (err) {
 				return err;
 			}

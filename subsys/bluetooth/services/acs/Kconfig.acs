@@ -437,10 +437,10 @@ choice BT_ACS_CCM_NONCE_TYPE
 	depends on BT_ACS_DATA_PROTECTION_AES_CCM
 	help
 	  Selects the nonce scheme advertised in the AES-128-CCM key descriptor.
-	  This implementation supports nonce variable parts up to 4 octets only.
+	  This implementation supports nonce variable parts up to 8 octets only.
 	  As a result, Sequence Number Even-Odd is not currently supported here,
 	  and Sequence Number Different Fixed Parts must be configured so that
-	  (13 - fixed_size) <= 4.
+	  (13 - fixed_size) <= 8.
 
 config BT_ACS_CCM_NONCE_SEQ_DIFF_FIXED
 	bool "Sequence Number Different Fixed Parts (0x02)"
@@ -451,7 +451,7 @@ config BT_ACS_CCM_NONCE_SEQ_DIFF_FIXED
 config BT_ACS_CCM_NONCE_FIXED_SIZE
 	int "Fixed nonce part size in bytes (AES-CCM, SEQ_DIFF_FIXED)"
 	default 8
-	range 9 12
+	range 5 12
 	depends on BT_ACS_CCM_NONCE_SEQ_DIFF_FIXED
 	help
 	  Size of the server/client fixed nonce part advertised in the AES-128-CCM
@@ -459,7 +459,7 @@ config BT_ACS_CCM_NONCE_FIXED_SIZE
 	  The variable part is (13 - this value). The spec requires each part to be
 	  at least 1 octet and the total to be 13 octets (ACS recommendation).
 	  The spec therefore allows 1..12 here, but this implementation limits the
-	  variable part to at most 4 octets, so the supported range is 9..12.
+	  variable part to at most 8 octets, so the supported range is 5..12.
 
 config BT_ACS_CCM_NONCE_SEQ_EVEN_ODD
 	bool "Sequence Number Even-Odd (0x01)"
@@ -472,6 +472,10 @@ config BT_ACS_CCM_NONCE_SEQ_EVEN_ODD
 	  Not supported by the current implementation because it requires a
 	  13-octet nonce variable part.
 endchoice
+
+config BT_ACS_MAX_NONCE_RECORDS
+	int
+	default 8
 
 # Hidden helpers — derived from active selections, used for CMakeLists gating.
 config BT_ACS_ANY_KEY_EXCHANGE
@@ -498,25 +502,14 @@ config BT_ACS_ISC_MAX_CONTROLS
 
 config BT_ACS_HAS_NONCE_FIXED
 	bool
-	default n if BT_ACS_CCM_NONCE_SEQ_EVEN_ODD
-	default n if BT_ACS_DATA_PROTECTION_AES_CMAC
-	default y
-
-config BT_ACS_NONCE_FIXED_BUF_SIZE
-	int
-	default BT_ACS_CCM_NONCE_FIXED_SIZE if BT_ACS_CCM_NONCE_SEQ_DIFF_FIXED
-	default 8 if BT_ACS_DATA_PROTECTION_AES_GCM || BT_ACS_DATA_PROTECTION_AES_GMAC
-	default 0 if BT_ACS_CCM_NONCE_SEQ_EVEN_ODD
-	default 0 if BT_ACS_DATA_PROTECTION_AES_CMAC
-	default 8
+	default y if BT_ACS_CCM_NONCE_SEQ_DIFF_FIXED
+	default y if BT_ACS_DATA_PROTECTION_AES_GCM || BT_ACS_DATA_PROTECTION_AES_GMAC
+	default n
 	help
-	  Internal helper for sizing nonce-fixed buffers.
-
-	  Note: for AES-GCM/AES-GMAC, the ACS spec recommends a 4-octet fixed part
-	  and an 8-octet variable part. This implementation currently caps runtime
-	  nonce counters at 32 bits, so it intentionally uses an 8-octet fixed part
-	  and a 4-octet variable part instead. Keep this aligned with the constants
-	  in acs_crypto_config.h unless the runtime nonce model is widened.
+	  Hidden helper: selected when at least one enabled protection algorithm
+	  uses a nonce scheme with a fixed part. The runtime stores nonce-fixed
+	  values per key descriptor record, so there is no global nonce-fixed
+	  buffer-size setting anymore.
 
 choice BT_ACS_KEY_FORMAT
 	prompt "Public key format"

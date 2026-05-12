@@ -135,8 +135,8 @@ static void invalidate_kdf_child(struct bt_acs_conn *acs_conn)
 
 	acs_crypto_destroy_current_key(kdf_key);
 	memset(kdf_key->key, 0, sizeof(kdf_key->key));
-	kdf_key->tx_nonce_counter = 0;
-	kdf_key->rx_nonce_counter = 0;
+	acs_crypto_rebind_record_states(acs_conn);
+	acs_crypto_reset_record_counters(acs_conn, ACS_KEY_ID_KDF);
 	acs_conn->status_flags &= ~BT_ACS_STATUS_SECURITY_ESTABLISHED;
 }
 #endif

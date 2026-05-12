@@ -14,6 +14,9 @@ extern "C" {
 /** @brief HMAC-SHA-256 output size in bytes (auth_value, randoms, confirms). */
 #define ACS_HMAC_SHA256_SIZE 32
 
+/** @brief Maximum nonce-variable size supported by the current runtime model. */
+#define ACS_NONCE_VAR_COUNTER_SIZE 8
+
 /** @brief Total CCM nonce length in bytes (13 bytes per CCM spec). */
 #define ACS_NONCE_SIZE 13
 
@@ -45,14 +48,14 @@ extern "C" {
  */
 #if defined(CONFIG_BT_ACS_CCM_NONCE_SEQ_EVEN_ODD)
 /** @brief Last valid even server-TX nonce (EVEN_ODD scheme). */
-#define ACS_COUNTER_TX_MAX 0xFFFFFFFEU
+#define ACS_COUNTER_TX_MAX UINT64_C(0xFFFFFFFFFFFFFFFE)
 /** @brief Last valid odd client-RX nonce (EVEN_ODD scheme). */
-#define ACS_COUNTER_RX_MAX 0xFFFFFFFDU
+#define ACS_COUNTER_RX_MAX UINT64_C(0xFFFFFFFFFFFFFFFD)
 #else
-/** @brief Safe 32-bit TX counter ceiling (DIFF_FIXED and other schemes). */
-#define ACS_COUNTER_TX_MAX 0xFFFFFFFEU
-/** @brief Safe 32-bit RX counter ceiling (DIFF_FIXED and other schemes). */
-#define ACS_COUNTER_RX_MAX 0xFFFFFFFEU
+/** @brief Safe 64-bit TX counter ceiling (DIFF_FIXED and other schemes). */
+#define ACS_COUNTER_TX_MAX UINT64_C(0xFFFFFFFFFFFFFFFE)
+/** @brief Safe 64-bit RX counter ceiling (DIFF_FIXED and other schemes). */
+#define ACS_COUNTER_RX_MAX UINT64_C(0xFFFFFFFFFFFFFFFE)
 #endif
 /** @} */
 
@@ -74,20 +77,17 @@ extern "C" {
 /** @brief Fixed-prefix length for AES-GCM nonces in bytes.
  *
  * ACS §4.4.4.15.1.4.4.6 says the fixed part for GCM/GMAC should be used as
- * the IV fixed field with 4 octets. We intentionally advertise 8 here because
- * this implementation currently caps the variable part at 32 bits.
+ * the IV fixed field with 4 octets.
  */
-#define ACS_GCM_NONCE_FIXED_SIZE 8
+#define ACS_GCM_NONCE_FIXED_SIZE 4
 
 /** @brief Variable (counter) part of the AES-GCM nonce in bytes.
  *
- * The current ACS implementation intentionally caps runtime nonce counters at
- * 32 bits. ACS §4.4.4.15.1.4.4.5 says the GCM/GMAC variable part should be
- * used as the IV invocation field with 8 octets, but we intentionally
- * advertise 4 here so we do not claim support for a larger nonce space than
- * the code actually maintains.
+ * ACS §4.4.4.15.1.4.4.5 says the GCM/GMAC variable part should be used as the
+ * IV invocation field with 8 octets. The runtime keeps per-record counters in
+ * 64-bit state so this shape is now supported end to end.
  */
-#define ACS_GCM_NONCE_VAR_SIZE 4
+#define ACS_GCM_NONCE_VAR_SIZE 8
 
 /** @brief Total AES-GCM nonce length in bytes (fixed + variable). */
 #define ACS_GCM_NONCE_SIZE (ACS_GCM_NONCE_FIXED_SIZE + ACS_GCM_NONCE_VAR_SIZE) /**< 12 */
@@ -101,40 +101,50 @@ extern "C" {
 #define ACS_GMAC_NONCE_SIZE       ACS_GCM_NONCE_SIZE
 #define ACS_GMAC_MAC_SIZE         ACS_GCM_MAC_SIZE
 
-/**
- * @brief Total nonce length in bytes for the active cipher.
- */
-#if defined(CONFIG_BT_ACS_DATA_PROTECTION_AES_GCM) ||                                              \
-	defined(CONFIG_BT_ACS_DATA_PROTECTION_AES_GMAC)
-#define ACS_ACTIVE_NONCE_SIZE ACS_GCM_NONCE_SIZE /**< 12 bytes */
+#if defined(CONFIG_BT_ACS_DATA_PROTECTION_AES_CCM)
+#define ACS_CCM_NONCE_SIZE_OR_0     ACS_NONCE_SIZE
+#define ACS_CCM_NONCE_VAR_SIZE_OR_0 ACS_CCM_NONCE_VAR_SIZE
 #else
-#define ACS_ACTIVE_NONCE_SIZE ACS_NONCE_SIZE /**< 13 bytes (CCM) */
+#define ACS_CCM_NONCE_SIZE_OR_0     0
+#define ACS_CCM_NONCE_VAR_SIZE_OR_0 0
 #endif
 
-/**
- * @brief On-wire nonce variable-part length in bytes for the active cipher.
- */
-#if defined(CONFIG_BT_ACS_DATA_PROTECTION_AES_GCM) ||                                              \
-	defined(CONFIG_BT_ACS_DATA_PROTECTION_AES_GMAC)
-#define ACS_ACTIVE_NONCE_VAR_SIZE ACS_GCM_NONCE_VAR_SIZE
-#elif defined(CONFIG_BT_ACS_CCM_NONCE_SEQ_DIFF_FIXED) ||                                           \
-	defined(CONFIG_BT_ACS_CCM_NONCE_SEQ_EVEN_ODD)
-#define ACS_ACTIVE_NONCE_VAR_SIZE ACS_CCM_NONCE_VAR_SIZE
-#else
-#define ACS_ACTIVE_NONCE_VAR_SIZE 0
-#endif
-
-/**
- * @brief Authentication tag length in bytes for the active cipher.
- *
- * GCM always uses a 128-bit (16-byte) tag. CCM tag length is configurable
- * via CONFIG_BT_ACS_CCM_MAC_SIZE (any even value from 4 to 16).
- */
 #if defined(CONFIG_BT_ACS_DATA_PROTECTION_AES_GCM)
-#define ACS_ACTIVE_AUTH_TAG_SIZE ACS_GCM_MAC_SIZE
+#define ACS_GCM_NONCE_SIZE_OR_0     ACS_GCM_NONCE_SIZE
+#define ACS_GCM_NONCE_VAR_SIZE_OR_0 ACS_GCM_NONCE_VAR_SIZE
 #else
-#define ACS_ACTIVE_AUTH_TAG_SIZE ACS_CCM_MAC_SIZE
+#define ACS_GCM_NONCE_SIZE_OR_0     0
+#define ACS_GCM_NONCE_VAR_SIZE_OR_0 0
 #endif
+
+#if defined(CONFIG_BT_ACS_DATA_PROTECTION_AES_GMAC)
+#define ACS_GMAC_NONCE_SIZE_OR_0     ACS_GMAC_NONCE_SIZE
+#define ACS_GMAC_NONCE_VAR_SIZE_OR_0 ACS_GMAC_NONCE_VAR_SIZE
+#else
+#define ACS_GMAC_NONCE_SIZE_OR_0     0
+#define ACS_GMAC_NONCE_VAR_SIZE_OR_0 0
+#endif
+
+/** @brief Largest nonce size used by any enabled data-protection algorithm. */
+#define ACS_MAX_NONCE_SIZE                                                                           \
+	((ACS_CCM_NONCE_SIZE_OR_0 > ACS_GCM_NONCE_SIZE_OR_0)                                        \
+		 ? ((ACS_CCM_NONCE_SIZE_OR_0 > ACS_GMAC_NONCE_SIZE_OR_0) ? ACS_CCM_NONCE_SIZE_OR_0 \
+										: ACS_GMAC_NONCE_SIZE_OR_0) \
+		 : ((ACS_GCM_NONCE_SIZE_OR_0 > ACS_GMAC_NONCE_SIZE_OR_0) ? ACS_GCM_NONCE_SIZE_OR_0 \
+										: ACS_GMAC_NONCE_SIZE_OR_0))
+
+/** @brief Largest nonce-variable size used by any enabled data-protection algorithm. */
+#define ACS_MAX_NONCE_VAR_SIZE                                                                       \
+	((ACS_CCM_NONCE_VAR_SIZE_OR_0 > ACS_GCM_NONCE_VAR_SIZE_OR_0)                                \
+		 ? ((ACS_CCM_NONCE_VAR_SIZE_OR_0 > ACS_GMAC_NONCE_VAR_SIZE_OR_0)                    \
+			    ? ACS_CCM_NONCE_VAR_SIZE_OR_0                                          \
+			    : ACS_GMAC_NONCE_VAR_SIZE_OR_0)                                        \
+		 : ((ACS_GCM_NONCE_VAR_SIZE_OR_0 > ACS_GMAC_NONCE_VAR_SIZE_OR_0)                    \
+			    ? ACS_GCM_NONCE_VAR_SIZE_OR_0                                          \
+			    : ACS_GMAC_NONCE_VAR_SIZE_OR_0))
+
+/** @brief Largest authentication tag size used by any enabled data-protection algorithm. */
+#define ACS_MAX_AUTH_TAG_SIZE ACS_CRYPTO_AUTH_TAG_SIZE
 
 /**
  * @brief Headroom reserved in protected response buffers for in-place encryption.
@@ -143,7 +153,7 @@ extern "C" {
  * The auth tag is appended after ciphertext — needs tailroom,
  * already accounted for in ACS_BUF_SIZE.
  */
-#define ACS_CRYPTO_HEADROOM (2U + ACS_ACTIVE_NONCE_VAR_SIZE)
+#define ACS_CRYPTO_HEADROOM (2U + ACS_MAX_NONCE_VAR_SIZE)
 
 /*
  * PSA algorithm and key-usage constants are now defined locally in acs_crypto.c

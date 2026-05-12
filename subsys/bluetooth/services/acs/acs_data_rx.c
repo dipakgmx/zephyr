@@ -32,6 +32,18 @@ struct acs_data_rx_attr_ctx {
 	const struct bt_gatt_attr *value; /**< value attribute (value_handle) */
 };
 
+static uint64_t acs_get_le_var_counter(const uint8_t *src, size_t len)
+{
+	uint64_t counter = 0U;
+
+	__ASSERT_NO_MSG(src != NULL);
+	__ASSERT_NO_MSG(len <= sizeof(counter));
+
+	sys_get_le(&counter, src, len);
+
+	return counter;
+}
+
 static uint8_t acs_data_rx_find_char_attrs_cb(const struct bt_gatt_attr *attr, uint16_t handle,
 					      void *user_data)
 {
@@ -77,16 +89,19 @@ int acs_require_data_out_subscription(struct bt_conn *conn, uint16_t resource_ha
 }
 
 static int acs_data_in_validate(struct bt_acs_conn *acs_conn, struct net_buf_simple *buf,
-				uint16_t *isc_id, struct bt_acs_runtime_key_state **current_key,
-				uint32_t *received_counter)
+				uint16_t *isc_id, struct bt_acs_record_state **record_state,
+				uint64_t *received_counter)
 {
 	const struct bt_acs_isc_record *isc;
+	const struct bt_acs_key_desc_record *key_desc;
 	const uint8_t *nonce_var;
+	uint8_t nonce_var_size;
+	uint8_t auth_tag_size;
 
 	__ASSERT_NO_MSG(acs_conn != NULL);
 	__ASSERT_NO_MSG(buf != NULL);
 	__ASSERT_NO_MSG(isc_id != NULL);
-	__ASSERT_NO_MSG(current_key != NULL);
+	__ASSERT_NO_MSG(record_state != NULL);
 	__ASSERT_NO_MSG(received_counter != NULL);
 
 	*received_counter = 0U;
@@ -104,30 +119,40 @@ static int acs_data_in_validate(struct bt_acs_conn *acs_conn, struct net_buf_sim
 		return ACS_DATA_ERR_INCORRECT_SECURITY_CONFIG;
 	}
 
-	if (acs_crypto_current_key_from_isc(acs_conn, *isc_id, current_key) != 0) {
-		LOG_WRN("no current key installed for ISC_ID 0x%04x", *isc_id);
+	key_desc = acs_key_desc_lookup(isc->key_id);
+	if (!key_desc) {
+		LOG_WRN("unknown key descriptor 0x%04x for ISC_ID 0x%04x", isc->key_id, *isc_id);
 		return ACS_DATA_ERR_INCORRECT_SECURITY_CONFIG;
 	}
 
-	if ((*current_key)->psa_key_id == 0U) {
+	if (acs_crypto_record_state_from_isc(acs_conn, *isc_id, record_state) != 0) {
+		LOG_WRN("no record state installed for ISC_ID 0x%04x", *isc_id);
+		return ACS_DATA_ERR_INCORRECT_SECURITY_CONFIG;
+	}
+
+	if ((*record_state)->psa_key_id == 0U) {
 		LOG_WRN("key for ISC_ID 0x%04x not provisioned (psa_key_id == 0)", *isc_id);
 		return ACS_DATA_ERR_INCORRECT_SECURITY_CONFIG;
 	}
 
+	nonce_var_size = acs_key_desc_nonce_var_size(key_desc);
+	auth_tag_size = acs_key_desc_auth_tag_size(key_desc);
+
 	/* Wire format after ISC_ID: Nonce_Var(LSO) || MAC(LSO) || Cipher(LSO) */
-	if (buf->len <= (uint16_t)(ACS_ACTIVE_NONCE_VAR_SIZE + ACS_ACTIVE_AUTH_TAG_SIZE)) {
+	if (buf->len <= (uint16_t)(nonce_var_size + auth_tag_size)) {
 		LOG_ERR("Data In: Secure_Data too short (%u)", buf->len);
 		return -EINVAL;
 	}
 
-	nonce_var = net_buf_simple_pull_mem(buf, ACS_ACTIVE_NONCE_VAR_SIZE);
+	nonce_var = net_buf_simple_pull_mem(buf, nonce_var_size);
 
-	sys_get_le(received_counter, nonce_var, sizeof(*received_counter));
+	*received_counter = acs_get_le_var_counter(nonce_var, nonce_var_size);
 
 	/* Reject stale/replayed messages. */
-	if (*received_counter < (*current_key)->rx_nonce_counter) {
-		LOG_WRN("Data In: stale/replayed nonce (received=0x%08x vs min_expected=0x%08x)",
-			*received_counter, (*current_key)->rx_nonce_counter);
+	if (*received_counter < (*record_state)->rx_nonce_counter) {
+		LOG_WRN("Data In: stale/replayed nonce (received=0x%016llx vs min_expected=0x%016llx)",
+			(unsigned long long)*received_counter,
+			(unsigned long long)(*record_state)->rx_nonce_counter);
 		return ACS_DATA_ERR_INCORRECT_SECURITY_CONFIG;
 	}
 
@@ -148,23 +173,23 @@ static int acs_data_in_validate(struct bt_acs_conn *acs_conn, struct net_buf_sim
  * @param buf               Buffer positioned at MAC || ciphertext on entry.
  *                          Replaced in place with plaintext payload on success.
  * @param isc_id            Information Security Configuration ID for decryption.
- * @param current_key       Runtime key state selected for @p isc_id.
+ * @param record_state      Runtime record state selected for @p isc_id.
  * @param received_counter  Received nonce-variable counter from the message.
  * @param resource_handle   [out] Decrypted protected resource handle.
  *
  * @return 0 on success, or an ACS Data error / negative errno on failure.
  */
 static int acs_data_in_decrypt(struct bt_acs_conn *acs_conn, struct net_buf_simple *buf,
-			       uint16_t isc_id, struct bt_acs_runtime_key_state *current_key,
-			       uint32_t received_counter, uint16_t *resource_handle)
+			       uint16_t isc_id, struct bt_acs_record_state *record_state,
+			       uint64_t received_counter, uint16_t *resource_handle)
 {
 	uint16_t plain_len = 0;
-	uint32_t previous_rx_nonce_counter;
+	uint64_t previous_rx_nonce_counter;
 	int err;
 
 	__ASSERT_NO_MSG(acs_conn != NULL);
 	__ASSERT_NO_MSG(buf != NULL);
-	__ASSERT_NO_MSG(current_key != NULL);
+	__ASSERT_NO_MSG(record_state != NULL);
 	__ASSERT_NO_MSG(resource_handle != NULL);
 
 	/* Step 1: wire LSO → PSA MSO. */
@@ -172,12 +197,12 @@ static int acs_data_in_decrypt(struct bt_acs_conn *acs_conn, struct net_buf_simp
 
 	/* Decrypt using the received counter as the nonce variable part. Commit the
 	 * advanced receive state only if authentication succeeds. */
-	previous_rx_nonce_counter = current_key->rx_nonce_counter;
-	current_key->rx_nonce_counter = received_counter;
+	previous_rx_nonce_counter = record_state->rx_nonce_counter;
+	record_state->rx_nonce_counter = received_counter;
 	err = acs_crypto_decrypt(acs_conn, isc_id, buf->data, buf->len, buf->data, &plain_len, NULL,
 				 0);
 	if (err) {
-		current_key->rx_nonce_counter = previous_rx_nonce_counter;
+		record_state->rx_nonce_counter = previous_rx_nonce_counter;
 		if (err == -ENOSPC) {
 			LOG_WRN("Nonce exhausted on decrypt — invalidating security");
 			bt_acs_invalidate_security(acs_conn->conn);
@@ -187,8 +212,8 @@ static int acs_data_in_decrypt(struct bt_acs_conn *acs_conn, struct net_buf_simp
 				"key/tampered data)");
 			return ACS_DATA_ERR_INVALID_KEY;
 		} else {
-			LOG_ERR("Decryption failed: err=%d (isc_id=0x%04x, current_key=0x%04x)",
-				err, isc_id, acs_runtime_key_id(current_key));
+			LOG_ERR("Decryption failed: err=%d (isc_id=0x%04x, key_id=0x%04x)", err,
+				isc_id, acs_record_key_id(record_state));
 			return ACS_DATA_ERR_INVALID_KEY;
 		}
 	}
@@ -234,8 +259,8 @@ static void acs_data_in_build_frame(struct bt_acs_conn *acs_conn, struct net_buf
 int acs_data_in_unwrap_and_route(struct bt_acs_conn *acs_conn, struct net_buf_simple *buf)
 {
 	struct acs_frame frame;
-	struct bt_acs_runtime_key_state *current_key;
-	uint32_t received_counter;
+	struct bt_acs_record_state *record_state;
+	uint64_t received_counter;
 	uint16_t isc_id;
 	uint16_t resource_handle;
 	int err;
@@ -245,12 +270,12 @@ int acs_data_in_unwrap_and_route(struct bt_acs_conn *acs_conn, struct net_buf_si
 	__ASSERT_NO_MSG(buf != NULL);
 	__ASSERT_NO_MSG(buf->len > 0);
 
-	err = acs_data_in_validate(acs_conn, buf, &isc_id, &current_key, &received_counter);
+	err = acs_data_in_validate(acs_conn, buf, &isc_id, &record_state, &received_counter);
 	if (err) {
 		return err;
 	}
 
-	err = acs_data_in_decrypt(acs_conn, buf, isc_id, current_key, received_counter,
+	err = acs_data_in_decrypt(acs_conn, buf, isc_id, record_state, received_counter,
 				  &resource_handle);
 	if (err) {
 		return err;

@@ -12,7 +12,7 @@
  *
  * Per-connection crypto state lives on bt_acs_conn->crypto:
  *   - current_keys[] bound to key-exchange descriptor records
- *   - fixed nonce values
+ *   - record_states[] bound to AES-with-nonce key descriptor records
  *
  * This header exposes resolution helpers and crypto operations on that state
  * plus the pooled key-exchange context lifecycle.
@@ -50,17 +50,36 @@ int acs_crypto_current_key_from_isc(struct bt_acs_conn *acs_conn, uint16_t isc_i
 				    struct bt_acs_runtime_key_state **current_key);
 
 /**
- * @brief Lazy-initialise and copy the server fixed nonce for @p acs_conn.
+ * @brief Look up the runtime record-state slot for @p key_id on @p acs_conn.
  *
- * Must be called before START_KEY_EXCHANGE for SEQ_DIFF_FIXED nonce types
- * (spec §4.4.3.13).
+ * @param acs_conn      Per-connection ACS state.
+ * @param key_id        AES-with-nonce Key_ID to resolve.
+ * @param record_state  [out] Matching runtime record-state slot.
+ * @return 0 on success, -ENOENT if no slot is reserved for @p key_id,
+ *         -EINVAL for invalid arguments.
+ */
+int acs_crypto_record_state_lookup(struct bt_acs_conn *acs_conn, uint16_t key_id,
+				   struct bt_acs_record_state **record_state);
+
+/**
+ * @brief Resolve the runtime record-state used by @p isc_id on @p acs_conn.
+ */
+int acs_crypto_record_state_from_isc(struct bt_acs_conn *acs_conn, uint16_t isc_id,
+				     struct bt_acs_record_state **record_state);
+
+/**
+ * @brief Lazy-initialise and copy the server fixed nonce for @p key_id.
+ *
+ * The fixed part is carried per algorithm Key_ID, not once per connection.
  *
  * @param acs_conn  Per-connection ACS state.
+ * @param key_id    AES-with-nonce Key_ID whose server nonce should be emitted.
  * @param nonce_buf Caller buffer to receive the nonce.
  * @param len       Size of @p nonce_buf.
  * @return 0 on success, -ENOTSUP if fixed nonce is not configured.
  */
-int acs_crypto_get_server_nonce_fixed(struct bt_acs_conn *acs_conn, uint8_t *nonce_buf, size_t len);
+int acs_crypto_get_server_nonce_fixed(struct bt_acs_conn *acs_conn, uint16_t key_id,
+				      uint8_t *nonce_buf, size_t len);
 
 /**
  * @brief Derive the session key from the completed key exchange.
@@ -81,6 +100,21 @@ void acs_crypto_destroy_current_key(struct bt_acs_runtime_key_state *current_key
 
 /** @brief Destroy every imported current key on @p acs_conn. */
 void acs_crypto_destroy_connection_keys(struct bt_acs_conn *acs_conn);
+
+/** @brief Import one record-state key into the PSA keystore. */
+int acs_crypto_import_record_key(struct bt_acs_record_state *record_state);
+
+/** @brief Destroy one record-state key from the PSA keystore. */
+void acs_crypto_destroy_record_key(struct bt_acs_record_state *record_state);
+
+/** @brief Destroy every imported record-state key on @p acs_conn. */
+void acs_crypto_destroy_connection_record_keys(struct bt_acs_conn *acs_conn);
+
+/** @brief Rebind record-state key material from the current exchange-key slots. */
+int acs_crypto_rebind_record_states(struct bt_acs_conn *acs_conn);
+
+/** @brief Reset nonce counters for record states that derive from @p current_key_id. */
+void acs_crypto_reset_record_counters(struct bt_acs_conn *acs_conn, uint16_t current_key_id);
 
 /**
  * @brief Encrypt @p plaintext using the session key.
