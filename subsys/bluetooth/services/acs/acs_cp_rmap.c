@@ -66,7 +66,7 @@ int acs_cp_handle_get_restriction_map_descriptor(struct acs_procedure *proc,
 
 	if (acs_rmap_lookup(desc_req.map_id, &map) != 0) {
 		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_GET_RESTRICTION_MAP_DESCRIPTOR,
-					 BT_ACS_CP_RESPONSE_NO_RECORDS_FOUND);
+					 BT_ACS_CP_RESPONSE_PARAMETER_OUT_OF_RANGE);
 	}
 
 	if (map.map_isc_id != 0 && proc->kind == ACS_PROC_KIND_PLAIN_CP) {

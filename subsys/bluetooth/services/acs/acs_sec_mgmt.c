@@ -302,7 +302,7 @@ int acs_sec_mgmt_abort(struct acs_procedure *proc)
 		/* Take the lock for our own response, since no proc holds it. */
 		atomic_set(&acs_conn->plain_cp_proc.plain_cp.locked, 1);
 		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_ABORT,
-					 BT_ACS_CP_RESPONSE_ABORT_UNSUCCESSFUL);
+					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE);
 	}
 
 	/* If a CP indication is already handed to the BLE stack we cannot

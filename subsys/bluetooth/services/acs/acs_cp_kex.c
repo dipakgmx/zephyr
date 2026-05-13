@@ -527,6 +527,18 @@ int acs_cp_kex_start(struct acs_procedure *proc, struct net_buf_simple *buf)
 	} else
 #endif /* CONFIG_BT_ACS_KEY_EXCHANGE_KDF */
 	{
+		struct bt_acs_runtime_key_state *established_key =
+			acs_cp_kex_established_key(acs_conn);
+
+		if (acs_conn->crypto.key_state == BT_ACS_KEY_EXCHANGE_COMPLETE &&
+		    established_key != NULL) {
+			LOG_WRN("Start Key Exchange: Key_ID 0x%04x rejected — current key 0x%04x "
+				"already established, invalidate first",
+				key_id, acs_runtime_key_id(established_key));
+			return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_START_KEY_EXCHANGE,
+						 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE);
+		}
+
 		err = acs_key_exchange_ecdh_start(acs_conn, key_id);
 	}
 
