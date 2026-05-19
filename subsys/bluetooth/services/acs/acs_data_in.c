@@ -200,8 +200,8 @@ static int acs_data_in_decrypt(struct bt_acs_conn *acs_conn, struct net_buf_simp
 	 * advanced receive state only if authentication succeeds. */
 	previous_rx_nonce_counter = record_state->rx_nonce_counter;
 	record_state->rx_nonce_counter = received_counter;
-	err = acs_crypto_decrypt(acs_conn, isc_id, buf->data, buf->len, buf->data, &plain_len, NULL,
-				 0);
+	err = acs_crypto_decrypt(acs_conn, record_state, buf->data, buf->len, buf->data, &plain_len,
+				 NULL, 0);
 	if (err) {
 		record_state->rx_nonce_counter = previous_rx_nonce_counter;
 		if (err == -ENOSPC) {

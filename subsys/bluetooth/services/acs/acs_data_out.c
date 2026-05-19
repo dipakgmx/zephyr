@@ -122,7 +122,8 @@ static int data_tx_encrypt_in_place(struct bt_acs_conn *acs_conn, uint16_t isc_i
 	/* Reverse plaintext to LSO order for wire (spec §3.2). */
 	sys_mem_swap(plaintext, plain_len);
 
-	err = acs_crypto_encrypt(acs_conn, isc_id, plaintext, plain_len, plaintext, &cipher_len);
+	err = acs_crypto_encrypt(acs_conn, record_state, plaintext, plain_len, plaintext,
+				 &cipher_len);
 	if (err) {
 		if (err == -ENOSPC) {
 			LOG_WRN("Nonce exhausted on encrypt — invalidating security");
@@ -367,57 +368,6 @@ struct net_buf *acs_prepare_reply_buf(struct acs_procedure *proc, bool encrypted
 	}
 
 	return buf;
-}
-
-int acs_cp_rsp_status(struct acs_procedure *proc, uint8_t req_opcode, uint8_t code)
-{
-	struct net_buf *buf;
-	struct acs_reply reply;
-	struct acs_reply_mode mode;
-	int err;
-
-	__ASSERT_NO_MSG(proc != NULL);
-	__ASSERT_NO_MSG(proc->acs_conn != NULL);
-
-	mode = acs_proc_reply_mode(proc);
-	buf = acs_prepare_reply_buf(proc, mode.encrypted);
-	if (!buf) {
-		acs_seq_abort(proc);
-		if (proc->kind == ACS_PROC_KIND_PLAIN_CP) {
-			atomic_set(&proc->acs_conn->plain_cp_proc.plain_cp.locked, 0);
-		}
-		return -ENOMEM;
-	}
-
-	net_buf_add_u8(buf, BT_ACS_CP_OPCODE_RESPONSE_CODE);
-	net_buf_add_u8(buf, req_opcode);
-	net_buf_add_u8(buf, code);
-
-	reply = (struct acs_reply){
-		.channel = mode.channel,
-		.plaintext = buf,
-		.encrypted = mode.encrypted,
-		.needs_confirm = mode.needs_confirm,
-	};
-
-	err = acs_tx_submit(proc, &reply);
-	if (err) {
-		/* Status replies are still replies — same failure contract as
-		 * acs_cp_send_reply: tear down any active sequence so we don't
-		 * leak deferred ALLOC refs or leave stale step state behind.
-		 * The plain-CP busy-gate release for submit failure is handled
-		 * inside acs_tx_submit_plain_cp itself, so we don't double up.
-		 */
-		acs_seq_abort(proc);
-		if (proc->kind == ACS_PROC_KIND_PROTECTED_REQ) {
-			LOG_WRN("Protected CP status indication failed for handle 0x%04x: %d",
-				proc->route.resource_handle, err);
-		} else {
-			LOG_WRN("Plain CP status indication failed: %d", err);
-		}
-	}
-
-	return err;
 }
 
 /* Plain-CP final-mile send. Caller must already hold the busy gate. */

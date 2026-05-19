@@ -195,13 +195,6 @@ int acs_cp_handle_set_client_nonce_fixed(struct acs_procedure *proc, struct net_
 					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 	}
 
-	/* Operand (§4.4.4.36, Table 4.77): Key_ID(2) + AC_Client_Nonce_Fixed_Value */
-	if (buf->len < sizeof(key_id)) {
-		LOG_WRN("Set client nonce fixed operand invalid length: %u", buf->len);
-		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_SET_CLIENT_NONCE_FIXED,
-					 BT_ACS_CP_RESPONSE_INVALID_OPERAND);
-	}
-
 	key_id = sys_get_le16(buf->data);
 	key_desc = acs_key_desc_lookup(key_id);
 	if (!key_desc) {

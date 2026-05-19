@@ -115,19 +115,10 @@ int acs_cp_handle_get_resource_handle_uuid_map(struct acs_procedure *proc)
 
 int acs_cp_handle_get_svc_char_uuids(struct acs_procedure *proc, struct net_buf_simple *buf)
 {
-	uint16_t resource_handle;
-	struct net_buf *rsp_buf;
 	struct acs_reply_mode reply_mode = acs_proc_reply_mode(proc);
+	uint16_t resource_handle = net_buf_simple_pull_le16(buf);
+	struct net_buf *rsp_buf;
 	int err;
-
-	if (buf->len < 2) {
-		return acs_cp_rsp_status(
-			proc,
-			BT_ACS_CP_OPCODE_GET_SERVICE_CHARACTERISTIC_UUIDS_CHAR_RESOURCE_HANDLE,
-			BT_ACS_CP_RESPONSE_INVALID_OPERAND);
-	}
-
-	resource_handle = net_buf_simple_pull_le16(buf);
 
 	rsp_buf = acs_prepare_reply_buf(proc, reply_mode.encrypted);
 	if (!rsp_buf) {
@@ -152,13 +143,13 @@ int acs_cp_handle_get_svc_char_uuids(struct acs_procedure *proc, struct net_buf_
 			BT_ACS_CP_OPCODE_GET_SERVICE_CHARACTERISTIC_UUIDS_CHAR_RESOURCE_HANDLE,
 			errno_to_acs_status(err));
 	} else {
-		int send_err = acs_cp_send_reply(proc);
+		err = acs_cp_send_reply(proc);
 
-		if (send_err) {
+		if (err) {
 			LOG_WRN("CP indicate failed for opcode 0x%02x: %d",
 				BT_ACS_CP_OPCODE_GET_SERVICE_CHARACTERISTIC_UUIDS_CHAR_RESOURCE_HANDLE,
-				send_err);
+				err);
 		}
-		return send_err;
+		return err;
 	}
 }

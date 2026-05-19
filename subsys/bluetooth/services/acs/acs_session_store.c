@@ -111,6 +111,11 @@ void acs_session_store(struct bt_conn const *conn, struct bt_acs_conn const *acs
 		return;
 	}
 
+	/* Spec §4.4.4.15.1.4.4.1 reads like per-message counter persistence, but
+	 * this implementation snapshots counters at post-KEX/session-store points
+	 * instead to avoid NVS write amplification on every TX/RX.
+	 */
+
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF) && !IS_ENABLED(CONFIG_BT_ACS_KDF_SESSION_KEY)
 	if (kdf_key && kdf_key->psa_key_id != 0U) {
 		/* Two-key layout: store the ECDH parent as the base session key with zero

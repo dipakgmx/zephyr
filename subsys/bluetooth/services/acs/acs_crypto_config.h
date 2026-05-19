@@ -158,10 +158,8 @@ extern "C" {
 #define ACS_CRYPTO_HEADROOM (2U + ACS_MAX_NONCE_VAR_SIZE)
 
 /*
- * PSA algorithm and key-usage constants are now defined locally in acs_crypto.c
- * (per-algorithm: ACS_PSA_CCM_ALG, ACS_PSA_GCM_ALG, etc.) to support
- * multi-algorithm dispatch.  The legacy single-algorithm aliases
- * (ACS_PSA_AEAD_ALG, ACS_PSA_TAG_LEN) live there too for buffer sizing.
+ * PSA algorithm and key-usage constants are now defined locally in the crypto
+ * implementation files to support multi-algorithm dispatch.
  */
 
 #ifdef __cplusplus

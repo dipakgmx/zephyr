@@ -29,6 +29,20 @@ extern "C" {
 #endif
 
 /**
+ * @brief Resolve the current exchange-key Key_ID backing a descriptor record.
+ *
+ * Walks from an ISC or algorithm descriptor through the parent relation until
+ * it reaches the non-algorithm current key that owns the runtime key material.
+ *
+ * @param rec             Descriptor record to resolve.
+ * @param current_key_id  [out] Resolved current-key Key_ID.
+ * @return 0 on success, -ENOENT if the relation cannot be resolved,
+ *         -EINVAL for invalid arguments.
+ */
+int acs_crypto_current_key_id_from_key_desc(const struct bt_acs_key_desc_record *rec,
+					    uint16_t *current_key_id);
+
+/**
  * @brief Look up the runtime key-state slot for @p key_id on @p acs_conn.
  *
  * @param acs_conn      Per-connection ACS state.
@@ -121,24 +135,25 @@ int acs_crypto_rebind_record_states(struct bt_acs_conn *acs_conn);
 void acs_crypto_reset_record_counters(struct bt_acs_conn *acs_conn, uint16_t current_key_id);
 
 /**
- * @brief Encrypt @p plaintext using the session key.
+ * @brief Encrypt @p plaintext using the resolved record-state key.
  *
- * @param acs_conn   Per-connection state (holds key and nonce counters).
- * @param isc_id     ISC identifier for nonce construction.
+ * @param acs_conn   Per-connection state.
+ * @param record_state Resolved runtime record state holding the key and nonce counters.
  * @param plaintext  Input data.
  * @param plain_len  Input length.
  * @param ciphertext Output buffer (must fit ciphertext + auth tag).
  * @param cipher_len [out] Total output length.
  * @return 0 on success, negative errno on failure.
  */
-int acs_crypto_encrypt(struct bt_acs_conn *acs_conn, uint16_t isc_id, const uint8_t *plaintext,
-		       uint16_t plain_len, uint8_t *ciphertext, uint16_t *cipher_len);
+int acs_crypto_encrypt(struct bt_acs_conn *acs_conn, struct bt_acs_record_state *record_state,
+		       const uint8_t *plaintext, uint16_t plain_len, uint8_t *ciphertext,
+		       uint16_t *cipher_len);
 
 /**
- * @brief Decrypt @p ciphertext using the session key.
+ * @brief Decrypt @p ciphertext using the resolved record-state key.
  *
  * @param acs_conn   Per-connection state.
- * @param isc_id     ISC identifier for nonce construction.
+ * @param record_state Resolved runtime record state holding the key and nonce counters.
  * @param ciphertext Input (ciphertext + auth tag).
  * @param cipher_len Total input length.
  * @param plaintext  Output buffer.
@@ -147,9 +162,9 @@ int acs_crypto_encrypt(struct bt_acs_conn *acs_conn, uint16_t isc_id, const uint
  * @param aad_len    Length of @p aad.
  * @return 0 on success, negative errno on failure.
  */
-int acs_crypto_decrypt(struct bt_acs_conn *acs_conn, uint16_t isc_id, const uint8_t *ciphertext,
-		       uint16_t cipher_len, uint8_t *plaintext, uint16_t *plain_len,
-		       const uint8_t *aad, uint16_t aad_len);
+int acs_crypto_decrypt(struct bt_acs_conn *acs_conn, struct bt_acs_record_state *record_state,
+		       const uint8_t *ciphertext, uint16_t cipher_len, uint8_t *plaintext,
+		       uint16_t *plain_len, const uint8_t *aad, uint16_t aad_len);
 
 /** @brief Allocate a transient key-exchange context. Returns NULL if pool exhausted. */
 int acs_kex_alloc(struct bt_acs_conn *acs_conn);

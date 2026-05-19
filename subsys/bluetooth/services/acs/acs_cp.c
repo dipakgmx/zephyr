@@ -27,6 +27,39 @@ LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
 void acs_cp_completion_cb(struct bt_conn *conn, const struct bt_gatt_attr *attr, int err,
 			  void *user_data);
 
+static uint16_t acs_cp_min_operand_size(uint8_t opcode)
+{
+	switch (opcode) {
+#if (IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_CCM) &&                                          \
+     IS_ENABLED(CONFIG_BT_ACS_CCM_NONCE_SEQ_DIFF_FIXED)) ||                                        \
+	IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_GCM) ||                                       \
+	IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_GMAC)
+	case BT_ACS_CP_OPCODE_SET_CLIENT_NONCE_FIXED:
+		return sizeof(uint16_t);
+#endif
+#if IS_ENABLED(CONFIG_BT_ACS_FEAT_AUTHORIZATION)
+	case BT_ACS_CP_OPCODE_ACTIVATE_RESTRICTION_MAP:
+		return sizeof(uint16_t);
+#endif
+	case BT_ACS_CP_OPCODE_GET_SERVICE_CHARACTERISTIC_UUIDS_CHAR_RESOURCE_HANDLE:
+		return sizeof(uint16_t);
+#if IS_ENABLED(CONFIG_BT_ACS_ANY_KEY_EXCHANGE)
+	case BT_ACS_CP_OPCODE_START_KEY_EXCHANGE:
+		return sizeof(struct acs_cp_start_key_exchange_req);
+#endif
+#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_ECDH)
+	case BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH:
+		return sizeof(uint16_t);
+#endif
+#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF) || IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_ECDH)
+	case BT_ACS_CP_OPCODE_KEY_EXCHANGE_KDF:
+		return sizeof(struct acs_kdf_req);
+#endif
+	default:
+		return 0U;
+	}
+}
+
 int acs_cp_send_reply(struct acs_procedure *proc)
 {
 	struct acs_reply_mode mode;
@@ -55,6 +88,57 @@ int acs_cp_send_reply(struct acs_procedure *proc)
 			LOG_WRN("Plain CP response indication failed: %d", err);
 		}
 	}
+	return err;
+}
+
+int acs_cp_rsp_status(struct acs_procedure *proc, uint8_t req_opcode, uint8_t code)
+{
+	struct net_buf *buf;
+	struct acs_reply reply;
+	struct acs_reply_mode mode;
+	int err;
+
+	__ASSERT_NO_MSG(proc != NULL);
+	__ASSERT_NO_MSG(proc->acs_conn != NULL);
+
+	mode = acs_proc_reply_mode(proc);
+	buf = acs_prepare_reply_buf(proc, mode.encrypted);
+	if (!buf) {
+		acs_seq_abort(proc);
+		if (proc->kind == ACS_PROC_KIND_PLAIN_CP) {
+			atomic_set(&proc->acs_conn->plain_cp_proc.plain_cp.locked, 0);
+		}
+		return -ENOMEM;
+	}
+
+	net_buf_add_u8(buf, BT_ACS_CP_OPCODE_RESPONSE_CODE);
+	net_buf_add_u8(buf, req_opcode);
+	net_buf_add_u8(buf, code);
+
+	reply = (struct acs_reply){
+		.channel = mode.channel,
+		.plaintext = buf,
+		.encrypted = mode.encrypted,
+		.needs_confirm = mode.needs_confirm,
+	};
+
+	err = acs_tx_submit(proc, &reply);
+	if (err) {
+		/* Status replies are still replies — same failure contract as
+		 * acs_cp_send_reply: tear down any active sequence so we don't
+		 * leak deferred ALLOC refs or leave stale step state behind.
+		 * The plain-CP busy-gate release for submit failure is handled
+		 * inside acs_tx_submit_plain_cp itself, so we don't double up.
+		 */
+		acs_seq_abort(proc);
+		if (proc->kind == ACS_PROC_KIND_PROTECTED_REQ) {
+			LOG_WRN("Protected CP status indication failed for handle 0x%04x: %d",
+				proc->route.resource_handle, err);
+		} else {
+			LOG_WRN("Plain CP status indication failed: %d", err);
+		}
+	}
+
 	return err;
 }
 
@@ -146,6 +230,11 @@ int acs_cp_dispatch(struct acs_frame *frame, struct bt_acs_conn *acs_conn,
 
 	opcode = net_buf_simple_pull_u8(payload);
 	LOG_DBG("CP dispatch: opcode 0x%02x, operand len %u", opcode, payload->len);
+
+	if (payload->len < acs_cp_min_operand_size(opcode)) {
+		LOG_WRN("CP dispatch: opcode 0x%02x operand too short (%u)", opcode, payload->len);
+		return acs_cp_rsp_status(proc, opcode, BT_ACS_CP_RESPONSE_INVALID_OPERAND);
+	}
 
 	switch (opcode) {
 	case BT_ACS_CP_OPCODE_GET_FEATURE:

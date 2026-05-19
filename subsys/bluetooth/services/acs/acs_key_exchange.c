@@ -20,26 +20,197 @@
 
 LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
 
+struct bt_acs_runtime_key_state *acs_key_exchange_established_key(struct bt_acs_conn *acs_conn)
+{
+#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
+	struct bt_acs_runtime_key_state *kdf_key;
+
+	if (acs_crypto_current_key_lookup(acs_conn, ACS_KEY_ID_KDF, &kdf_key) == 0 &&
+	    kdf_key->psa_key_id != 0U) {
+		return kdf_key;
+	}
+#endif
+
+#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_ECDH)
+	{
+		struct bt_acs_runtime_key_state *ecdh_key;
+
+		if (acs_crypto_current_key_lookup(acs_conn, ACS_KEY_ID_ECDH, &ecdh_key) == 0 &&
+		    ecdh_key->psa_key_id != 0U) {
+			return ecdh_key;
+		}
+	}
+#endif
+
+#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_OOB)
+	{
+		struct bt_acs_runtime_key_state *oob_key;
+
+		if (acs_crypto_current_key_lookup(acs_conn, ACS_KEY_ID_OOB, &oob_key) == 0 &&
+		    oob_key->psa_key_id != 0U) {
+			return oob_key;
+		}
+	}
+#endif
+
+	return NULL;
+}
+
+static int kex_step_success_response(struct acs_procedure *proc)
+{
+	struct bt_acs_conn *acs_conn = proc->acs_conn;
+	struct acs_reply_mode reply_mode = acs_proc_reply_mode(proc);
+	uint8_t payload[3];
+	uint16_t key_id;
+	struct net_buf *buf;
+
+	if (!acs_conn || !acs_conn->crypto.kex) {
+		return -EINVAL;
+	}
+
+	key_id = sys_le16_to_cpu(acs_conn->crypto.kex->start_kex.key_id);
+	sys_put_le16(key_id, &payload[0]);
+	payload[2] = 0x00;
+
+	buf = acs_prepare_reply_buf(proc, reply_mode.encrypted);
+	if (!buf) {
+		return -ENOMEM;
+	}
+
+	net_buf_add_u8(buf, BT_ACS_CP_OPCODE_KEY_EXCHANGE_RESPONSE);
+	net_buf_add_mem(buf, payload, sizeof(payload));
+	return acs_cp_send_reply(proc);
+}
+
+static int kex_step_status(struct acs_procedure *proc)
+{
+	struct bt_acs_conn *acs_conn = proc->acs_conn;
+
+	if (acs_conn->crypto.kex) {
+		acs_kex_free(acs_conn->crypto.kex);
+		acs_conn->crypto.kex = NULL;
+	}
+
+	acs_conn->status_flags |= BT_ACS_STATUS_SECURITY_ESTABLISHED;
+	{
+		const struct bt_acs_cb *cb = acs_cb_get();
+		struct bt_acs_runtime_key_state *established_key =
+			acs_key_exchange_established_key(acs_conn);
+
+		if (cb && cb->security_established && established_key) {
+			cb->security_established(proc->acs_conn->conn, established_key->key,
+						 CONFIG_BT_ACS_SESSION_KEY_SIZE);
+		}
+	}
+
+#if defined(CONFIG_BT_SETTINGS)
+#if IS_ENABLED(CONFIG_BT_ACS_KDF_SESSION_KEY)
+	{
+		struct bt_acs_runtime_key_state *kdf_key;
+
+		if (acs_crypto_current_key_lookup(acs_conn, ACS_KEY_ID_KDF, &kdf_key) != 0 ||
+		    kdf_key->psa_key_id == 0U) {
+			acs_session_store(proc->acs_conn->conn, acs_conn);
+		}
+	}
+#else
+	acs_session_store(proc->acs_conn->conn, acs_conn);
+#endif
+#endif
+
+	acs_seq_clear(proc);
+	acs_status_indicate(acs_conn->conn);
+	return 0;
+}
+
+static void kex_on_abort(struct acs_procedure *proc)
+{
+	struct bt_acs_conn *acs_conn = proc ? proc->acs_conn : NULL;
+
+	if (!acs_conn || !acs_kex_in_progress(acs_conn)) {
+		return;
+	}
+
+	acs_key_exchange_abort(acs_conn);
+}
+
+static int kex_step_fail_response(struct acs_procedure *proc)
+{
+	struct bt_acs_conn *acs_conn = proc->acs_conn;
+	struct acs_reply_mode reply_mode = acs_proc_reply_mode(proc);
+	uint8_t payload[3];
+	uint16_t key_id;
+	struct net_buf *buf;
+
+	if (!acs_conn || !acs_conn->crypto.kex) {
+		return -EINVAL;
+	}
+
+	key_id = sys_le16_to_cpu(acs_conn->crypto.kex->start_kex.key_id);
+	sys_put_le16(key_id, &payload[0]);
+	payload[2] = 0x01;
+
+	buf = acs_prepare_reply_buf(proc, reply_mode.encrypted);
+	if (!buf) {
+		return -ENOMEM;
+	}
+
+	net_buf_add_u8(buf, BT_ACS_CP_OPCODE_KEY_EXCHANGE_RESPONSE);
+	net_buf_add_mem(buf, payload, sizeof(payload));
+	return acs_cp_send_reply(proc);
+}
+
+static int kex_step_fail_cleanup(struct acs_procedure *proc)
+{
+	struct bt_acs_conn *acs_conn = proc->acs_conn;
+
+	acs_key_exchange_abort(acs_conn);
+	acs_seq_clear(proc);
+	return 0;
+}
+
+static const acs_seq_step_fn kex_success_steps[] = {
+	kex_step_success_response,
+	kex_step_status,
+};
+
+static const struct acs_seq_desc kex_success_seq = {
+	.steps = kex_success_steps,
+	.step_count = ARRAY_SIZE(kex_success_steps),
+	.on_abort = kex_on_abort,
+};
+
+static const acs_seq_step_fn kex_fail_steps[] = {
+	kex_step_fail_response,
+	kex_step_fail_cleanup,
+};
+
+static const struct acs_seq_desc kex_fail_seq = {
+	.steps = kex_fail_steps,
+	.step_count = ARRAY_SIZE(kex_fail_steps),
+	.on_abort = kex_on_abort,
+};
+
+const struct acs_seq_desc *acs_key_exchange_success_seq(void)
+{
+	return &kex_success_seq;
+}
+
+const struct acs_seq_desc *acs_key_exchange_fail_seq(void)
+{
+	return &kex_fail_seq;
+}
+
 static int check_expected_opcode(struct bt_acs_conn const *acs_conn, uint8_t expected_opcode)
 {
-	if (!acs_kex_expects(acs_conn, expected_opcode)) {
-		LOG_WRN("Invalid KEX transition (expected next opcode 0x%02x, current 0x%02x)",
+	if (!acs_kex_accepts_opcode(acs_conn, expected_opcode)) {
+		LOG_WRN("Invalid KEX transition (requested opcode 0x%02x, current next 0x%02x)",
 			expected_opcode,
 			acs_kex_in_progress(acs_conn) ? acs_conn->crypto.kex->next_expected_opcode
 						      : 0U);
 		return -EAGAIN;
 	}
 	return 0;
-}
-
-static bool acs_confirm_code_allowed(struct bt_acs_conn const *acs_conn)
-{
-	if (!acs_kex_in_progress(acs_conn)) {
-		return false;
-	}
-
-	return acs_conn->crypto.kex->next_expected_opcode == BT_ACS_CP_OPCODE_ECDH_CONFIRM_CODE ||
-	       acs_conn->crypto.kex->next_expected_opcode == BT_ACS_CP_OPCODE_KEY_EXCHANGE_KDF;
 }
 
 static void acs_key_exchange_free_ctx(struct bt_acs_conn *acs_conn)
@@ -695,9 +866,10 @@ int acs_key_exchange_ecdh_confirm_code(struct bt_acs_conn *acs_conn, struct net_
 	int err;
 	uint8_t server_confirm_le[ACS_HMAC_SHA256_SIZE];
 
-	if (!acs_confirm_code_allowed(acs_conn)) {
-		LOG_WRN("Confirm Code not expected for current KEX");
-		return -EAGAIN;
+	err = check_expected_opcode(acs_conn, BT_ACS_CP_OPCODE_ECDH_CONFIRM_CODE);
+
+	if (err) {
+		return err;
 	}
 
 	/* Generate fresh server random; client_confirm verification deferred to confirm_rand */

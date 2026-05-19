@@ -110,12 +110,6 @@ int acs_cp_handle_activate_restriction_map(struct acs_procedure *proc, struct ne
 					 BT_ACS_CP_RESPONSE_OPCODE_NOT_SUPPORTED);
 	}
 
-	if (buf->len < 2) {
-		LOG_ERR("Activate Restriction Map: operand too short (%u)", buf->len);
-		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_ACTIVATE_RESTRICTION_MAP,
-					 BT_ACS_CP_RESPONSE_INVALID_OPERAND);
-	}
-
 	map_id = net_buf_simple_pull_le16(buf);
 	memset(&map, 0, sizeof(map));
 

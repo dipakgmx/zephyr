@@ -64,6 +64,20 @@ static inline bool acs_kex_expects(const struct bt_acs_conn *acs_conn, uint8_t o
 	       acs_conn->crypto.kex->next_expected_opcode == opcode;
 }
 
+static inline bool acs_kex_accepts_opcode(const struct bt_acs_conn *acs_conn, uint8_t opcode)
+{
+	if (!acs_kex_in_progress(acs_conn)) {
+		return false;
+	}
+
+	if (acs_conn->crypto.kex->next_expected_opcode == opcode) {
+		return true;
+	}
+
+	return opcode == BT_ACS_CP_OPCODE_ECDH_CONFIRM_CODE &&
+	       acs_conn->crypto.kex->next_expected_opcode == BT_ACS_CP_OPCODE_KEY_EXCHANGE_KDF;
+}
+
 #ifdef __cplusplus
 }
 #endif

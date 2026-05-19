@@ -21,9 +21,8 @@ zephyr_sources_ifdef(
   acs_isc.c
   acs_sec_mgmt.c
   acs_request.c
-  acs_data_rx.c
-  acs_data_tx.c
-  acs_router.c
+  acs_data_in.c
+  acs_data_out.c
 )
 
 # Key exchange — compiled when any KEx method is enabled.
@@ -35,7 +34,12 @@ zephyr_sources_ifdef(
 )
 
 # Data protection crypto — compiled when any algorithm is enabled.
-zephyr_sources_ifdef(CONFIG_BT_ACS_ANY_DATA_PROTECTION acs_crypto.c)
+zephyr_sources_ifdef(
+  CONFIG_BT_ACS_ANY_DATA_PROTECTION
+  acs_crypto.c
+  acs_crypto_keys.c
+  acs_crypto_alg.c
+)
 
 # Session persistence — only when BT_SETTINGS is available.
 zephyr_sources_ifdef(CONFIG_BT_SETTINGS acs_session_store.c)

@@ -22,38 +22,28 @@ LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
 
 #if IS_ENABLED(CONFIG_BT_ACS_INVALIDATE_ESTABLISHED_SECURITY)
 
+#define ACS_ACTIVE_ALGORITHM_KEY_ID_MASK                                                           \
+	((IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_CCM) ? BIT(ACS_KEY_ID_CCM) : 0U) |          \
+	 (IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_GCM) ? BIT(ACS_KEY_ID_GCM) : 0U) |          \
+	 (IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_CMAC) ? BIT(ACS_KEY_ID_CMAC) : 0U) |        \
+	 (IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_GMAC) ? BIT(ACS_KEY_ID_GMAC) : 0U))
+
+#define ACS_ACTIVE_KEY_ID_MASK                                                                     \
+	(ACS_ACTIVE_ALGORITHM_KEY_ID_MASK |                                                        \
+	 (IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_ECDH) ? BIT(ACS_KEY_ID_ECDH) : 0U) |               \
+	 (IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_OOB) ? BIT(ACS_KEY_ID_OOB) : 0U) |                 \
+	 (IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF) ? BIT(ACS_KEY_ID_KDF) : 0U))
+
 static inline bool is_active_algorithm_key_id(uint16_t key_id)
 {
-	if (IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_CCM) && key_id == ACS_KEY_ID_CCM) {
-		return true;
-	}
-	if (IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_GCM) && key_id == ACS_KEY_ID_GCM) {
-		return true;
-	}
-	if (IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_CMAC) && key_id == ACS_KEY_ID_CMAC) {
-		return true;
-	}
-	if (IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_GMAC) && key_id == ACS_KEY_ID_GMAC) {
-		return true;
-	}
-	return false;
+	return key_id < (sizeof(unsigned long) * 8U) &&
+	       ((ACS_ACTIVE_ALGORITHM_KEY_ID_MASK & BIT(key_id)) != 0U);
 }
 
 static inline bool is_active_key_id(uint16_t key_id)
 {
-	if (is_active_algorithm_key_id(key_id)) {
-		return true;
-	}
-	if (IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_ECDH) && key_id == ACS_KEY_ID_ECDH) {
-		return true;
-	}
-	if (IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_OOB) && key_id == ACS_KEY_ID_OOB) {
-		return true;
-	}
-	if (IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF) && key_id == ACS_KEY_ID_KDF) {
-		return true;
-	}
-	return false;
+	return key_id < (sizeof(unsigned long) * 8U) &&
+	       ((ACS_ACTIVE_KEY_ID_MASK & BIT(key_id)) != 0U);
 }
 
 static int invalidate_self_step(struct acs_procedure *proc)

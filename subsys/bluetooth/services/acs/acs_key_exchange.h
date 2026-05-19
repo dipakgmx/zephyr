@@ -120,4 +120,8 @@ int acs_key_exchange_ecdh_confirm_rand(struct bt_acs_conn *acs_conn,
 int acs_key_exchange_kdf(struct bt_acs_conn *acs_conn, struct net_buf_simple *rsp_buf);
 #endif /* CONFIG_BT_ACS_KEY_EXCHANGE_KDF */
 
+struct bt_acs_runtime_key_state *acs_key_exchange_established_key(struct bt_acs_conn *acs_conn);
+const struct acs_seq_desc *acs_key_exchange_success_seq(void);
+const struct acs_seq_desc *acs_key_exchange_fail_seq(void);
+
 #endif /* BT_GATT_ACS_KEY_EXCHANGE_H_ */
