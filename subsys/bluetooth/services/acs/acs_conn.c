@@ -34,37 +34,6 @@ static struct bt_acs_conn acs_conn_state[CONFIG_BT_MAX_CONN];
 /** Pool of transient key-exchange contexts (released on handshake completion) */
 static struct bt_acs_kex_ctx acs_kex_pool[CONFIG_BT_MAX_CONN];
 
-static void acs_conn_init_current_keys(struct bt_acs_conn *acs_conn)
-{
-	size_t slot = 0;
-
-#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_ECDH)
-	acs_conn->crypto.current_keys[slot++].key_desc = acs_key_desc_lookup(ACS_KEY_ID_ECDH);
-#endif
-#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
-	acs_conn->crypto.current_keys[slot++].key_desc = acs_key_desc_lookup(ACS_KEY_ID_KDF);
-#endif
-#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_OOB)
-	acs_conn->crypto.current_keys[slot++].key_desc = acs_key_desc_lookup(ACS_KEY_ID_OOB);
-#endif
-
-	__ASSERT_NO_MSG(slot <= ARRAY_SIZE(acs_conn->crypto.current_keys));
-}
-
-static void acs_conn_init_record_states(struct bt_acs_conn *acs_conn)
-{
-	size_t slot = 0;
-
-	STRUCT_SECTION_FOREACH(bt_acs_key_desc_record, rec) {
-		if (!acs_key_desc_has_nonce_record(rec)) {
-			continue;
-		}
-
-		__ASSERT_NO_MSG(slot < ARRAY_SIZE(acs_conn->crypto.record_states));
-		acs_conn->crypto.record_states[slot++].key_desc = rec;
-	}
-}
-
 #if defined(CONFIG_BT_SETTINGS) && IS_ENABLED(CONFIG_BT_ACS_KDF_SESSION_KEY)
 static bool acs_conn_has_current_key(struct bt_acs_conn *acs_conn, uint16_t key_id)
 {
@@ -153,8 +122,7 @@ struct bt_acs_conn *acs_conn_alloc(struct bt_conn *conn)
 #else
 	memset(acs_conn, 0, sizeof(*acs_conn));
 #endif
-	acs_conn_init_current_keys(acs_conn);
-	acs_conn_init_record_states(acs_conn);
+	acs_crypto_init_slots(acs_conn);
 	acs_conn->conn = conn;
 	acs_conn->attr_cp = acs_attr_cp();
 	acs_conn->attr_status = acs_attr_status();
@@ -223,8 +191,7 @@ void acs_conn_cleanup(struct bt_acs_conn *acs_conn)
 #else
 	memset(&acs_conn->crypto, 0, sizeof(acs_conn->crypto));
 #endif
-	acs_conn_init_current_keys(acs_conn);
-	acs_conn_init_record_states(acs_conn);
+	acs_crypto_init_slots(acs_conn);
 	/* Abort request contexts before freeing the shared I/O slot so queued/in-flight
 	 * ACS Data Out activity cannot outlive the buffers it references.
 	 */
@@ -347,7 +314,7 @@ int bt_acs_invalidate_security(struct bt_conn *conn)
 	acs_key_exchange_abort(acs_conn);
 	acs_crypto_destroy_connection_keys(acs_conn);
 	memset(&acs_conn->crypto, 0, sizeof(acs_conn->crypto));
-	acs_conn_init_current_keys(acs_conn);
+	acs_crypto_init_slots(acs_conn);
 
 #if defined(CONFIG_BT_SETTINGS)
 	if (bt_conn_get_info(conn, &info) == 0) {

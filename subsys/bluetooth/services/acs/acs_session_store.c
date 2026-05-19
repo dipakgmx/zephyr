@@ -34,31 +34,36 @@ struct acs_settings_cache_entry {
 
 static struct acs_settings_cache_entry acs_settings_cache[CONFIG_BT_MAX_CONN];
 
-static void acs_session_restore_key_ids(struct bt_acs_conn *acs_conn)
+static int acs_session_store_exchange_key(struct bt_acs_conn const *acs_conn,
+					  struct bt_acs_runtime_key_state **exchange_key)
 {
-	size_t slot = 0;
-	size_t record_slot = 0;
+	struct bt_acs_runtime_key_state *ecdh_key;
+	int err;
 
-#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_ECDH)
-	acs_conn->crypto.current_keys[slot++].key_desc = acs_key_desc_lookup(ACS_KEY_ID_ECDH);
-#endif
-#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
-	acs_conn->crypto.current_keys[slot++].key_desc = acs_key_desc_lookup(ACS_KEY_ID_KDF);
-#endif
-#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_OOB)
-	acs_conn->crypto.current_keys[slot++].key_desc = acs_key_desc_lookup(ACS_KEY_ID_OOB);
-#endif
+	__ASSERT_NO_MSG(acs_conn != NULL);
+	__ASSERT_NO_MSG(exchange_key != NULL);
 
-	__ASSERT_NO_MSG(slot <= ARRAY_SIZE(acs_conn->crypto.current_keys));
-
-	STRUCT_SECTION_FOREACH(bt_acs_key_desc_record, rec) {
-		if (!acs_key_desc_has_nonce_record(rec)) {
-			continue;
-		}
-
-		__ASSERT_NO_MSG(record_slot < ARRAY_SIZE(acs_conn->crypto.record_states));
-		acs_conn->crypto.record_states[record_slot++].key_desc = rec;
+	err = acs_crypto_current_key_lookup((struct bt_acs_conn *)acs_conn, ACS_KEY_ID_ECDH,
+					    &ecdh_key);
+	if (!err && ecdh_key->psa_key_id != 0U) {
+		*exchange_key = ecdh_key;
+		return 0;
 	}
+
+#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_OOB)
+	{
+		struct bt_acs_runtime_key_state *oob_key;
+
+		err = acs_crypto_current_key_lookup((struct bt_acs_conn *)acs_conn, ACS_KEY_ID_OOB,
+						    &oob_key);
+		if (!err && oob_key->psa_key_id != 0U) {
+			*exchange_key = oob_key;
+			return 0;
+		}
+	}
+#endif
+
+	return -ENOENT;
 }
 
 bool acs_session_cache_has_room(const bt_addr_le_t *addr)
@@ -78,9 +83,6 @@ void acs_session_store(struct bt_conn const *conn, struct bt_acs_conn const *acs
 {
 	const bt_addr_le_t *addr = bt_conn_get_dst(conn);
 	struct bt_acs_runtime_key_state *parent_key;
-#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_OOB)
-	struct bt_acs_runtime_key_state *oob_key;
-#endif
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
 	struct bt_acs_runtime_key_state *kdf_key;
 #endif
@@ -90,21 +92,11 @@ void acs_session_store(struct bt_conn const *conn, struct bt_acs_conn const *acs
 	int cache_empty = -1;
 	int err;
 
-	err = acs_crypto_current_key_lookup((struct bt_acs_conn *)acs_conn, ACS_KEY_ID_ECDH,
-					    &parent_key);
+	err = acs_session_store_exchange_key(acs_conn, &parent_key);
 	if (err) {
-		LOG_ERR("Missing ECDH runtime key state");
+		LOG_ERR("No exchanged runtime key available to store");
 		return;
 	}
-
-#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_OOB)
-	err = acs_crypto_current_key_lookup((struct bt_acs_conn *)acs_conn, ACS_KEY_ID_OOB,
-					    &oob_key);
-	if (err) {
-		LOG_ERR("Missing OOB runtime key state");
-		return;
-	}
-#endif
 
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
 	err = acs_crypto_current_key_lookup((struct bt_acs_conn *)acs_conn, ACS_KEY_ID_KDF,
@@ -134,12 +126,7 @@ void acs_session_store(struct bt_conn const *conn, struct bt_acs_conn const *acs
 	} else
 #endif
 	{
-		/* ECDH/OOB exchange without active KDF child: session_key IS the AEAD key. */
-		if (!parent_key || parent_key->psa_key_id == 0U) {
-#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_OOB)
-			parent_key = oob_key;
-#endif
-		}
+		/* No live KDF child: persist the exchanged key that is actually installed. */
 		memcpy(store.parent_key, parent_key->key, CONFIG_BT_ACS_SESSION_KEY_SIZE);
 		store.parent_key_id = acs_runtime_key_id(parent_key);
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF) && !IS_ENABLED(CONFIG_BT_ACS_KDF_SESSION_KEY)
@@ -335,7 +322,7 @@ void acs_session_restore(struct bt_conn *conn, struct bt_acs_conn *acs_conn)
 						       parent_key) != 0) {
 				LOG_ERR("Failed to import restored session key into PSA");
 				memset(&acs_conn->crypto, 0, sizeof(acs_conn->crypto));
-				acs_session_restore_key_ids(acs_conn);
+				acs_crypto_init_slots(acs_conn);
 				return;
 			}
 
@@ -351,7 +338,7 @@ void acs_session_restore(struct bt_conn *conn, struct bt_acs_conn *acs_conn)
 			if (acs_crypto_rebind_record_states(acs_conn) != 0) {
 				LOG_ERR("Failed to import restored record-state keys into PSA");
 				memset(&acs_conn->crypto, 0, sizeof(acs_conn->crypto));
-				acs_session_restore_key_ids(acs_conn);
+				acs_crypto_init_slots(acs_conn);
 				return;
 			}
 

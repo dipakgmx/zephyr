@@ -98,6 +98,35 @@ static uint64_t acs_record_initial_rx_counter(const struct bt_acs_record_state *
 		       : UINT64_C(0);
 }
 
+void acs_crypto_init_slots(struct bt_acs_conn *acs_conn)
+{
+	size_t key_slot = 0;
+	size_t record_slot = 0;
+
+	__ASSERT_NO_MSG(acs_conn != NULL);
+
+#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_ECDH)
+	acs_conn->crypto.current_keys[key_slot++].key_desc = acs_key_desc_lookup(ACS_KEY_ID_ECDH);
+#endif
+#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
+	acs_conn->crypto.current_keys[key_slot++].key_desc = acs_key_desc_lookup(ACS_KEY_ID_KDF);
+#endif
+#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_OOB)
+	acs_conn->crypto.current_keys[key_slot++].key_desc = acs_key_desc_lookup(ACS_KEY_ID_OOB);
+#endif
+
+	__ASSERT_NO_MSG(key_slot <= ARRAY_SIZE(acs_conn->crypto.current_keys));
+
+	STRUCT_SECTION_FOREACH(bt_acs_key_desc_record, rec) {
+		if (!acs_key_desc_has_nonce_record(rec)) {
+			continue;
+		}
+
+		__ASSERT_NO_MSG(record_slot < ARRAY_SIZE(acs_conn->crypto.record_states));
+		acs_conn->crypto.record_states[record_slot++].key_desc = rec;
+	}
+}
+
 int acs_crypto_current_key_lookup(struct bt_acs_conn *acs_conn, uint16_t key_id,
 				  struct bt_acs_runtime_key_state **current_key)
 {

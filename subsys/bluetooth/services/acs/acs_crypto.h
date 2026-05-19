@@ -19,6 +19,7 @@
  */
 
 #include <stddef.h>
+#include <stdbool.h>
 #include <stdint.h>
 
 #include "acs_types.h"
@@ -66,6 +67,9 @@ int acs_crypto_record_state_lookup(struct bt_acs_conn *acs_conn, uint16_t key_id
  */
 int acs_crypto_record_state_from_isc(struct bt_acs_conn *acs_conn, uint16_t isc_id,
 				     struct bt_acs_record_state **record_state);
+
+/** @brief Bind per-connection runtime slots to the static key-descriptor graph. */
+void acs_crypto_init_slots(struct bt_acs_conn *acs_conn);
 
 /**
  * @brief Lazy-initialise and copy the server fixed nonce for @p key_id.

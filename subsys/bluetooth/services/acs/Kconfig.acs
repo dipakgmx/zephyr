@@ -475,7 +475,8 @@ endchoice
 
 config BT_ACS_MAX_NONCE_RECORDS
 	int
-	default 8
+	default 2 if BT_ACS_DATA_PROTECTION_AES_GCM && BT_ACS_DATA_PROTECTION_AES_GMAC
+	default 1
 
 # Hidden helpers — derived from active selections, used for CMakeLists gating.
 config BT_ACS_ANY_KEY_EXCHANGE

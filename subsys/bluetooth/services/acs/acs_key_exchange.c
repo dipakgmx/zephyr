@@ -20,37 +20,6 @@
 
 LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
 
-static void acs_key_exchange_init_current_keys(struct bt_acs_conn *acs_conn)
-{
-	size_t slot = 0;
-
-#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_ECDH)
-	acs_conn->crypto.current_keys[slot++].key_desc = acs_key_desc_lookup(ACS_KEY_ID_ECDH);
-#endif
-#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
-	acs_conn->crypto.current_keys[slot++].key_desc = acs_key_desc_lookup(ACS_KEY_ID_KDF);
-#endif
-#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_OOB)
-	acs_conn->crypto.current_keys[slot++].key_desc = acs_key_desc_lookup(ACS_KEY_ID_OOB);
-#endif
-
-	__ASSERT_NO_MSG(slot <= ARRAY_SIZE(acs_conn->crypto.current_keys));
-}
-
-static void acs_key_exchange_init_record_states(struct bt_acs_conn *acs_conn)
-{
-	size_t slot = 0;
-
-	STRUCT_SECTION_FOREACH(bt_acs_key_desc_record, rec) {
-		if (!acs_key_desc_has_nonce_record(rec)) {
-			continue;
-		}
-
-		__ASSERT_NO_MSG(slot < ARRAY_SIZE(acs_conn->crypto.record_states));
-		acs_conn->crypto.record_states[slot++].key_desc = rec;
-	}
-}
-
 static int check_expected_opcode(struct bt_acs_conn const *acs_conn, uint8_t expected_opcode)
 {
 	if (!acs_kex_expects(acs_conn, expected_opcode)) {
@@ -583,8 +552,7 @@ int acs_key_exchange_ecdh_start(struct bt_acs_conn *acs_conn, uint16_t key_id)
 	memset(&acs_conn->crypto, 0, sizeof(acs_conn->crypto));
 	acs_conn->crypto.kex = kex;
 	memcpy(acs_conn->crypto.record_states, saved_record_states, sizeof(saved_record_states));
-	acs_key_exchange_init_current_keys(acs_conn);
-	acs_key_exchange_init_record_states(acs_conn);
+	acs_crypto_init_slots(acs_conn);
 
 	if (acs_conn->crypto.kex) {
 		acs_conn->crypto.kex->next_expected_opcode = 0U;
