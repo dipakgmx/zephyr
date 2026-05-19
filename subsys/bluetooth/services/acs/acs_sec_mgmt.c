@@ -15,6 +15,7 @@
 #include "acs_internal.h"
 #include "acs_cp_handlers.h"
 #include "acs_key_desc.h"
+#include "acs_key_exchange.h"
 
 #include <zephyr/logging/log.h>
 LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
@@ -79,7 +80,7 @@ int acs_sec_mgmt_invalidate_all(struct acs_procedure *proc)
 	uint8_t req_idx;
 	int count = 0;
 
-	if (!acs_conn || acs_conn->crypto.key_state != BT_ACS_KEY_EXCHANGE_COMPLETE) {
+	if (!acs_conn || !acs_session_established(acs_conn)) {
 		LOG_WRN("Invalidate All: rejected — sender has no established ACS security");
 		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_INVALIDATE_ALL_ESTABLISHED_SECURITY,
 					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE);
@@ -94,7 +95,7 @@ int acs_sec_mgmt_invalidate_all(struct acs_procedure *proc)
 			continue;
 		}
 
-		if (ac->crypto.key_state == BT_ACS_KEY_EXCHANGE_COMPLETE) {
+		if (acs_session_established(ac)) {
 			LOG_DBG("Invalidating security for conn %p", (void *)ac->conn);
 			bt_acs_invalidate_security(ac->conn);
 			count++;
@@ -166,7 +167,7 @@ int acs_sec_mgmt_invalidate_key(struct acs_procedure *proc, struct net_buf_simpl
 					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 	}
 
-	if (proc->acs_conn->crypto.key_state != BT_ACS_KEY_EXCHANGE_COMPLETE) {
+	if (!acs_session_established(proc->acs_conn)) {
 		LOG_ERR("Invalidate Key ID 0x%04x: no security established", key_id);
 		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_INVALIDATE_KEY,
 					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE);
@@ -284,8 +285,7 @@ int acs_sec_mgmt_abort(struct acs_procedure *proc)
 
 	plain_cp_active = (atomic_get(&acs_conn->plain_cp_proc.plain_cp.locked) == 1);
 
-	kex_in_progress = (acs_conn->crypto.key_state != BT_ACS_KEY_EXCHANGE_IDLE &&
-			   acs_conn->crypto.key_state != BT_ACS_KEY_EXCHANGE_COMPLETE);
+	kex_in_progress = acs_kex_in_progress(acs_conn);
 
 	data_ops_pending = false;
 	for (uint8_t i = 0; i < CONFIG_BT_ACS_MAX_INFLIGHT_REQ_PER_CONN; i++) {
@@ -342,14 +342,7 @@ int acs_sec_mgmt_abort(struct acs_procedure *proc)
 
 	/* Tear down KEX state (local only — always safe once probed). */
 	if (kex_in_progress) {
-		acs_conn->crypto.key_state = BT_ACS_KEY_EXCHANGE_IDLE;
-		if (acs_conn->crypto.kex) {
-			if (acs_conn->crypto.kex->ecdh_key_id != 0) {
-				psa_destroy_key(acs_conn->crypto.kex->ecdh_key_id);
-			}
-			acs_kex_free(acs_conn->crypto.kex);
-			acs_conn->crypto.kex = NULL;
-		}
+		acs_key_exchange_abort(acs_conn);
 	}
 
 	/* Drain any pending protected-resource requests. */

@@ -43,6 +43,27 @@ static inline enum bt_acs_cp_response_code errno_to_acs_status(int err)
 	}
 }
 
+static inline bool acs_current_key_installed(const struct bt_acs_runtime_key_state *key_state)
+{
+	return key_state && key_state->psa_key_id != 0U;
+}
+
+static inline bool acs_session_established(const struct bt_acs_conn *acs_conn)
+{
+	return acs_conn && ((acs_conn->status_flags & BT_ACS_STATUS_SECURITY_ESTABLISHED) != 0U);
+}
+
+static inline bool acs_kex_in_progress(const struct bt_acs_conn *acs_conn)
+{
+	return acs_conn && acs_conn->crypto.kex != NULL;
+}
+
+static inline bool acs_kex_expects(const struct bt_acs_conn *acs_conn, uint8_t opcode)
+{
+	return acs_kex_in_progress(acs_conn) &&
+	       acs_conn->crypto.kex->next_expected_opcode == opcode;
+}
+
 #ifdef __cplusplus
 }
 #endif

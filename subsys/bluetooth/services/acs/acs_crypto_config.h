@@ -126,20 +126,22 @@ extern "C" {
 #endif
 
 /** @brief Largest nonce size used by any enabled data-protection algorithm. */
-#define ACS_MAX_NONCE_SIZE                                                                           \
-	((ACS_CCM_NONCE_SIZE_OR_0 > ACS_GCM_NONCE_SIZE_OR_0)                                        \
-		 ? ((ACS_CCM_NONCE_SIZE_OR_0 > ACS_GMAC_NONCE_SIZE_OR_0) ? ACS_CCM_NONCE_SIZE_OR_0 \
-										: ACS_GMAC_NONCE_SIZE_OR_0) \
-		 : ((ACS_GCM_NONCE_SIZE_OR_0 > ACS_GMAC_NONCE_SIZE_OR_0) ? ACS_GCM_NONCE_SIZE_OR_0 \
-										: ACS_GMAC_NONCE_SIZE_OR_0))
+#define ACS_MAX_NONCE_SIZE                                                                         \
+	((ACS_CCM_NONCE_SIZE_OR_0 > ACS_GCM_NONCE_SIZE_OR_0)                                       \
+		 ? ((ACS_CCM_NONCE_SIZE_OR_0 > ACS_GMAC_NONCE_SIZE_OR_0)                           \
+			    ? ACS_CCM_NONCE_SIZE_OR_0                                              \
+			    : ACS_GMAC_NONCE_SIZE_OR_0)                                            \
+		 : ((ACS_GCM_NONCE_SIZE_OR_0 > ACS_GMAC_NONCE_SIZE_OR_0)                           \
+			    ? ACS_GCM_NONCE_SIZE_OR_0                                              \
+			    : ACS_GMAC_NONCE_SIZE_OR_0))
 
 /** @brief Largest nonce-variable size used by any enabled data-protection algorithm. */
-#define ACS_MAX_NONCE_VAR_SIZE                                                                       \
-	((ACS_CCM_NONCE_VAR_SIZE_OR_0 > ACS_GCM_NONCE_VAR_SIZE_OR_0)                                \
-		 ? ((ACS_CCM_NONCE_VAR_SIZE_OR_0 > ACS_GMAC_NONCE_VAR_SIZE_OR_0)                    \
+#define ACS_MAX_NONCE_VAR_SIZE                                                                     \
+	((ACS_CCM_NONCE_VAR_SIZE_OR_0 > ACS_GCM_NONCE_VAR_SIZE_OR_0)                               \
+		 ? ((ACS_CCM_NONCE_VAR_SIZE_OR_0 > ACS_GMAC_NONCE_VAR_SIZE_OR_0)                   \
 			    ? ACS_CCM_NONCE_VAR_SIZE_OR_0                                          \
 			    : ACS_GMAC_NONCE_VAR_SIZE_OR_0)                                        \
-		 : ((ACS_GCM_NONCE_VAR_SIZE_OR_0 > ACS_GMAC_NONCE_VAR_SIZE_OR_0)                    \
+		 : ((ACS_GCM_NONCE_VAR_SIZE_OR_0 > ACS_GMAC_NONCE_VAR_SIZE_OR_0)                   \
 			    ? ACS_GCM_NONCE_VAR_SIZE_OR_0                                          \
 			    : ACS_GMAC_NONCE_VAR_SIZE_OR_0))
 

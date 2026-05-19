@@ -285,8 +285,8 @@ static int append_aes_record(const struct bt_acs_key_desc_record *rec, struct ne
 
 	if (rec->aes.nonce_fixed_size > 0) {
 		uint8_t server_fixed_nonce[ACS_NONCE_SIZE];
-		int err = acs_crypto_get_server_nonce_fixed(acs_conn, rec->key_id, server_fixed_nonce,
-							     rec->aes.nonce_fixed_size);
+		int err = acs_crypto_get_server_nonce_fixed(
+			acs_conn, rec->key_id, server_fixed_nonce, rec->aes.nonce_fixed_size);
 
 		if (err) {
 			return err;

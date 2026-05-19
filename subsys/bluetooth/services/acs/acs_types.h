@@ -180,23 +180,6 @@ typedef int (*acs_seq_step_fn)(struct acs_procedure *proc);
  */
 typedef void (*bt_acs_prot_resource_handler_t)(struct acs_procedure *req);
 
-/**
- * @brief ACS key exchange states.
- *
- * Tracks progress through the ECDH or KDF handshake on a per-connection basis.
- */
-enum bt_acs_key_exchange_state {
-	BT_ACS_KEY_EXCHANGE_IDLE,    /**< No key exchange in progress */
-	BT_ACS_KEY_EXCHANGE_STARTED, /**< START_KEY_EXCHANGE received; awaiting public key */
-	BT_ACS_KEY_EXCHANGE_PUBKEY_EXCHANGED, /**< Public key received; awaiting KDF or confirm */
-	BT_ACS_KEY_EXCHANGE_KDF_DONE,         /**< KDF step completed; awaiting confirmation */
-	BT_ACS_KEY_EXCHANGE_CONFIRM_CODE,     /**< Confirmation code exchanged; awaiting random */
-	BT_ACS_KEY_EXCHANGE_CONFIRM_RAND,     /**< Confirmation random exchanged; verifying */
-	BT_ACS_KEY_EXCHANGE_PENDING_RESPONSE, /**< Exchange done, KEX_RESPONSE not yet sent */
-	BT_ACS_KEY_EXCHANGE_PENDING_STATUS,   /**< KEX_RESPONSE sent, Status not yet indicated */
-	BT_ACS_KEY_EXCHANGE_COMPLETE,         /**< Session key derived and ready for use */
-};
-
 struct bt_acs_kex_ctx;
 
 /**
@@ -289,8 +272,6 @@ struct bt_acs_crypto_session {
 	 * relation.
 	 */
 	struct bt_acs_runtime_key_state current_keys[ACS_KEY_ID_COUNT];
-	/** Key-exchange phase of the currently active ACS security procedure. */
-	enum bt_acs_key_exchange_state key_state;
 	/** Transient key-exchange scratch state, if a handshake is active. */
 	struct bt_acs_kex_ctx *kex;
 	/** Per-Key_ID nonce/counter state for AES records that use nonce material. */
@@ -323,7 +304,7 @@ struct bt_acs_session_store {
 	/** ECDH/OOB exchanged parent key (spec §4.4.3.12: "top-level parent key").
 	 *  When KDF is active, the child "session" key is in @c child_key. */
 	uint8_t parent_key[CONFIG_BT_ACS_SESSION_KEY_SIZE];
-	uint16_t parent_key_id; /**< Key_ID of @c parent_key (ECDH or OOB). */
+	uint16_t parent_key_id;      /**< Key_ID of @c parent_key (ECDH or OOB). */
 	uint16_t restriction_map_id; /**< Active restriction map ID */
 	uint8_t nonce_record_count;  /**< Number of valid @c nonce_records entries. */
 	struct bt_acs_session_store_record_state nonce_records[CONFIG_BT_ACS_MAX_NONCE_RECORDS];
@@ -363,6 +344,8 @@ struct bt_acs_kdf_params {
  */
 struct bt_acs_kex_ctx {
 	bool in_use; /**< Pool-allocation flag */
+	/** Next legal inbound KEX opcode, or 0 when no further inbound step is accepted. */
+	uint8_t next_expected_opcode;
 	/**
 	 * Key material buffer - holds either the raw ECDH shared secret
 	 * (before KDF) or the HKDF-derived ECDH key (after KDF).  Without

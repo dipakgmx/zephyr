@@ -150,7 +150,8 @@ static int acs_data_in_validate(struct bt_acs_conn *acs_conn, struct net_buf_sim
 
 	/* Reject stale/replayed messages. */
 	if (*received_counter < (*record_state)->rx_nonce_counter) {
-		LOG_WRN("Data In: stale/replayed nonce (received=0x%016llx vs min_expected=0x%016llx)",
+		LOG_WRN("Data In: stale/replayed nonce (received=0x%016llx vs "
+			"min_expected=0x%016llx)",
 			(unsigned long long)*received_counter,
 			(unsigned long long)(*record_state)->rx_nonce_counter);
 		return ACS_DATA_ERR_INCORRECT_SECURITY_CONFIG;

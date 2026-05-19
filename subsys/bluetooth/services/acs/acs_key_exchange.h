@@ -26,6 +26,16 @@
 int acs_key_exchange_ecdh_start(struct bt_acs_conn *acs_conn, uint16_t key_id);
 
 /**
+ * @brief Abort the in-flight key exchange and tear down any partial key state.
+ *
+ * Frees the transient KEX context and destroys any key material imported for
+ * the exchange before it was fully completed.
+ *
+ * @param acs_conn ACS connection context.
+ */
+void acs_key_exchange_abort(struct bt_acs_conn *acs_conn);
+
+/**
  * @brief Process the Public Key Exchange.
  *
  * Reads acs_conn->client_pubkey (wire format set by handle_key_exchange_ecdh),
@@ -36,7 +46,7 @@ int acs_key_exchange_ecdh_start(struct bt_acs_conn *acs_conn, uint16_t key_id);
  * @param rsp_buf  Buffer to append the server public key response into.
  *
  * @return 0 on success.
- * @return -EAGAIN if the procedure is called out of order (Start not called).
+ * @return -EAGAIN if the procedure is called out of order.
  * @return -EIO if the internal crypto engine fails.
  * @return -ENOMEM if rsp_buf does not have enough space.
  */
@@ -52,7 +62,7 @@ int acs_key_exchange_ecdh_pubkey(struct bt_acs_conn *acs_conn, struct net_buf_si
  * @param rsp_buf  Buffer to store the KDF response (containing Salt and Info if used).
  *
  * @return 0 on success.
- * @return -EAGAIN if the shared secret has not been computed yet.
+ * @return -EAGAIN if the procedure is called out of order.
  * @return -EIO if the key derivation math fails.
  */
 int acs_key_exchange_ecdh_kdf(struct bt_acs_conn *acs_conn, struct net_buf_simple *rsp_buf);
@@ -68,7 +78,7 @@ int acs_key_exchange_ecdh_kdf(struct bt_acs_conn *acs_conn, struct net_buf_simpl
  * @param rsp_buf  Buffer to append the server confirmation code into.
  *
  * @return 0 on success.
- * @return -EAGAIN if called before PUBKEY_EXCHANGED or KDF_DONE state.
+ * @return -EAGAIN if called out of order.
  * @return -EIO if the HMAC computation fails.
  * @return -ENOMEM if rsp_buf does not have enough space.
  */
@@ -87,7 +97,7 @@ int acs_key_exchange_ecdh_confirm_code(struct bt_acs_conn *acs_conn,
  * @param rsp_buf  Buffer to append the server random number into.
  *
  * @return 0 on success.
- * @return -EAGAIN if called before the Confirmation Code step.
+ * @return -EAGAIN if called out of order.
  * @return -EACCES if the client's confirmation code fails verification.
  */
 int acs_key_exchange_ecdh_confirm_rand(struct bt_acs_conn *acs_conn,
@@ -103,7 +113,7 @@ int acs_key_exchange_ecdh_confirm_rand(struct bt_acs_conn *acs_conn,
  * @param rsp_buf  Buffer to append the Key Exchange KDF Response operand into.
  *
  * @return 0        on success.
- * @return -EAGAIN  if state != BT_ACS_KEY_EXCHANGE_STARTED.
+ * @return -EAGAIN  if the procedure is called out of order.
  * @return -EIO     if HKDF child key derivation fails.
  * @return -ENOMEM  if rsp_buf has insufficient tailroom.
  */

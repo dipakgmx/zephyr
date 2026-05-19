@@ -22,6 +22,7 @@
 #endif
 
 #include "acs_internal.h"
+#include "acs_key_exchange.h"
 #include "zephyr/sys/check.h"
 
 LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
@@ -143,9 +144,11 @@ struct bt_acs_conn *acs_conn_alloc(struct bt_conn *conn)
 	{
 		struct bt_acs_record_state saved_record_states[CONFIG_BT_ACS_MAX_NONCE_RECORDS];
 
-		memcpy(saved_record_states, acs_conn->crypto.record_states, sizeof(saved_record_states));
+		memcpy(saved_record_states, acs_conn->crypto.record_states,
+		       sizeof(saved_record_states));
 		memset(acs_conn, 0, sizeof(*acs_conn));
-		memcpy(acs_conn->crypto.record_states, saved_record_states, sizeof(saved_record_states));
+		memcpy(acs_conn->crypto.record_states, saved_record_states,
+		       sizeof(saved_record_states));
 	}
 #else
 	memset(acs_conn, 0, sizeof(*acs_conn));
@@ -161,7 +164,6 @@ struct bt_acs_conn *acs_conn_alloc(struct bt_conn *conn)
 #if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION)
 	acs_conn->attr_doi = acs_attr_doi();
 #endif
-	acs_conn->crypto.key_state = BT_ACS_KEY_EXCHANGE_IDLE;
 	acs_conn->status_flags = BT_ACS_STATUS_SECURITY_CONTROLS_ENABLED;
 	acs_conn->restriction_map_id =
 		IS_ENABLED(CONFIG_BT_ACS_FEAT_AUTHORIZATION) ? CONFIG_BT_ACS_ACTIVE_RMAP_ID : 0;
@@ -197,18 +199,10 @@ void acs_conn_cleanup(struct bt_acs_conn *acs_conn)
 	LOG_DBG("Cleaning up ACS connection state %p", (void *)acs_conn);
 
 	acs_conn->conn = NULL;
-	acs_conn->crypto.key_state = BT_ACS_KEY_EXCHANGE_IDLE;
 	acs_conn->status_flags = BT_ACS_STATUS_SECURITY_CONTROLS_ENABLED;
 
 	/* Release transient key-exchange context back to the pool. */
-	if (acs_conn->crypto.kex) {
-		if (acs_conn->crypto.kex->ecdh_key_id != 0) {
-			psa_destroy_key(acs_conn->crypto.kex->ecdh_key_id);
-			acs_conn->crypto.kex->ecdh_key_id = 0;
-		}
-		acs_kex_free(acs_conn->crypto.kex);
-		acs_conn->crypto.kex = NULL;
-	}
+	acs_key_exchange_abort(acs_conn);
 
 	acs_crypto_destroy_connection_keys(acs_conn);
 	acs_crypto_destroy_connection_record_keys(acs_conn);
@@ -220,9 +214,11 @@ void acs_conn_cleanup(struct bt_acs_conn *acs_conn)
 	{
 		struct bt_acs_record_state saved_record_states[CONFIG_BT_ACS_MAX_NONCE_RECORDS];
 
-		memcpy(saved_record_states, acs_conn->crypto.record_states, sizeof(saved_record_states));
+		memcpy(saved_record_states, acs_conn->crypto.record_states,
+		       sizeof(saved_record_states));
 		memset(&acs_conn->crypto, 0, sizeof(acs_conn->crypto));
-		memcpy(acs_conn->crypto.record_states, saved_record_states, sizeof(saved_record_states));
+		memcpy(acs_conn->crypto.record_states, saved_record_states,
+		       sizeof(saved_record_states));
 	}
 #else
 	memset(&acs_conn->crypto, 0, sizeof(acs_conn->crypto));
@@ -297,13 +293,12 @@ static void acs_bt_disconnected(struct bt_conn *conn, uint8_t reason)
 
 	cb = acs_cb_get();
 
-	if (acs_conn->crypto.key_state == BT_ACS_KEY_EXCHANGE_COMPLETE && cb &&
-	    cb->security_invalidated) {
+	if (acs_session_established(acs_conn) && cb && cb->security_invalidated) {
 		cb->security_invalidated(conn);
 	}
 
 #if defined(CONFIG_BT_SETTINGS)
-	if (acs_conn->crypto.key_state == BT_ACS_KEY_EXCHANGE_COMPLETE
+	if (acs_session_established(acs_conn)
 #if IS_ENABLED(CONFIG_BT_ACS_KDF_SESSION_KEY)
 	    && !acs_conn_has_current_key(acs_conn, ACS_KEY_ID_KDF)
 #endif
@@ -346,18 +341,10 @@ int bt_acs_invalidate_security(struct bt_conn *conn)
 		return -ENOTCONN;
 	}
 
-	was_established = (acs_conn->crypto.key_state == BT_ACS_KEY_EXCHANGE_COMPLETE);
+	was_established = acs_session_established(acs_conn);
 
-	acs_conn->crypto.key_state = BT_ACS_KEY_EXCHANGE_IDLE;
 	acs_conn->status_flags &= ~BT_ACS_STATUS_SECURITY_ESTABLISHED;
-	if (acs_conn->crypto.kex) {
-		if (acs_conn->crypto.kex->ecdh_key_id != 0) {
-			psa_destroy_key(acs_conn->crypto.kex->ecdh_key_id);
-			acs_conn->crypto.kex->ecdh_key_id = 0;
-		}
-		acs_kex_free(acs_conn->crypto.kex);
-		acs_conn->crypto.kex = NULL;
-	}
+	acs_key_exchange_abort(acs_conn);
 	acs_crypto_destroy_connection_keys(acs_conn);
 	memset(&acs_conn->crypto, 0, sizeof(acs_conn->crypto));
 	acs_conn_init_current_keys(acs_conn);

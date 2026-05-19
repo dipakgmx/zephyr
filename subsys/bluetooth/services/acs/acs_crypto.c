@@ -93,7 +93,7 @@ static int acs_current_key_id_from_key_desc(const struct bt_acs_key_desc_record 
 static uint64_t acs_record_initial_rx_counter(const struct bt_acs_record_state *record_state)
 {
 	return record_state && record_state->key_desc &&
-		       record_state->key_desc->aes.nonce_type == ACS_NONCE_SEQ_EVEN_ODD
+			       record_state->key_desc->aes.nonce_type == ACS_NONCE_SEQ_EVEN_ODD
 		       ? UINT64_C(1)
 		       : UINT64_C(0);
 }
@@ -307,21 +307,21 @@ int acs_crypto_import_record_key(struct bt_acs_record_state *record_state)
 	switch (record_state->key_desc->type_id) {
 	case ACS_KEY_REC_AES_128_CCM:
 		psa_set_key_usage_flags(&attrs, PSA_KEY_USAGE_ENCRYPT | PSA_KEY_USAGE_DECRYPT);
-		psa_set_key_algorithm(
-			&attrs,
-			PSA_ALG_AEAD_WITH_SHORTENED_TAG(PSA_ALG_CCM, record_state->key_desc->aes.mac_size));
+		psa_set_key_algorithm(&attrs,
+				      PSA_ALG_AEAD_WITH_SHORTENED_TAG(
+					      PSA_ALG_CCM, record_state->key_desc->aes.mac_size));
 		break;
 	case ACS_KEY_REC_AES_128_GCM:
 		psa_set_key_usage_flags(&attrs, PSA_KEY_USAGE_ENCRYPT | PSA_KEY_USAGE_DECRYPT);
-		psa_set_key_algorithm(
-			&attrs,
-			PSA_ALG_AEAD_WITH_SHORTENED_TAG(PSA_ALG_GCM, record_state->key_desc->aes.mac_size));
+		psa_set_key_algorithm(&attrs,
+				      PSA_ALG_AEAD_WITH_SHORTENED_TAG(
+					      PSA_ALG_GCM, record_state->key_desc->aes.mac_size));
 		break;
 	case ACS_KEY_REC_AES_128_GMAC:
 		psa_set_key_usage_flags(&attrs, PSA_KEY_USAGE_ENCRYPT | PSA_KEY_USAGE_DECRYPT);
-		psa_set_key_algorithm(
-			&attrs,
-			PSA_ALG_AEAD_WITH_SHORTENED_TAG(PSA_ALG_GCM, record_state->key_desc->aes.mac_size));
+		psa_set_key_algorithm(&attrs,
+				      PSA_ALG_AEAD_WITH_SHORTENED_TAG(
+					      PSA_ALG_GCM, record_state->key_desc->aes.mac_size));
 		break;
 	default:
 		return -ENOTSUP;
@@ -380,14 +380,16 @@ int acs_crypto_rebind_record_states(struct bt_acs_conn *acs_conn)
 				first_err = err;
 			}
 			record_state->tx_nonce_counter = 0U;
-			record_state->rx_nonce_counter = acs_record_initial_rx_counter(record_state);
+			record_state->rx_nonce_counter =
+				acs_record_initial_rx_counter(record_state);
 			continue;
 		}
 
 		err = acs_crypto_current_key_lookup(acs_conn, current_key_id, &current_key);
 		if (err || !current_key || current_key->psa_key_id == 0U) {
 			record_state->tx_nonce_counter = 0U;
-			record_state->rx_nonce_counter = acs_record_initial_rx_counter(record_state);
+			record_state->rx_nonce_counter =
+				acs_record_initial_rx_counter(record_state);
 			continue;
 		}
 
@@ -411,7 +413,8 @@ void acs_crypto_reset_record_counters(struct bt_acs_conn *acs_conn, uint16_t cur
 			continue;
 		}
 
-		if (acs_current_key_id_from_key_desc(record_state->key_desc, &record_current_key_id) != 0 ||
+		if (acs_current_key_id_from_key_desc(record_state->key_desc,
+						     &record_current_key_id) != 0 ||
 		    record_current_key_id != current_key_id) {
 			continue;
 		}
@@ -478,14 +481,16 @@ static void acs_advance_rx_counter(struct bt_acs_record_state *record_state)
 	}
 }
 
-static void acs_build_record_tx_nonce(const struct bt_acs_record_state *record_state, uint8_t *nonce)
+static void acs_build_record_tx_nonce(const struct bt_acs_record_state *record_state,
+				      uint8_t *nonce)
 {
 	acs_build_nonce(record_state->server_nonce_fixed, record_state->tx_nonce_counter,
 			acs_key_desc_nonce_size(record_state->key_desc),
 			acs_key_desc_nonce_fixed_size(record_state->key_desc), nonce);
 }
 
-static void acs_build_record_rx_nonce(const struct bt_acs_record_state *record_state, uint8_t *nonce)
+static void acs_build_record_rx_nonce(const struct bt_acs_record_state *record_state,
+				      uint8_t *nonce)
 {
 	acs_build_nonce(record_state->client_nonce_fixed, record_state->rx_nonce_counter,
 			acs_key_desc_nonce_size(record_state->key_desc),
@@ -568,8 +573,8 @@ static int acs_crypto_aead_decrypt(struct bt_acs_conn *acs_conn,
 				  record_state->key_desc->type_id == ACS_KEY_REC_AES_128_CCM
 					  ? PSA_ALG_AEAD_WITH_SHORTENED_TAG(PSA_ALG_CCM, tag_len)
 					  : PSA_ALG_AEAD_WITH_SHORTENED_TAG(PSA_ALG_GCM, tag_len),
-				  nonce, nonce_size, aad, aad_len, ciphertext, cipher_len, plaintext,
-				  cipher_len - tag_len, &out_len);
+				  nonce, nonce_size, aad, aad_len, ciphertext, cipher_len,
+				  plaintext, cipher_len - tag_len, &out_len);
 
 	if (status != PSA_SUCCESS) {
 		LOG_ERR("decrypt failed: %d (cipher_len=%u tag_len=%u "
@@ -725,8 +730,7 @@ static int acs_crypto_gmac_encrypt(struct bt_acs_conn *acs_conn,
 
 	status = psa_aead_encrypt(record_state->psa_key_id, ACS_PSA_GMAC_ALG, nonce,
 				  acs_key_desc_nonce_size(record_state->key_desc), plaintext,
-				  plain_len, NULL, 0, tag,
-				  sizeof(tag), &tag_len);
+				  plain_len, NULL, 0, tag, sizeof(tag), &tag_len);
 
 	if (status != PSA_SUCCESS) {
 		LOG_ERR("ACS GMAC encrypt failed: %d", status);
@@ -774,8 +778,9 @@ static int acs_crypto_gmac_decrypt(struct bt_acs_conn *acs_conn,
 	acs_build_record_rx_nonce(record_state, nonce);
 
 	status = psa_aead_decrypt(record_state->psa_key_id, ACS_PSA_GMAC_ALG, nonce,
-				  acs_key_desc_nonce_size(record_state->key_desc), ciphertext, data_len,
-				  &ciphertext[data_len], ACS_PSA_GMAC_TAG_LEN, &empty, 0, &out_len);
+				  acs_key_desc_nonce_size(record_state->key_desc), ciphertext,
+				  data_len, &ciphertext[data_len], ACS_PSA_GMAC_TAG_LEN, &empty, 0,
+				  &out_len);
 
 	if (status != PSA_SUCCESS) {
 		LOG_ERR("ACS GMAC verify failed: %d (cipher_len=%u rx_counter=%llu)", status,

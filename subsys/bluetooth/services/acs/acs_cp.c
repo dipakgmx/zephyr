@@ -16,6 +16,7 @@
 #include "acs_cp.h"
 #include "acs_internal.h"
 #include "acs_cp_handlers.h"
+#include "acs_key_exchange.h"
 
 #include <zephyr/logging/log.h>
 LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
@@ -104,16 +105,8 @@ void acs_cp_completion_cb(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 		}
 
 		/* Tear down KEX if in progress. */
-		if (acs_conn->crypto.key_state != BT_ACS_KEY_EXCHANGE_IDLE &&
-		    acs_conn->crypto.key_state != BT_ACS_KEY_EXCHANGE_COMPLETE) {
-			acs_conn->crypto.key_state = BT_ACS_KEY_EXCHANGE_IDLE;
-			if (acs_conn->crypto.kex) {
-				if (acs_conn->crypto.kex->ecdh_key_id != 0) {
-					psa_destroy_key(acs_conn->crypto.kex->ecdh_key_id);
-				}
-				acs_kex_free(acs_conn->crypto.kex);
-				acs_conn->crypto.kex = NULL;
-			}
+		if (acs_kex_in_progress(acs_conn)) {
+			acs_key_exchange_abort(acs_conn);
 		}
 
 		/* Drain pending protected-resource requests. */

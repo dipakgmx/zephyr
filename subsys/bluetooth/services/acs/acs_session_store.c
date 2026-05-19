@@ -156,7 +156,8 @@ void acs_session_store(struct bt_conn const *conn, struct bt_acs_conn const *acs
 		}
 
 		if (store.nonce_record_count >= ARRAY_SIZE(store.nonce_records)) {
-			LOG_WRN("Dropping nonce record state for Key_ID 0x%04x due to store capacity",
+			LOG_WRN("Dropping nonce record state for Key_ID 0x%04x due to store "
+				"capacity",
 				acs_record_key_id(record_state));
 			break;
 		}
@@ -359,24 +360,25 @@ void acs_session_restore(struct bt_conn *conn, struct bt_acs_conn *acs_conn)
 				const struct bt_acs_session_store_record_state *stored_record =
 					&s->nonce_records[rec_idx];
 
-				err = acs_crypto_record_state_lookup(acs_conn, stored_record->key_id,
-								     &record_state);
+				err = acs_crypto_record_state_lookup(
+					acs_conn, stored_record->key_id, &record_state);
 				if (err) {
-					LOG_WRN("No runtime record state for restored Key_ID 0x%04x",
+					LOG_WRN("No runtime record state for restored Key_ID "
+						"0x%04x",
 						stored_record->key_id);
 					continue;
 				}
 
 				record_state->client_nonce_set = stored_record->client_nonce_set;
-				memcpy(record_state->server_nonce_fixed, stored_record->server_nonce_fixed,
+				memcpy(record_state->server_nonce_fixed,
+				       stored_record->server_nonce_fixed,
 				       sizeof(record_state->server_nonce_fixed));
-				memcpy(record_state->client_nonce_fixed, stored_record->client_nonce_fixed,
+				memcpy(record_state->client_nonce_fixed,
+				       stored_record->client_nonce_fixed,
 				       sizeof(record_state->client_nonce_fixed));
 				record_state->tx_nonce_counter = stored_record->tx_nonce_counter;
 				record_state->rx_nonce_counter = stored_record->rx_nonce_counter;
 			}
-
-			acs_conn->crypto.key_state = BT_ACS_KEY_EXCHANGE_COMPLETE;
 
 			/* Security is only fully established when the AEAD key is
 			 * available.  With KDF configured, that means the child key

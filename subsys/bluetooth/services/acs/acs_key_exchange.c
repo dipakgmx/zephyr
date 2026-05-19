@@ -51,14 +51,72 @@ static void acs_key_exchange_init_record_states(struct bt_acs_conn *acs_conn)
 	}
 }
 
-static int check_state(struct bt_acs_conn const *acs_conn, enum bt_acs_key_exchange_state expected)
+static int check_expected_opcode(struct bt_acs_conn const *acs_conn, uint8_t expected_opcode)
 {
-	if (acs_conn->crypto.key_state != expected) {
-		LOG_WRN("Invalid state transition (current: %d, expected: %d)",
-			acs_conn->crypto.key_state, expected);
+	if (!acs_kex_expects(acs_conn, expected_opcode)) {
+		LOG_WRN("Invalid KEX transition (expected next opcode 0x%02x, current 0x%02x)",
+			expected_opcode,
+			acs_kex_in_progress(acs_conn) ? acs_conn->crypto.kex->next_expected_opcode
+						      : 0U);
 		return -EAGAIN;
 	}
 	return 0;
+}
+
+static bool acs_confirm_code_allowed(struct bt_acs_conn const *acs_conn)
+{
+	if (!acs_kex_in_progress(acs_conn)) {
+		return false;
+	}
+
+	return acs_conn->crypto.kex->next_expected_opcode == BT_ACS_CP_OPCODE_ECDH_CONFIRM_CODE ||
+	       acs_conn->crypto.kex->next_expected_opcode == BT_ACS_CP_OPCODE_KEY_EXCHANGE_KDF;
+}
+
+static void acs_key_exchange_free_ctx(struct bt_acs_conn *acs_conn)
+{
+	if (!acs_kex_in_progress(acs_conn)) {
+		return;
+	}
+
+	if (acs_conn->crypto.kex->ecdh_key_id != 0U) {
+		psa_destroy_key(acs_conn->crypto.kex->ecdh_key_id);
+		acs_conn->crypto.kex->ecdh_key_id = 0U;
+	}
+
+	acs_kex_free(acs_conn->crypto.kex);
+	acs_conn->crypto.kex = NULL;
+}
+
+void acs_key_exchange_abort(struct bt_acs_conn *acs_conn)
+{
+	uint16_t key_id;
+
+	if (!acs_kex_in_progress(acs_conn)) {
+		return;
+	}
+
+	key_id = sys_le16_to_cpu(acs_conn->crypto.kex->start_kex.key_id);
+
+#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
+	if (key_id == ACS_KEY_ID_KDF) {
+		struct bt_acs_runtime_key_state *kdf_key;
+
+		if (acs_crypto_current_key_lookup(acs_conn, ACS_KEY_ID_KDF, &kdf_key) == 0) {
+			acs_crypto_destroy_current_key(kdf_key);
+			memset(kdf_key->key, 0, sizeof(kdf_key->key));
+		}
+
+		acs_crypto_rebind_record_states(acs_conn);
+		acs_crypto_reset_record_counters(acs_conn, ACS_KEY_ID_KDF);
+		acs_key_exchange_free_ctx(acs_conn);
+		return;
+	}
+#endif
+
+	acs_crypto_destroy_connection_keys(acs_conn);
+	acs_crypto_rebind_record_states(acs_conn);
+	acs_key_exchange_free_ctx(acs_conn);
 }
 
 /* PSA key bit sizes for supported ECDH curves */
@@ -409,7 +467,8 @@ int acs_crypto_derive_session_key(struct bt_acs_conn *acs_conn)
 	if (ret == 0) {
 		ret = acs_crypto_rebind_record_states(acs_conn);
 		if (ret == 0) {
-			acs_crypto_reset_record_counters(acs_conn, acs_runtime_key_id(exchange_key));
+			acs_crypto_reset_record_counters(acs_conn,
+							 acs_runtime_key_id(exchange_key));
 		}
 	}
 
@@ -472,9 +531,8 @@ static int bt_acs_crypto_derive_kdf_child_key(struct bt_acs_conn *acs_conn)
 
 int acs_key_exchange_ecdh_start(struct bt_acs_conn *acs_conn, uint16_t key_id)
 {
-	if (key_id != ACS_KEY_ID_ECDH) {
-		LOG_ERR("key_id 0x%04x does not match expected ECDH key ID 0x%04x", key_id,
-			ACS_KEY_ID_ECDH);
+	if (key_id != ACS_KEY_ID_ECDH && key_id != ACS_KEY_ID_OOB) {
+		LOG_ERR("key_id 0x%04x does not match supported exchange key IDs", key_id);
 		return -EALREADY;
 	}
 
@@ -529,6 +587,7 @@ int acs_key_exchange_ecdh_start(struct bt_acs_conn *acs_conn, uint16_t key_id)
 	acs_key_exchange_init_record_states(acs_conn);
 
 	if (acs_conn->crypto.kex) {
+		acs_conn->crypto.kex->next_expected_opcode = 0U;
 		memset(&acs_conn->crypto.kex->server_pubkey, 0,
 		       sizeof(acs_conn->crypto.kex->server_pubkey));
 		memset(&acs_conn->crypto.kex->client_pubkey, 0,
@@ -543,7 +602,13 @@ int acs_key_exchange_ecdh_start(struct bt_acs_conn *acs_conn, uint16_t key_id)
 		       sizeof(acs_conn->crypto.kex->client_confirm));
 	}
 
-	acs_conn->crypto.key_state = BT_ACS_KEY_EXCHANGE_STARTED;
+	if (key_id == ACS_KEY_ID_ECDH) {
+		int err = bt_acs_crypto_generate_keypair(acs_conn);
+
+		if (err) {
+			return -EIO;
+		}
+	}
 
 	LOG_INF("ECDH Procedure Started");
 	return 0;
@@ -551,16 +616,10 @@ int acs_key_exchange_ecdh_start(struct bt_acs_conn *acs_conn, uint16_t key_id)
 
 int acs_key_exchange_ecdh_pubkey(struct bt_acs_conn *acs_conn, struct net_buf_simple *rsp_buf)
 {
-	int err = check_state(acs_conn, BT_ACS_KEY_EXCHANGE_STARTED);
+	int err = check_expected_opcode(acs_conn, BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH);
 
 	if (err) {
-		LOG_WRN("Pubkey exchange in wrong state: %d", acs_conn->crypto.key_state);
 		return err;
-	}
-
-	err = bt_acs_crypto_generate_keypair(acs_conn);
-	if (err) {
-		return -EIO;
 	}
 
 	err = bt_acs_crypto_compute_shared_secret(acs_conn);
@@ -579,7 +638,11 @@ int acs_key_exchange_ecdh_pubkey(struct bt_acs_conn *acs_conn, struct net_buf_si
 	net_buf_simple_add_mem(rsp_buf, &acs_conn->crypto.kex->server_pubkey,
 			       sizeof(acs_conn->crypto.kex->server_pubkey));
 
-	acs_conn->crypto.key_state = BT_ACS_KEY_EXCHANGE_PUBKEY_EXCHANGED;
+	if (sys_le16_to_cpu(acs_conn->crypto.kex->start_kex.key_id) == ACS_KEY_ID_ECDH) {
+		acs_conn->crypto.kex->next_expected_opcode = BT_ACS_CP_OPCODE_KEY_EXCHANGE_KDF;
+	} else {
+		acs_conn->crypto.kex->next_expected_opcode = BT_ACS_CP_OPCODE_ECDH_CONFIRM_CODE;
+	}
 	LOG_INF("ECDH Public Keys Exchanged");
 	return 0;
 }
@@ -591,7 +654,7 @@ int acs_key_exchange_ecdh_kdf(struct bt_acs_conn *acs_conn, struct net_buf_simpl
 	uint8_t salt_be[CONFIG_BT_ACS_KDF_SALT_MAX_SIZE];
 	uint8_t info_be[CONFIG_BT_ACS_KDF_INFO_MAX_SIZE];
 	uint8_t needed;
-	int err = check_state(acs_conn, BT_ACS_KEY_EXCHANGE_PUBKEY_EXCHANGED);
+	int err = check_expected_opcode(acs_conn, BT_ACS_CP_OPCODE_KEY_EXCHANGE_KDF);
 
 	if (err) {
 		return err;
@@ -651,7 +714,7 @@ int acs_key_exchange_ecdh_kdf(struct bt_acs_conn *acs_conn, struct net_buf_simpl
 	net_buf_simple_add_mem(rsp_buf, acs_conn->crypto.kex->kdf.info,
 			       acs_conn->crypto.kex->kdf.info_size);
 
-	acs_conn->crypto.key_state = BT_ACS_KEY_EXCHANGE_KDF_DONE;
+	acs_conn->crypto.kex->next_expected_opcode = BT_ACS_CP_OPCODE_ECDH_CONFIRM_CODE;
 	LOG_INF("KDF Complete, ECDHKey Derived");
 	return 0;
 }
@@ -664,10 +727,8 @@ int acs_key_exchange_ecdh_confirm_code(struct bt_acs_conn *acs_conn, struct net_
 	int err;
 	uint8_t server_confirm_le[ACS_HMAC_SHA256_SIZE];
 
-	/* Valid after pubkey exchange or KDF step */
-	if (acs_conn->crypto.key_state != BT_ACS_KEY_EXCHANGE_PUBKEY_EXCHANGED &&
-	    acs_conn->crypto.key_state != BT_ACS_KEY_EXCHANGE_KDF_DONE) {
-		LOG_WRN("Confirm Code in wrong state: %d", acs_conn->crypto.key_state);
+	if (!acs_confirm_code_allowed(acs_conn)) {
+		LOG_WRN("Confirm Code not expected for current KEX");
 		return -EAGAIN;
 	}
 
@@ -714,7 +775,7 @@ int acs_key_exchange_ecdh_confirm_code(struct bt_acs_conn *acs_conn, struct net_
 	sys_memcpy_swap(server_confirm_le, acs_conn->crypto.kex->server_confirm,
 			ACS_HMAC_SHA256_SIZE);
 	net_buf_simple_add_mem(rsp_buf, server_confirm_le, ACS_HMAC_SHA256_SIZE);
-	acs_conn->crypto.key_state = BT_ACS_KEY_EXCHANGE_CONFIRM_CODE;
+	acs_conn->crypto.kex->next_expected_opcode = BT_ACS_CP_OPCODE_ECDH_CONFIRM_RAND;
 	LOG_INF("Server Confirmation Code Sent");
 	return 0;
 }
@@ -728,7 +789,7 @@ int acs_key_exchange_ecdh_confirm_rand(struct bt_acs_conn *acs_conn, struct net_
 	uint8_t client_confirm_be[ACS_HMAC_SHA256_SIZE];
 	uint8_t server_random_le[sizeof(acs_conn->crypto.kex->server_random)];
 	uint8_t diff = 0;
-	int err = check_state(acs_conn, BT_ACS_KEY_EXCHANGE_CONFIRM_CODE);
+	int err = check_expected_opcode(acs_conn, BT_ACS_CP_OPCODE_ECDH_CONFIRM_RAND);
 
 	if (err) {
 		return err;
@@ -759,7 +820,6 @@ int acs_key_exchange_ecdh_confirm_rand(struct bt_acs_conn *acs_conn, struct net_
 
 	if (err) {
 		LOG_ERR("confirm code compute failed during verify: %d", err);
-		acs_conn->crypto.key_state = BT_ACS_KEY_EXCHANGE_IDLE;
 		return -EIO;
 	}
 
@@ -773,7 +833,6 @@ int acs_key_exchange_ecdh_confirm_rand(struct bt_acs_conn *acs_conn, struct net_
 
 	if (diff) {
 		LOG_ERR("Client confirmation code mismatch - authentication failed");
-		acs_conn->crypto.key_state = BT_ACS_KEY_EXCHANGE_IDLE;
 		return -EACCES;
 	}
 
@@ -791,6 +850,7 @@ int acs_key_exchange_ecdh_confirm_rand(struct bt_acs_conn *acs_conn, struct net_
 	net_buf_simple_add_mem(rsp_buf, server_random_le,
 			       sizeof(acs_conn->crypto.kex->server_random));
 
+	acs_conn->crypto.kex->next_expected_opcode = 0U;
 	LOG_INF("Client Confirmed — Server Random Sent");
 	return 0;
 }
@@ -799,10 +859,9 @@ int acs_key_exchange_ecdh_confirm_rand(struct bt_acs_conn *acs_conn, struct net_
 int acs_key_exchange_kdf(struct bt_acs_conn *acs_conn, struct net_buf_simple *rsp_buf)
 {
 	uint8_t needed;
-	int err = check_state(acs_conn, BT_ACS_KEY_EXCHANGE_STARTED);
+	int err = check_expected_opcode(acs_conn, BT_ACS_CP_OPCODE_KEY_EXCHANGE_KDF);
 
 	if (err) {
-		LOG_WRN("KDF standalone exchange in wrong state: %d", acs_conn->crypto.key_state);
 		return err;
 	}
 
@@ -844,6 +903,7 @@ int acs_key_exchange_kdf(struct bt_acs_conn *acs_conn, struct net_buf_simple *rs
 	net_buf_simple_add_mem(rsp_buf, acs_conn->crypto.kex->kdf.info,
 			       acs_conn->crypto.kex->kdf.info_size);
 
+	acs_conn->crypto.kex->next_expected_opcode = 0U;
 	LOG_INF("KDF child key derived success");
 	return 0;
 }
