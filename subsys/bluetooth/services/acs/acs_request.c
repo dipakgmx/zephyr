@@ -196,15 +196,6 @@ void acs_procedure_release_tx(struct acs_procedure *req)
 	}
 }
 
-void acs_procedure_tx_done(struct acs_procedure *req)
-{
-	if (!req) {
-		return;
-	}
-
-	acs_procedure_release_tx(req);
-}
-
 /* Auto-respond to a secure request when no application handler is registered. */
 static int acs_auto_respond(struct acs_procedure *req)
 {
@@ -318,7 +309,7 @@ void acs_procedure_abort_all(struct bt_acs_conn *acs_conn)
 			struct acs_procedure *queued =
 				CONTAINER_OF(snode, struct acs_procedure, node);
 
-			acs_procedure_tx_done(queued);
+			acs_procedure_release_tx(queued);
 			queued_count++;
 		}
 	}

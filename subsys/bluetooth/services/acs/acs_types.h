@@ -239,6 +239,8 @@ static inline uint16_t acs_runtime_key_id(const struct bt_acs_runtime_key_state 
 struct bt_acs_record_state {
 	/** Static AES-with-nonce key descriptor bound to this runtime slot. */
 	const struct bt_acs_key_desc_record *key_desc;
+	/** Resolved current exchange-key Key_ID for this record's parent chain. */
+	uint16_t current_key_id;
 	/** Imported PSA key handle for the algorithm record. */
 	psa_key_id_t psa_key_id;
 	/** Key material copied from the current parent/child exchange key. */

@@ -24,6 +24,13 @@ static uint64_t acs_record_initial_rx_counter(const struct bt_acs_record_state *
 	return UINT64_C(0);
 }
 
+static void acs_warn_destroy_key_failure(psa_status_t status, psa_key_id_t key_id, const char *ctx)
+{
+	if (status != PSA_SUCCESS) {
+		LOG_WRN("%s: psa_destroy_key(%u) failed: %d", ctx, (unsigned int)key_id, status);
+	}
+}
+
 int acs_crypto_import_current_key(struct bt_acs_runtime_key_state *current_key)
 {
 	psa_key_attributes_t attrs = PSA_KEY_ATTRIBUTES_INIT;
@@ -59,7 +66,10 @@ int acs_crypto_import_current_key(struct bt_acs_runtime_key_state *current_key)
 void acs_crypto_destroy_current_key(struct bt_acs_runtime_key_state *current_key)
 {
 	if (current_key && current_key->psa_key_id != 0U) {
-		psa_destroy_key(current_key->psa_key_id);
+		psa_status_t status = psa_destroy_key(current_key->psa_key_id);
+
+		acs_warn_destroy_key_failure(status, current_key->psa_key_id,
+					    "destroy current key");
 		current_key->psa_key_id = 0U;
 	}
 }
@@ -115,7 +125,10 @@ int acs_crypto_import_record_key(struct bt_acs_record_state *record_state)
 void acs_crypto_destroy_record_key(struct bt_acs_record_state *record_state)
 {
 	if (record_state && record_state->psa_key_id != 0U) {
-		psa_destroy_key(record_state->psa_key_id);
+		psa_status_t status = psa_destroy_key(record_state->psa_key_id);
+
+		acs_warn_destroy_key_failure(status, record_state->psa_key_id,
+					    "destroy record key");
 		record_state->psa_key_id = 0U;
 	}
 }
@@ -134,7 +147,6 @@ int acs_crypto_rebind_record_states(struct bt_acs_conn *acs_conn)
 	for (size_t i = 0; i < ARRAY_SIZE(acs_conn->crypto.record_states); i++) {
 		struct bt_acs_record_state *record_state = &acs_conn->crypto.record_states[i];
 		struct bt_acs_runtime_key_state *current_key = NULL;
-		uint16_t current_key_id = 0U;
 		int err;
 
 		if (!record_state->key_desc) {
@@ -144,11 +156,9 @@ int acs_crypto_rebind_record_states(struct bt_acs_conn *acs_conn)
 		acs_crypto_destroy_record_key(record_state);
 		memset(record_state->key, 0, sizeof(record_state->key));
 
-		err = acs_crypto_current_key_id_from_key_desc(record_state->key_desc,
-							      &current_key_id);
-		if (err) {
+		if (record_state->current_key_id == 0U) {
 			if (first_err == 0) {
-				first_err = err;
+				first_err = -ENOENT;
 			}
 			record_state->tx_nonce_counter = 0U;
 			record_state->rx_nonce_counter =
@@ -156,7 +166,8 @@ int acs_crypto_rebind_record_states(struct bt_acs_conn *acs_conn)
 			continue;
 		}
 
-		err = acs_crypto_current_key_lookup(acs_conn, current_key_id, &current_key);
+		err = acs_crypto_current_key_lookup(acs_conn, record_state->current_key_id,
+						    &current_key);
 		if (err || !current_key || current_key->psa_key_id == 0U) {
 			record_state->tx_nonce_counter = 0U;
 			record_state->rx_nonce_counter =
@@ -178,15 +189,12 @@ void acs_crypto_reset_record_counters(struct bt_acs_conn *acs_conn, uint16_t cur
 {
 	for (size_t i = 0; i < ARRAY_SIZE(acs_conn->crypto.record_states); i++) {
 		struct bt_acs_record_state *record_state = &acs_conn->crypto.record_states[i];
-		uint16_t record_current_key_id;
 
 		if (!record_state->key_desc) {
 			continue;
 		}
 
-		if (acs_crypto_current_key_id_from_key_desc(record_state->key_desc,
-							    &record_current_key_id) != 0 ||
-		    record_current_key_id != current_key_id) {
+		if (record_state->current_key_id != current_key_id) {
 			continue;
 		}
 

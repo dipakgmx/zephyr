@@ -731,7 +731,9 @@ struct bt_acs_cb {
  * @param oob     OOB number bytes (big-endian, 1–32 bytes).
  * @param len     Number of bytes in @p oob.
  *
- * @return 0 on success, -ENOENT if no ACS connection found, -EINVAL if len > 32.
+ * @retval 0 Success.
+ * @retval -ENOENT No ACS connection found for @p conn.
+ * @retval -EINVAL @p conn or @p oob is NULL, or @p len is greater than 32.
  */
 int bt_acs_set_oob_number(struct bt_conn *conn, const uint8_t *oob, uint16_t len);
 
@@ -752,7 +754,10 @@ int bt_acs_set_oob_number(struct bt_conn *conn, const uint8_t *oob, uint16_t len
  *
  * @param cb Application callbacks.
  *
- * @return 0 on success, negative error code on failure.
+ * @retval 0 Success.
+ * @retval -EALREADY ACS has already been initialized.
+ * @retval -EINVAL A protected characteristic could not be resolved to a valid
+ *         GATT handle.
  */
 int bt_acs_init(const struct bt_acs_cb *cb);
 
@@ -792,7 +797,10 @@ uint8_t bt_acs_status_get(struct bt_conn *conn);
  * @param conn Connection to configure.
  * @param map_id Restriction map identifier to activate.
  *
- * @return 0 on success, negative error code on failure.
+ * @retval 0 Success.
+ * @retval -EINVAL @p conn is NULL, ACS is not initialized, or @p map_id is
+ *         not a defined restriction map.
+ * @retval -ENOTCONN No ACS context exists for @p conn.
  */
 int bt_acs_set_restriction_map(struct bt_conn *conn, uint16_t map_id);
 

@@ -23,6 +23,12 @@ BUILD_ASSERT(ACS_MAX_NONCE_VAR_SIZE <= ACS_NONCE_VAR_COUNTER_SIZE,
 BUILD_ASSERT(!IS_ENABLED(CONFIG_BT_ACS_CCM_NONCE_SEQ_EVEN_ODD),
 	     "EVEN_ODD not supported by the current runtime");
 
+#if IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_CCM)
+#define ACS_AEAD_BASE_ALG PSA_ALG_CCM
+#elif IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_GCM)
+#define ACS_AEAD_BASE_ALG PSA_ALG_GCM
+#endif
+
 #if IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_CMAC)
 #define ACS_PSA_CMAC_TAG_LEN ACS_CRYPTO_AUTH_TAG_SIZE
 #endif
@@ -101,9 +107,7 @@ static int acs_crypto_aead_encrypt(struct bt_acs_conn *acs_conn,
 	acs_build_record_tx_nonce(record_state, nonce);
 
 	status = psa_aead_encrypt(record_state->psa_key_id,
-				  record_state->key_desc->type_id == ACS_KEY_REC_AES_128_CCM
-					  ? PSA_ALG_AEAD_WITH_SHORTENED_TAG(PSA_ALG_CCM, tag_len)
-					  : PSA_ALG_AEAD_WITH_SHORTENED_TAG(PSA_ALG_GCM, tag_len),
+				  PSA_ALG_AEAD_WITH_SHORTENED_TAG(ACS_AEAD_BASE_ALG, tag_len),
 				  nonce, nonce_size, NULL, 0, plaintext, plain_len, ciphertext,
 				  plain_len + tag_len, &out_len);
 	if (status != PSA_SUCCESS) {
@@ -112,6 +116,7 @@ static int acs_crypto_aead_encrypt(struct bt_acs_conn *acs_conn,
 		return -EIO;
 	}
 
+	__ASSERT_NO_MSG(out_len <= UINT16_MAX);
 	*cipher_len = (uint16_t)out_len;
 	acs_advance_tx_counter(record_state);
 
@@ -144,9 +149,7 @@ static int acs_crypto_aead_decrypt(struct bt_acs_conn *acs_conn,
 	acs_build_record_rx_nonce(record_state, nonce);
 
 	status = psa_aead_decrypt(record_state->psa_key_id,
-				  record_state->key_desc->type_id == ACS_KEY_REC_AES_128_CCM
-					  ? PSA_ALG_AEAD_WITH_SHORTENED_TAG(PSA_ALG_CCM, tag_len)
-					  : PSA_ALG_AEAD_WITH_SHORTENED_TAG(PSA_ALG_GCM, tag_len),
+				  PSA_ALG_AEAD_WITH_SHORTENED_TAG(ACS_AEAD_BASE_ALG, tag_len),
 				  nonce, nonce_size, aad, aad_len, ciphertext, cipher_len,
 				  plaintext, cipher_len - tag_len, &out_len);
 	if (status != PSA_SUCCESS) {
@@ -157,6 +160,7 @@ static int acs_crypto_aead_decrypt(struct bt_acs_conn *acs_conn,
 		return -EACCES;
 	}
 
+	__ASSERT_NO_MSG(out_len <= UINT16_MAX);
 	*plain_len = (uint16_t)out_len;
 	acs_advance_rx_counter(record_state);
 
@@ -203,7 +207,11 @@ static int acs_crypto_cmac_encrypt(struct bt_acs_conn *acs_conn,
 		status = psa_mac_sign_finish(&op, &ciphertext[plain_len], ACS_PSA_CMAC_TAG_LEN,
 					     &mac_len);
 	} else {
-		psa_mac_abort(&op);
+		psa_status_t abort_status = psa_mac_abort(&op);
+
+		if (abort_status != PSA_SUCCESS) {
+			LOG_WRN("ACS CMAC sign abort failed: %d", abort_status);
+		}
 	}
 
 	if (status != PSA_SUCCESS) {
@@ -211,6 +219,7 @@ static int acs_crypto_cmac_encrypt(struct bt_acs_conn *acs_conn,
 		return -EIO;
 	}
 
+	__ASSERT_NO_MSG(mac_len <= UINT16_MAX);
 	*cipher_len = plain_len + (uint16_t)mac_len;
 	acs_advance_tx_counter(record_state);
 
@@ -259,7 +268,11 @@ static int acs_crypto_cmac_decrypt(struct bt_acs_conn *acs_conn,
 	if (status == PSA_SUCCESS) {
 		status = psa_mac_verify_finish(&op, tag, ACS_PSA_CMAC_TAG_LEN);
 	} else {
-		psa_mac_abort(&op);
+		psa_status_t abort_status = psa_mac_abort(&op);
+
+		if (abort_status != PSA_SUCCESS) {
+			LOG_WRN("ACS CMAC verify abort failed: %d", abort_status);
+		}
 	}
 
 	if (status != PSA_SUCCESS) {
@@ -311,6 +324,7 @@ static int acs_crypto_gmac_encrypt(struct bt_acs_conn *acs_conn,
 	}
 	memcpy(&ciphertext[plain_len], tag, tag_len);
 
+	__ASSERT_NO_MSG(tag_len <= UINT16_MAX);
 	*cipher_len = plain_len + (uint16_t)tag_len;
 	acs_advance_tx_counter(record_state);
 

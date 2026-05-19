@@ -208,7 +208,7 @@ static void data_tx_drain_doi_queue(struct bt_acs_conn *acs_conn)
 		atomic_ptr_cas(&acs_conn->active_indication, req, NULL);
 		LOG_WRN("DOI seg_tx_send failed: %d (handle 0x%04x)", err,
 			req->route.resource_handle);
-		acs_procedure_tx_done(req);
+		acs_procedure_release_tx(req);
 	}
 #else
 	ARG_UNUSED(acs_conn);
@@ -274,7 +274,7 @@ static void data_tx_completion_cb(struct bt_conn *conn, const struct bt_gatt_att
 #endif /* CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION */
 
 	/* Drop the TX reference before the next step can acquire a new one. */
-	acs_procedure_tx_done(req);
+	acs_procedure_release_tx(req);
 
 	if (continue_reply_seq) {
 		if (!err) {
@@ -320,7 +320,7 @@ static int data_tx_send_notify(struct acs_procedure *req)
 	if (err) {
 		LOG_WRN("DON encrypt failed for handle 0x%04x: %d", req->route.resource_handle,
 			err);
-		acs_procedure_tx_done(req);
+		acs_procedure_release_tx(req);
 		return err;
 	}
 
@@ -329,7 +329,7 @@ static int data_tx_send_notify(struct acs_procedure *req)
 		LOG_WRN("DON send failed for handle 0x%04x: %d", req->route.resource_handle, err);
 	}
 
-	acs_procedure_tx_done(req);
+	acs_procedure_release_tx(req);
 	return err;
 }
 #endif /* CONFIG_BT_ACS_PROTECTED_RESOURCE_NOTIFICATION */

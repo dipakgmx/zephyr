@@ -22,27 +22,6 @@ static struct acs_reply_seq_state *acs_seq_state(struct acs_procedure *proc)
 	return proc ? &proc->reply_seq : NULL;
 }
 
-/**
- * @brief Advance to the next step in the active reply sequence.
- *
- * @return 0 on success or sequence complete, negative errno from the step
- *         function on failure.
- */
-static int acs_seq_continue(struct acs_procedure *proc)
-{
-	struct acs_reply_seq_state *seq = acs_seq_state(proc);
-
-	if (!seq || !seq->desc || seq->step >= seq->desc->step_count) {
-		acs_seq_clear(proc);
-		return 0;
-	}
-
-	acs_seq_step_fn fn = seq->desc->steps[seq->step];
-	seq->step++;
-
-	return fn(proc);
-}
-
 bool acs_seq_active(struct acs_procedure *proc)
 {
 	struct acs_reply_seq_state const *seq = acs_seq_state(proc);
@@ -101,6 +80,7 @@ void acs_seq_abort(struct acs_procedure *proc)
 
 void acs_seq_on_confirm(struct acs_procedure *proc)
 {
+	struct acs_reply_seq_state *seq;
 	int err;
 
 	if (!proc || !proc->acs_conn) {
@@ -115,7 +95,16 @@ void acs_seq_on_confirm(struct acs_procedure *proc)
 		return;
 	}
 
-	err = acs_seq_continue(proc);
+	seq = acs_seq_state(proc);
+	if (!seq || !seq->desc || seq->step >= seq->desc->step_count) {
+		acs_seq_clear(proc);
+		return;
+	}
+
+	acs_seq_step_fn fn = seq->desc->steps[seq->step];
+
+	seq->step++;
+	err = fn(proc);
 	if (err) {
 		if (proc->kind == ACS_PROC_KIND_PROTECTED_REQ) {
 			LOG_WRN("Protected CP reply sequence advance failed for handle 0x%04x: %d",

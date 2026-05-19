@@ -70,12 +70,21 @@ void acs_crypto_init_slots(struct bt_acs_conn *acs_conn)
 	__ASSERT_NO_MSG(key_slot <= ARRAY_SIZE(acs_conn->crypto.current_keys));
 
 	STRUCT_SECTION_FOREACH(bt_acs_key_desc_record, rec) {
+		struct bt_acs_record_state *record_state;
+		int err;
+
 		if (!acs_key_desc_has_nonce_record(rec)) {
 			continue;
 		}
 
 		__ASSERT_NO_MSG(record_slot < ARRAY_SIZE(acs_conn->crypto.record_states));
-		acs_conn->crypto.record_states[record_slot++].key_desc = rec;
+		record_state = &acs_conn->crypto.record_states[record_slot++];
+		record_state->key_desc = rec;
+		err = acs_crypto_current_key_id_from_key_desc(rec, &record_state->current_key_id);
+		__ASSERT_NO_MSG(err == 0);
+		if (err != 0) {
+			record_state->current_key_id = 0U;
+		}
 	}
 }
 
