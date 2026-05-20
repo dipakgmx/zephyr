@@ -20,13 +20,6 @@
 
 LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
 
-static void acs_kex_warn_destroy_failure(psa_status_t status, psa_key_id_t key_id, const char *ctx)
-{
-	if (status != PSA_SUCCESS) {
-		LOG_WRN("%s: psa_destroy_key(%u) failed: %d", ctx, (unsigned int)key_id, status);
-	}
-}
-
 struct bt_acs_runtime_key_state *acs_key_exchange_established_key(struct bt_acs_conn *acs_conn)
 {
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
@@ -229,8 +222,8 @@ static void acs_key_exchange_free_ctx(struct bt_acs_conn *acs_conn)
 	if (acs_conn->crypto.kex->ecdh_key_id != 0U) {
 		psa_status_t status = psa_destroy_key(acs_conn->crypto.kex->ecdh_key_id);
 
-		acs_kex_warn_destroy_failure(status, acs_conn->crypto.kex->ecdh_key_id,
-					     "free kex ctx");
+		acs_crypto_warn_destroy_key_failure(status, acs_conn->crypto.kex->ecdh_key_id,
+						    "free kex ctx");
 		acs_conn->crypto.kex->ecdh_key_id = 0U;
 	}
 
@@ -348,10 +341,12 @@ static int acs_hkdf(psa_algorithm_t hkdf_alg, const uint8_t *salt, size_t salt_l
 {
 	psa_key_derivation_operation_t op = PSA_KEY_DERIVATION_OPERATION_INIT;
 	psa_status_t status;
+	int ret = 0;
 
 	status = psa_key_derivation_setup(&op, hkdf_alg);
 	if (status != PSA_SUCCESS) {
 		LOG_ERR("HKDF setup failed: status=%d, alg=0x%08x", status, hkdf_alg);
+		ret = -EIO;
 		goto cleanup;
 	}
 
@@ -361,6 +356,7 @@ static int acs_hkdf(psa_algorithm_t hkdf_alg, const uint8_t *salt, size_t salt_l
 		if (status != PSA_SUCCESS) {
 			LOG_ERR("HKDF salt input failed: status=%d, salt_len=%zu", status,
 				salt_len);
+			ret = -EIO;
 			goto cleanup;
 		}
 	}
@@ -368,18 +364,21 @@ static int acs_hkdf(psa_algorithm_t hkdf_alg, const uint8_t *salt, size_t salt_l
 	status = psa_key_derivation_input_bytes(&op, PSA_KEY_DERIVATION_INPUT_SECRET, ikm, ikm_len);
 	if (status != PSA_SUCCESS) {
 		LOG_ERR("HKDF IKM input failed: status=%d, ikm_len=%zu", status, ikm_len);
+		ret = -EIO;
 		goto cleanup;
 	}
 
 	status = psa_key_derivation_input_bytes(&op, PSA_KEY_DERIVATION_INPUT_INFO, info, info_len);
 	if (status != PSA_SUCCESS) {
 		LOG_ERR("HKDF info input failed: status=%d, info_len=%zu", status, info_len);
+		ret = -EIO;
 		goto cleanup;
 	}
 
 	status = psa_key_derivation_output_bytes(&op, out, out_len);
 	if (status != PSA_SUCCESS) {
 		LOG_ERR("HKDF output failed: status=%d, out_len=%zu", status, out_len);
+		ret = -EIO;
 	}
 
 cleanup:
@@ -388,7 +387,7 @@ cleanup:
 		LOG_ERR("Failed to abort key derivation operation: %d", status);
 		return -EIO;
 	}
-	return 0;
+	return ret;
 }
 
 /* §4.4.3.17.1.2: Salt=HMAC(Zero,PKs||PKc), ConfKey=HMAC(Salt,ECDHKey||Auth),
@@ -404,7 +403,7 @@ static int acs_ecdh_confirm_code_compute(const uint8_t *server_x_le, const uint8
 					 uint8_t confirm_out[ACS_HMAC_SHA256_SIZE])
 {
 	int ret;
-	const uint8_t zero_key[ACS_HMAC_SHA256_SIZE] = { 0 };
+	const uint8_t zero_key[ACS_HMAC_SHA256_SIZE] = {0};
 	uint8_t salt[ACS_HMAC_SHA256_SIZE];
 	uint8_t pubkey_concat[CONFIG_BT_ACS_ECDH_COORD_SIZE * 4];
 	size_t pubkey_concat_len = 0;
@@ -480,9 +479,9 @@ static int bt_acs_crypto_generate_keypair(struct bt_acs_conn *acs_conn)
 				       &pub_len);
 	if (status != PSA_SUCCESS) {
 		LOG_ERR("psa_export_public_key failed: %d", status);
-		acs_kex_warn_destroy_failure(psa_destroy_key(acs_conn->crypto.kex->ecdh_key_id),
-					     acs_conn->crypto.kex->ecdh_key_id,
-					     "export public key cleanup");
+		acs_crypto_warn_destroy_key_failure(
+			psa_destroy_key(acs_conn->crypto.kex->ecdh_key_id),
+			acs_conn->crypto.kex->ecdh_key_id, "export public key cleanup");
 		acs_conn->crypto.kex->ecdh_key_id = 0;
 		return -EIO;
 	}
@@ -496,9 +495,9 @@ static int bt_acs_crypto_generate_keypair(struct bt_acs_conn *acs_conn)
 	if (pub_len != (size_t)CONFIG_BT_ACS_ECDH_COORD_SIZE) {
 		LOG_ERR("Unexpected Curve25519 public key size: %zu (expected %u)", pub_len,
 			CONFIG_BT_ACS_ECDH_COORD_SIZE);
-		acs_kex_warn_destroy_failure(psa_destroy_key(acs_conn->crypto.kex->ecdh_key_id),
-					     acs_conn->crypto.kex->ecdh_key_id,
-					     "curve25519 pubkey cleanup");
+		acs_crypto_warn_destroy_key_failure(
+			psa_destroy_key(acs_conn->crypto.kex->ecdh_key_id),
+			acs_conn->crypto.kex->ecdh_key_id, "curve25519 pubkey cleanup");
 		acs_conn->crypto.kex->ecdh_key_id = 0;
 		return -EIO;
 	}
@@ -511,9 +510,9 @@ static int bt_acs_crypto_generate_keypair(struct bt_acs_conn *acs_conn)
 	if (pub_len != expected_len) {
 		LOG_ERR("Unexpected NIST public key size: %zu (expected %zu)", pub_len,
 			expected_len);
-		acs_kex_warn_destroy_failure(psa_destroy_key(acs_conn->crypto.kex->ecdh_key_id),
-					     acs_conn->crypto.kex->ecdh_key_id,
-					     "nist pubkey cleanup");
+		acs_crypto_warn_destroy_key_failure(
+			psa_destroy_key(acs_conn->crypto.kex->ecdh_key_id),
+			acs_conn->crypto.kex->ecdh_key_id, "nist pubkey cleanup");
 		acs_conn->crypto.kex->ecdh_key_id = 0;
 		return -EIO;
 	}
@@ -551,9 +550,9 @@ static int bt_acs_crypto_compute_shared_secret(struct bt_acs_conn *acs_conn)
 	) {
 		LOG_ERR("Client pubkey coord size mismatch: x=%u (expected %u)", x_size,
 			CONFIG_BT_ACS_ECDH_COORD_SIZE);
-		acs_kex_warn_destroy_failure(psa_destroy_key(acs_conn->crypto.kex->ecdh_key_id),
-					     acs_conn->crypto.kex->ecdh_key_id,
-					     "client pubkey cleanup");
+		acs_crypto_warn_destroy_key_failure(
+			psa_destroy_key(acs_conn->crypto.kex->ecdh_key_id),
+			acs_conn->crypto.kex->ecdh_key_id, "client pubkey cleanup");
 		acs_conn->crypto.kex->ecdh_key_id = 0;
 		return -EINVAL;
 	}
@@ -575,9 +574,9 @@ static int bt_acs_crypto_compute_shared_secret(struct bt_acs_conn *acs_conn)
 				       psa_pubkey_len, acs_conn->crypto.kex->shared_secret,
 				       sizeof(acs_conn->crypto.kex->shared_secret), &olen);
 
-	acs_kex_warn_destroy_failure(psa_destroy_key(acs_conn->crypto.kex->ecdh_key_id),
-				     acs_conn->crypto.kex->ecdh_key_id,
-				     "raw key agreement cleanup");
+	acs_crypto_warn_destroy_key_failure(psa_destroy_key(acs_conn->crypto.kex->ecdh_key_id),
+					    acs_conn->crypto.kex->ecdh_key_id,
+					    "raw key agreement cleanup");
 	acs_conn->crypto.kex->ecdh_key_id = 0;
 
 	if (status != PSA_SUCCESS) {
@@ -689,6 +688,51 @@ static int bt_acs_crypto_derive_kdf_child_key(struct bt_acs_conn *acs_conn)
 }
 #endif /* CONFIG_BT_ACS_KEY_EXCHANGE_KDF */
 
+static int acs_kdf_generate_params(struct bt_acs_kex_ctx *kex)
+{
+	psa_status_t psa_ret;
+
+	psa_ret = psa_generate_random(kex->kdf.salt, CONFIG_BT_ACS_KDF_SALT_MAX_SIZE);
+	if (psa_ret != PSA_SUCCESS) {
+		LOG_ERR("psa_generate_random failed for KDF salt: %d", psa_ret);
+		return -EIO;
+	}
+	kex->kdf.salt_size = CONFIG_BT_ACS_KDF_SALT_MAX_SIZE;
+
+#if CONFIG_BT_ACS_KDF_INFO_MAX_SIZE > 0
+	{
+		const char *acs_info = "ACS";
+
+		memset(kex->kdf.info, 0, CONFIG_BT_ACS_KDF_INFO_MAX_SIZE);
+		memcpy(kex->kdf.info, acs_info, strlen(acs_info));
+		kex->kdf.info_size = strlen(acs_info);
+	}
+#else
+	kex->kdf.info_size = 0;
+#endif
+
+	return 0;
+}
+
+static int acs_kdf_serialize_response(struct bt_acs_kex_ctx *kex, struct net_buf_simple *rsp_buf)
+{
+	uint8_t needed = ACS_KDF_RSP_FIXED_SIZE + kex->kdf.salt_size + kex->kdf.info_size;
+
+	if (net_buf_simple_tailroom(rsp_buf) < needed) {
+		LOG_WRN("KDF response buffer too small: need %u, have %u", needed,
+			net_buf_simple_tailroom(rsp_buf));
+		return -ENOMEM;
+	}
+
+	net_buf_simple_add_le16(rsp_buf, sys_le16_to_cpu(kex->start_kex.key_id));
+	net_buf_simple_add_u8(rsp_buf, kex->kdf.salt_size);
+	net_buf_simple_add_mem(rsp_buf, kex->kdf.salt, kex->kdf.salt_size);
+	net_buf_simple_add_u8(rsp_buf, kex->kdf.info_size);
+	net_buf_simple_add_mem(rsp_buf, kex->kdf.info, kex->kdf.info_size);
+
+	return 0;
+}
+
 int acs_key_exchange_ecdh_start(struct bt_acs_conn *acs_conn, uint16_t key_id)
 {
 	if (key_id != ACS_KEY_ID_ECDH && key_id != ACS_KEY_ID_OOB) {
@@ -729,9 +773,9 @@ int acs_key_exchange_ecdh_start(struct bt_acs_conn *acs_conn, uint16_t key_id)
 
 	/* Destroy any ECDH private key left from a prior aborted exchange. */
 	if (acs_conn->crypto.kex && acs_conn->crypto.kex->ecdh_key_id != 0) {
-		acs_kex_warn_destroy_failure(psa_destroy_key(acs_conn->crypto.kex->ecdh_key_id),
-					     acs_conn->crypto.kex->ecdh_key_id,
-					     "pre-start cleanup");
+		acs_crypto_warn_destroy_key_failure(
+			psa_destroy_key(acs_conn->crypto.kex->ecdh_key_id),
+			acs_conn->crypto.kex->ecdh_key_id, "pre-start cleanup");
 		acs_conn->crypto.kex->ecdh_key_id = 0;
 	}
 
@@ -739,13 +783,8 @@ int acs_key_exchange_ecdh_start(struct bt_acs_conn *acs_conn, uint16_t key_id)
 	acs_crypto_destroy_connection_keys(acs_conn);
 	acs_crypto_destroy_connection_record_keys(acs_conn);
 	struct bt_acs_kex_ctx *kex = acs_conn->crypto.kex;
-	struct bt_acs_record_state saved_record_states[CONFIG_BT_ACS_MAX_NONCE_RECORDS];
-
-	memcpy(saved_record_states, acs_conn->crypto.record_states, sizeof(saved_record_states));
-	memset(&acs_conn->crypto, 0, sizeof(acs_conn->crypto));
+	acs_crypto_reset_preserve_record_states(acs_conn);
 	acs_conn->crypto.kex = kex;
-	memcpy(acs_conn->crypto.record_states, saved_record_states, sizeof(saved_record_states));
-	acs_crypto_init_slots(acs_conn);
 
 	if (acs_conn->crypto.kex) {
 		acs_conn->crypto.kex->next_expected_opcode = 0U;
@@ -811,33 +850,18 @@ int acs_key_exchange_ecdh_pubkey(struct bt_acs_conn *acs_conn, struct net_buf_si
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_ECDH)
 int acs_key_exchange_ecdh_kdf(struct bt_acs_conn *acs_conn, struct net_buf_simple *rsp_buf)
 {
-	psa_status_t psa_ret;
 	uint8_t salt_be[CONFIG_BT_ACS_KDF_SALT_MAX_SIZE];
 	uint8_t info_be[CONFIG_BT_ACS_KDF_INFO_MAX_SIZE];
-	uint8_t needed;
 	int err = check_expected_opcode(acs_conn, BT_ACS_CP_OPCODE_KEY_EXCHANGE_KDF);
 
 	if (err) {
 		return err;
 	}
 
-	psa_ret = psa_generate_random(acs_conn->crypto.kex->kdf.salt,
-				      CONFIG_BT_ACS_KDF_SALT_MAX_SIZE);
-	if (psa_ret != PSA_SUCCESS) {
-		LOG_ERR("psa_generate_random failed for KDF salt: %d", psa_ret);
-		return -EIO;
+	err = acs_kdf_generate_params(acs_conn->crypto.kex);
+	if (err) {
+		return err;
 	}
-	acs_conn->crypto.kex->kdf.salt_size = CONFIG_BT_ACS_KDF_SALT_MAX_SIZE;
-
-#if CONFIG_BT_ACS_KDF_INFO_MAX_SIZE > 0
-	const char *acs_info = "ACS";
-
-	memset(acs_conn->crypto.kex->kdf.info, 0, CONFIG_BT_ACS_KDF_INFO_MAX_SIZE);
-	memcpy(acs_conn->crypto.kex->kdf.info, acs_info, strlen(acs_info));
-	acs_conn->crypto.kex->kdf.info_size = strlen(acs_info);
-#else
-	acs_conn->crypto.kex->kdf.info_size = 0;
-#endif
 
 	/* HKDF: IKM=shared_secret → ecdh_key (same union buffer, safe: PSA
 	 * reads IKM fully during extract before writing during expand).
@@ -859,21 +883,10 @@ int acs_key_exchange_ecdh_kdf(struct bt_acs_conn *acs_conn, struct net_buf_simpl
 	acs_conn->crypto.kex->key_mat_len = CONFIG_BT_ACS_SESSION_KEY_SIZE;
 	acs_conn->crypto.kex->kdf_applied = true;
 
-	/* Response: Key_ID(2) + KDF_Salt_Size(1) + KDF_Salt(N) + KDF_Info_Size(1) + KDF_Info(M) */
-	needed = ACS_KDF_RSP_FIXED_SIZE + acs_conn->crypto.kex->kdf.salt_size +
-		 acs_conn->crypto.kex->kdf.info_size;
-
-	if (net_buf_simple_tailroom(rsp_buf) < needed) {
-		return -ENOMEM;
+	err = acs_kdf_serialize_response(acs_conn->crypto.kex, rsp_buf);
+	if (err) {
+		return err;
 	}
-
-	net_buf_simple_add_le16(rsp_buf, sys_le16_to_cpu(acs_conn->crypto.kex->start_kex.key_id));
-	net_buf_simple_add_u8(rsp_buf, acs_conn->crypto.kex->kdf.salt_size);
-	net_buf_simple_add_mem(rsp_buf, acs_conn->crypto.kex->kdf.salt,
-			       acs_conn->crypto.kex->kdf.salt_size);
-	net_buf_simple_add_u8(rsp_buf, acs_conn->crypto.kex->kdf.info_size);
-	net_buf_simple_add_mem(rsp_buf, acs_conn->crypto.kex->kdf.info,
-			       acs_conn->crypto.kex->kdf.info_size);
 
 	acs_conn->crypto.kex->next_expected_opcode = BT_ACS_CP_OPCODE_ECDH_CONFIRM_CODE;
 	LOG_INF("KDF Complete, ECDHKey Derived");
@@ -1020,25 +1033,16 @@ int acs_key_exchange_ecdh_confirm_rand(struct bt_acs_conn *acs_conn, struct net_
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
 int acs_key_exchange_kdf(struct bt_acs_conn *acs_conn, struct net_buf_simple *rsp_buf)
 {
-	uint8_t needed;
 	int err = check_expected_opcode(acs_conn, BT_ACS_CP_OPCODE_KEY_EXCHANGE_KDF);
 
 	if (err) {
 		return err;
 	}
 
-	sys_rand_get(acs_conn->crypto.kex->kdf.salt, CONFIG_BT_ACS_KDF_SALT_MAX_SIZE);
-	acs_conn->crypto.kex->kdf.salt_size = CONFIG_BT_ACS_KDF_SALT_MAX_SIZE;
-
-#if CONFIG_BT_ACS_KDF_INFO_MAX_SIZE > 0
-	const char *acs_info = "ACS";
-
-	memset(acs_conn->crypto.kex->kdf.info, 0, CONFIG_BT_ACS_KDF_INFO_MAX_SIZE);
-	memcpy(acs_conn->crypto.kex->kdf.info, acs_info, strlen(acs_info));
-	acs_conn->crypto.kex->kdf.info_size = strlen(acs_info);
-#else
-	acs_conn->crypto.kex->kdf.info_size = 0;
-#endif
+	err = acs_kdf_generate_params(acs_conn->crypto.kex);
+	if (err) {
+		return err;
+	}
 
 	/* Derive child key: HKDF(salt, ikm=parent_key, info) → child replaces parent_key */
 	err = bt_acs_crypto_derive_kdf_child_key(acs_conn);
@@ -1047,23 +1051,10 @@ int acs_key_exchange_kdf(struct bt_acs_conn *acs_conn, struct net_buf_simple *rs
 		return -EIO;
 	}
 
-	/* Response: Key_ID(2) | KDF_Salt_Size(1) | KDF_Salt(N) | KDF_Info_Size(1) | KDF_Info(M) */
-	needed = sizeof(uint16_t) + sizeof(uint8_t) + acs_conn->crypto.kex->kdf.salt_size +
-		 sizeof(uint8_t) + acs_conn->crypto.kex->kdf.info_size;
-
-	if (net_buf_simple_tailroom(rsp_buf) < needed) {
-		LOG_WRN("KDF response buffer too small: need %u, have %u", needed,
-			net_buf_simple_tailroom(rsp_buf));
-		return -ENOMEM;
+	err = acs_kdf_serialize_response(acs_conn->crypto.kex, rsp_buf);
+	if (err) {
+		return err;
 	}
-
-	net_buf_simple_add_le16(rsp_buf, sys_le16_to_cpu(acs_conn->crypto.kex->start_kex.key_id));
-	net_buf_simple_add_u8(rsp_buf, acs_conn->crypto.kex->kdf.salt_size);
-	net_buf_simple_add_mem(rsp_buf, acs_conn->crypto.kex->kdf.salt,
-			       acs_conn->crypto.kex->kdf.salt_size);
-	net_buf_simple_add_u8(rsp_buf, acs_conn->crypto.kex->kdf.info_size);
-	net_buf_simple_add_mem(rsp_buf, acs_conn->crypto.kex->kdf.info,
-			       acs_conn->crypto.kex->kdf.info_size);
 
 	acs_conn->crypto.kex->next_expected_opcode = 0U;
 	LOG_INF("KDF child key derived success");

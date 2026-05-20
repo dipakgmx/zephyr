@@ -76,12 +76,6 @@ int acs_crypto_current_key_from_isc(struct bt_acs_conn *acs_conn, uint16_t isc_i
 int acs_crypto_record_state_lookup(struct bt_acs_conn *acs_conn, uint16_t key_id,
 				   struct bt_acs_record_state **record_state);
 
-/**
- * @brief Resolve the runtime record-state used by @p isc_id on @p acs_conn.
- */
-int acs_crypto_record_state_from_isc(struct bt_acs_conn *acs_conn, uint16_t isc_id,
-				     struct bt_acs_record_state **record_state);
-
 /** @brief Bind per-connection runtime slots to the static key-descriptor graph. */
 void acs_crypto_init_slots(struct bt_acs_conn *acs_conn);
 
@@ -116,6 +110,9 @@ int acs_crypto_import_current_key(struct bt_acs_runtime_key_state *current_key);
 /** @brief Destroy one current key from the PSA keystore. */
 void acs_crypto_destroy_current_key(struct bt_acs_runtime_key_state *current_key);
 
+/** @brief Log a warning if a PSA key destroy operation fails. */
+void acs_crypto_warn_destroy_key_failure(psa_status_t status, psa_key_id_t key_id, const char *ctx);
+
 /** @brief Destroy every imported current key on @p acs_conn. */
 void acs_crypto_destroy_connection_keys(struct bt_acs_conn *acs_conn);
 
@@ -133,6 +130,17 @@ int acs_crypto_rebind_record_states(struct bt_acs_conn *acs_conn);
 
 /** @brief Reset nonce counters for record states that derive from @p current_key_id. */
 void acs_crypto_reset_record_counters(struct bt_acs_conn *acs_conn, uint16_t current_key_id);
+
+/** @brief Reset per-connection crypto runtime state and rebind static slots. */
+void acs_crypto_reset(struct bt_acs_conn *acs_conn);
+
+/**
+ * @brief Reset crypto runtime state while preserving record-state nonce data.
+ *
+ * Preserves the bound record-state slots so fixed nonce values, client-nonce
+ * state, and nonce counters survive the reset.
+ */
+void acs_crypto_reset_preserve_record_states(struct bt_acs_conn *acs_conn);
 
 /**
  * @brief Encrypt @p plaintext using the resolved record-state key.

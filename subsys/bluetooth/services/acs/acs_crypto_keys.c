@@ -18,13 +18,7 @@
 #include <zephyr/logging/log.h>
 LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
 
-static uint64_t acs_record_initial_rx_counter(const struct bt_acs_record_state *record_state)
-{
-	ARG_UNUSED(record_state);
-	return UINT64_C(0);
-}
-
-static void acs_warn_destroy_key_failure(psa_status_t status, psa_key_id_t key_id, const char *ctx)
+void acs_crypto_warn_destroy_key_failure(psa_status_t status, psa_key_id_t key_id, const char *ctx)
 {
 	if (status != PSA_SUCCESS) {
 		LOG_WRN("%s: psa_destroy_key(%u) failed: %d", ctx, (unsigned int)key_id, status);
@@ -68,8 +62,8 @@ void acs_crypto_destroy_current_key(struct bt_acs_runtime_key_state *current_key
 	if (current_key && current_key->psa_key_id != 0U) {
 		psa_status_t status = psa_destroy_key(current_key->psa_key_id);
 
-		acs_warn_destroy_key_failure(status, current_key->psa_key_id,
-					    "destroy current key");
+		acs_crypto_warn_destroy_key_failure(status, current_key->psa_key_id,
+						    "destroy current key");
 		current_key->psa_key_id = 0U;
 	}
 }
@@ -127,8 +121,8 @@ void acs_crypto_destroy_record_key(struct bt_acs_record_state *record_state)
 	if (record_state && record_state->psa_key_id != 0U) {
 		psa_status_t status = psa_destroy_key(record_state->psa_key_id);
 
-		acs_warn_destroy_key_failure(status, record_state->psa_key_id,
-					    "destroy record key");
+		acs_crypto_warn_destroy_key_failure(status, record_state->psa_key_id,
+						    "destroy record key");
 		record_state->psa_key_id = 0U;
 	}
 }
@@ -161,8 +155,7 @@ int acs_crypto_rebind_record_states(struct bt_acs_conn *acs_conn)
 				first_err = -ENOENT;
 			}
 			record_state->tx_nonce_counter = 0U;
-			record_state->rx_nonce_counter =
-				acs_record_initial_rx_counter(record_state);
+			record_state->rx_nonce_counter = 0U;
 			continue;
 		}
 
@@ -170,8 +163,7 @@ int acs_crypto_rebind_record_states(struct bt_acs_conn *acs_conn)
 						    &current_key);
 		if (err || !current_key || current_key->psa_key_id == 0U) {
 			record_state->tx_nonce_counter = 0U;
-			record_state->rx_nonce_counter =
-				acs_record_initial_rx_counter(record_state);
+			record_state->rx_nonce_counter = 0U;
 			continue;
 		}
 
@@ -199,6 +191,6 @@ void acs_crypto_reset_record_counters(struct bt_acs_conn *acs_conn, uint16_t cur
 		}
 
 		record_state->tx_nonce_counter = 0U;
-		record_state->rx_nonce_counter = acs_record_initial_rx_counter(record_state);
+		record_state->rx_nonce_counter = 0U;
 	}
 }

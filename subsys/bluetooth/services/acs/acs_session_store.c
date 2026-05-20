@@ -261,8 +261,7 @@ static int acs_settings_set(const char *name, size_t len_rd, settings_read_cb re
 				acs_settings_cache[i].store = store;
 				acs_settings_cache[i].valid = true;
 				bt_addr_le_to_str(&addr, addr_str, sizeof(addr_str));
-				LOG_INF("Loaded session key for peer %s (slot %d)", addr_str,
-					i);
+				LOG_INF("Loaded session key for peer %s (slot %d)", addr_str, i);
 				break;
 			}
 		}
@@ -321,136 +320,130 @@ void acs_session_restore(struct bt_conn *conn, struct bt_acs_conn *acs_conn)
 	}
 
 	if (found) {
-			struct bt_acs_runtime_key_state *parent_key;
-			int err;
+		struct bt_acs_runtime_key_state *parent_key;
+		int err;
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
-			struct bt_acs_runtime_key_state *kdf_key = NULL;
+		struct bt_acs_runtime_key_state *kdf_key = NULL;
 #endif
-			struct bt_acs_runtime_key_state *established_key;
+		struct bt_acs_runtime_key_state *established_key;
 
-			err = acs_crypto_current_key_lookup(acs_conn, store_copy.parent_key_id,
-							    &parent_key);
+		err = acs_crypto_current_key_lookup(acs_conn, store_copy.parent_key_id,
+						    &parent_key);
 
+		if (err) {
+			LOG_ERR("No runtime key state for restored parent Key_ID 0x%04x",
+				store_copy.parent_key_id);
+			return;
+		}
+
+		acs_conn->restriction_map_id = store_copy.restriction_map_id;
+
+#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF) && !IS_ENABLED(CONFIG_BT_ACS_KDF_SESSION_KEY)
+		if (store_copy.kdf_child_valid) {
+			/* Restore both current keys: the exchanged parent key remains
+			 * addressable by Key_ID, while the KDF child resumes as the live
+			 * AEAD key with its own nonce state. */
+			err = acs_crypto_current_key_lookup(acs_conn, ACS_KEY_ID_KDF, &kdf_key);
 			if (err) {
-				LOG_ERR("No runtime key state for restored parent Key_ID 0x%04x",
-					store_copy.parent_key_id);
+				LOG_ERR("No runtime key state for restored KDF child");
 				return;
 			}
 
-			acs_conn->restriction_map_id = store_copy.restriction_map_id;
-
-#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF) && !IS_ENABLED(CONFIG_BT_ACS_KDF_SESSION_KEY)
-			if (store_copy.kdf_child_valid) {
-				/* Restore both current keys: the exchanged parent key remains
-				 * addressable by Key_ID, while the KDF child resumes as the live
-				 * AEAD key with its own nonce state. */
-				err = acs_crypto_current_key_lookup(acs_conn, ACS_KEY_ID_KDF,
-								    &kdf_key);
-				if (err) {
-					LOG_ERR("No runtime key state for restored KDF child");
-					return;
-				}
-
-				memcpy(parent_key->key, store_copy.parent_key,
-				       CONFIG_BT_ACS_SESSION_KEY_SIZE);
-				memcpy(kdf_key->key, store_copy.child_key,
-				       CONFIG_BT_ACS_SESSION_KEY_SIZE);
-			} else
+			memcpy(parent_key->key, store_copy.parent_key,
+			       CONFIG_BT_ACS_SESSION_KEY_SIZE);
+			memcpy(kdf_key->key, store_copy.child_key, CONFIG_BT_ACS_SESSION_KEY_SIZE);
+		} else
 #endif
-			{
-				memcpy(parent_key->key, store_copy.parent_key,
-				       CONFIG_BT_ACS_SESSION_KEY_SIZE);
-			}
+		{
+			memcpy(parent_key->key, store_copy.parent_key,
+			       CONFIG_BT_ACS_SESSION_KEY_SIZE);
+		}
 
-			if (acs_crypto_import_current_key(
+		if (acs_crypto_import_current_key(
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF) && !IS_ENABLED(CONFIG_BT_ACS_KDF_SESSION_KEY)
-				    store_copy.kdf_child_valid ? kdf_key :
+			    store_copy.kdf_child_valid ? kdf_key :
 #endif
 						       parent_key) != 0) {
-				LOG_ERR("Failed to import restored session key into PSA");
-				memset(&acs_conn->crypto, 0, sizeof(acs_conn->crypto));
-				acs_crypto_init_slots(acs_conn);
-				return;
-			}
+			LOG_ERR("Failed to import restored session key into PSA");
+			acs_crypto_reset(acs_conn);
+			return;
+		}
 
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF) && !IS_ENABLED(CONFIG_BT_ACS_KDF_SESSION_KEY)
-			if (store_copy.kdf_child_valid) {
-				if (acs_crypto_import_current_key(parent_key) != 0) {
-					LOG_ERR("Failed to import restored parent key into PSA");
-					return;
-				}
-			}
-#endif
-
-			if (acs_crypto_rebind_record_states(acs_conn) != 0) {
-				LOG_ERR("Failed to import restored record-state keys into PSA");
-				memset(&acs_conn->crypto, 0, sizeof(acs_conn->crypto));
-				acs_crypto_init_slots(acs_conn);
+		if (store_copy.kdf_child_valid) {
+			if (acs_crypto_import_current_key(parent_key) != 0) {
+				LOG_ERR("Failed to import restored parent key into PSA");
 				return;
 			}
-
-			for (size_t rec_idx = 0; rec_idx < store_copy.nonce_record_count; rec_idx++) {
-				struct bt_acs_record_state *record_state;
-				const struct bt_acs_session_store_record_state *stored_record =
-					&store_copy.nonce_records[rec_idx];
-
-				err = acs_crypto_record_state_lookup(
-					acs_conn, stored_record->key_id, &record_state);
-				if (err) {
-					LOG_WRN("No runtime record state for restored Key_ID "
-						"0x%04x",
-						stored_record->key_id);
-					continue;
-				}
-
-				record_state->client_nonce_set = stored_record->client_nonce_set;
-				memcpy(record_state->server_nonce_fixed,
-				       stored_record->server_nonce_fixed,
-				       sizeof(record_state->server_nonce_fixed));
-				memcpy(record_state->client_nonce_fixed,
-				       stored_record->client_nonce_fixed,
-				       sizeof(record_state->client_nonce_fixed));
-				record_state->tx_nonce_counter = stored_record->tx_nonce_counter;
-				record_state->rx_nonce_counter = stored_record->rx_nonce_counter;
-			}
-
-			if (parent_key->psa_key_id != 0U
-#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
-			    || (kdf_key && kdf_key->psa_key_id != 0U)
-#endif
-			) {
-				acs_conn->status_flags |= BT_ACS_STATUS_SECURITY_ESTABLISHED;
-			}
-
-			LOG_INF("ACS session restored for bonded peer%s",
-				(acs_conn->status_flags & BT_ACS_STATUS_SECURITY_ESTABLISHED)
-					? " (security established)"
-					: " (no valid restored key)");
-
-			established_key = parent_key;
-#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
-			if (acs_conn->status_flags & BT_ACS_STATUS_SECURITY_ESTABLISHED) {
-				err = acs_crypto_current_key_lookup(acs_conn, ACS_KEY_ID_KDF,
-								    &established_key);
-				if (err) {
-					LOG_ERR("Missing KDF runtime key state for restored "
-						"session");
-					return;
-				}
-			}
+		}
 #endif
 
-			if ((acs_conn->status_flags & BT_ACS_STATUS_SECURITY_ESTABLISHED) && cb &&
-			    cb->security_established && established_key) {
-				cb->security_established(conn,
-#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
-							 established_key->key,
-#else
-							 parent_key->key,
-#endif
-							 CONFIG_BT_ACS_SESSION_KEY_SIZE);
-			}
+		if (acs_crypto_rebind_record_states(acs_conn) != 0) {
+			LOG_ERR("Failed to import restored record-state keys into PSA");
+			acs_crypto_reset(acs_conn);
 			return;
+		}
+
+		for (size_t rec_idx = 0; rec_idx < store_copy.nonce_record_count; rec_idx++) {
+			struct bt_acs_record_state *record_state;
+			const struct bt_acs_session_store_record_state *stored_record =
+				&store_copy.nonce_records[rec_idx];
+
+			err = acs_crypto_record_state_lookup(acs_conn, stored_record->key_id,
+							     &record_state);
+			if (err) {
+				LOG_WRN("No runtime record state for restored Key_ID "
+					"0x%04x",
+					stored_record->key_id);
+				continue;
+			}
+
+			record_state->client_nonce_set = stored_record->client_nonce_set;
+			memcpy(record_state->server_nonce_fixed, stored_record->server_nonce_fixed,
+			       sizeof(record_state->server_nonce_fixed));
+			memcpy(record_state->client_nonce_fixed, stored_record->client_nonce_fixed,
+			       sizeof(record_state->client_nonce_fixed));
+			record_state->tx_nonce_counter = stored_record->tx_nonce_counter;
+			record_state->rx_nonce_counter = stored_record->rx_nonce_counter;
+		}
+
+		if (parent_key->psa_key_id != 0U
+#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
+		    || (kdf_key && kdf_key->psa_key_id != 0U)
+#endif
+		) {
+			acs_conn->status_flags |= BT_ACS_STATUS_SECURITY_ESTABLISHED;
+		}
+
+		LOG_INF("ACS session restored for bonded peer%s",
+			(acs_conn->status_flags & BT_ACS_STATUS_SECURITY_ESTABLISHED)
+				? " (security established)"
+				: " (no valid restored key)");
+
+		established_key = parent_key;
+#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
+		if (acs_conn->status_flags & BT_ACS_STATUS_SECURITY_ESTABLISHED) {
+			err = acs_crypto_current_key_lookup(acs_conn, ACS_KEY_ID_KDF,
+							    &established_key);
+			if (err) {
+				LOG_ERR("Missing KDF runtime key state for restored "
+					"session");
+				return;
+			}
+		}
+#endif
+
+		if ((acs_conn->status_flags & BT_ACS_STATUS_SECURITY_ESTABLISHED) && cb &&
+		    cb->security_established && established_key) {
+			cb->security_established(conn,
+#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
+						 established_key->key,
+#else
+						 parent_key->key,
+#endif
+						 CONFIG_BT_ACS_SESSION_KEY_SIZE);
+		}
+		return;
 	}
 }
 
@@ -473,8 +466,7 @@ static void acs_bond_deleted(uint8_t id, const bt_addr_le_t *peer)
 			    bt_addr_le_eq(&acs_settings_cache[i].addr, peer)) {
 				acs_settings_cache[i].valid = false;
 				bt_addr_le_to_str(peer, addr_str, sizeof(addr_str));
-				LOG_INF("Session key deleted for peer %s (bond removed)",
-					addr_str);
+				LOG_INF("Session key deleted for peer %s (bond removed)", addr_str);
 				break;
 			}
 		}

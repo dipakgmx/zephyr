@@ -103,7 +103,7 @@ static int data_tx_encrypt_in_place(struct bt_acs_conn *acs_conn, uint16_t isc_i
 	plaintext = buf->data;
 	plain_len = buf->len;
 
-	err = acs_crypto_record_state_from_isc(acs_conn, isc_id, &record_state);
+	err = acs_crypto_record_state_lookup(acs_conn, isc->key_id, &record_state);
 	if (err || record_state->psa_key_id == 0U) {
 		LOG_ERR("encrypt_in_place: no record state for isc_id 0x%04x", isc_id);
 		return -EACCES;

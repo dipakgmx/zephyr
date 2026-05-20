@@ -89,6 +89,34 @@ void acs_crypto_init_slots(struct bt_acs_conn *acs_conn)
 	}
 }
 
+void acs_crypto_reset(struct bt_acs_conn *acs_conn)
+{
+	__ASSERT_NO_MSG(acs_conn != NULL);
+
+	memset(&acs_conn->crypto, 0, sizeof(acs_conn->crypto));
+	acs_crypto_init_slots(acs_conn);
+}
+
+void acs_crypto_reset_preserve_record_states(struct bt_acs_conn *acs_conn)
+{
+	__ASSERT_NO_MSG(acs_conn != NULL);
+
+#if IS_ENABLED(CONFIG_BT_ACS_HAS_NONCE_FIXED)
+	{
+		struct bt_acs_record_state saved_record_states[CONFIG_BT_ACS_MAX_NONCE_RECORDS];
+
+		memcpy(saved_record_states, acs_conn->crypto.record_states,
+		       sizeof(saved_record_states));
+		memset(&acs_conn->crypto, 0, sizeof(acs_conn->crypto));
+		memcpy(acs_conn->crypto.record_states, saved_record_states,
+		       sizeof(saved_record_states));
+		acs_crypto_init_slots(acs_conn);
+	}
+#else
+	acs_crypto_reset(acs_conn);
+#endif
+}
+
 int acs_crypto_current_key_lookup(struct bt_acs_conn *acs_conn, uint16_t key_id,
 				  struct bt_acs_runtime_key_state **current_key)
 {
@@ -167,26 +195,6 @@ int acs_crypto_record_state_lookup(struct bt_acs_conn *acs_conn, uint16_t key_id
 	*record_state = NULL;
 	LOG_ERR("No runtime record state reserved for Key_ID 0x%04x", key_id);
 	return -ENOENT;
-}
-
-int acs_crypto_record_state_from_isc(struct bt_acs_conn *acs_conn, uint16_t isc_id,
-				     struct bt_acs_record_state **record_state)
-{
-	const struct bt_acs_isc_record *isc = acs_isc_lookup(isc_id);
-
-	if (!acs_conn || !record_state) {
-		LOG_ERR("record state resolution from ISC called with invalid arguments");
-		__ASSERT_NO_MSG(acs_conn != NULL);
-		__ASSERT_NO_MSG(record_state != NULL);
-		return -EINVAL;
-	}
-
-	if (!isc) {
-		*record_state = NULL;
-		return -ENOENT;
-	}
-
-	return acs_crypto_record_state_lookup(acs_conn, isc->key_id, record_state);
 }
 
 int acs_crypto_get_server_nonce_fixed(struct bt_acs_conn *acs_conn, uint16_t key_id,

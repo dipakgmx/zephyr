@@ -125,7 +125,7 @@ static int acs_data_in_validate(struct bt_acs_conn *acs_conn, struct net_buf_sim
 		return ACS_DATA_ERR_INCORRECT_SECURITY_CONFIG;
 	}
 
-	if (acs_crypto_record_state_from_isc(acs_conn, *isc_id, record_state) != 0) {
+	if (acs_crypto_record_state_lookup(acs_conn, isc->key_id, record_state) != 0) {
 		LOG_WRN("no record state installed for ISC_ID 0x%04x", *isc_id);
 		return ACS_DATA_ERR_INCORRECT_SECURITY_CONFIG;
 	}

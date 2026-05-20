@@ -109,20 +109,8 @@ struct bt_acs_conn *acs_conn_alloc(struct bt_conn *conn)
 
 	struct bt_acs_conn *acs_conn = &acs_conn_state[bt_conn_index(conn)];
 
-#if IS_ENABLED(CONFIG_BT_ACS_HAS_NONCE_FIXED)
-	{
-		struct bt_acs_record_state saved_record_states[CONFIG_BT_ACS_MAX_NONCE_RECORDS];
-
-		memcpy(saved_record_states, acs_conn->crypto.record_states,
-		       sizeof(saved_record_states));
-		memset(acs_conn, 0, sizeof(*acs_conn));
-		memcpy(acs_conn->crypto.record_states, saved_record_states,
-		       sizeof(saved_record_states));
-	}
-#else
 	memset(acs_conn, 0, sizeof(*acs_conn));
-#endif
-	acs_crypto_init_slots(acs_conn);
+	acs_crypto_reset_preserve_record_states(acs_conn);
 	acs_conn->conn = conn;
 	acs_conn->attr_cp = acs_attr_cp();
 	acs_conn->attr_status = acs_attr_status();
@@ -178,20 +166,7 @@ void acs_conn_cleanup(struct bt_acs_conn *acs_conn)
 	 * device pair and reused on reconnect (§3.6.4: "does not change for
 	 * the life of the key").  Session key and counters are wiped.
 	 */
-#if IS_ENABLED(CONFIG_BT_ACS_HAS_NONCE_FIXED)
-	{
-		struct bt_acs_record_state saved_record_states[CONFIG_BT_ACS_MAX_NONCE_RECORDS];
-
-		memcpy(saved_record_states, acs_conn->crypto.record_states,
-		       sizeof(saved_record_states));
-		memset(&acs_conn->crypto, 0, sizeof(acs_conn->crypto));
-		memcpy(acs_conn->crypto.record_states, saved_record_states,
-		       sizeof(saved_record_states));
-	}
-#else
-	memset(&acs_conn->crypto, 0, sizeof(acs_conn->crypto));
-#endif
-	acs_crypto_init_slots(acs_conn);
+	acs_crypto_reset_preserve_record_states(acs_conn);
 	/* Abort request contexts before freeing the shared I/O slot so queued/in-flight
 	 * ACS Data Out activity cannot outlive the buffers it references.
 	 */
@@ -313,8 +288,8 @@ int bt_acs_invalidate_security(struct bt_conn *conn)
 	acs_conn->status_flags &= ~BT_ACS_STATUS_SECURITY_ESTABLISHED;
 	acs_key_exchange_abort(acs_conn);
 	acs_crypto_destroy_connection_keys(acs_conn);
-	memset(&acs_conn->crypto, 0, sizeof(acs_conn->crypto));
-	acs_crypto_init_slots(acs_conn);
+	acs_crypto_destroy_connection_record_keys(acs_conn);
+	acs_crypto_reset(acs_conn);
 
 #if defined(CONFIG_BT_SETTINGS)
 	if (bt_conn_get_info(conn, &info) == 0) {
