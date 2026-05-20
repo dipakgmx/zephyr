@@ -140,6 +140,7 @@ static int data_tx_send_notify(struct acs_procedure *req);
 #endif
 #if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION)
 static int data_tx_send_indicate(struct acs_procedure *req);
+static void data_tx_doi_drain_work(struct k_work *work);
 #endif
 
 /**
@@ -204,33 +205,44 @@ static void data_tx_drain_doi_queue(struct bt_acs_conn *acs_conn)
  * builds a response, runs PSA crypto, and queues a new indication.  Running
  * this synchronously inside the ATT indication confirm callback would nest
  * multiple crypto frames on the ACS workqueue stack.  Instead, the confirm
- * callback schedules this work item so each step executes in its own stack
- * frame.
- *
- * req->work is safe to reuse here: protected CP requests are dispatched
- * synchronously via acs_cp_dispatch(), not through the work queue, so the
- * work item is idle by the time the reply sequence runs.
+ * callback schedules connection-owned queue work so each step executes in its
+ * own stack frame.
  */
-static void data_tx_seq_continue_work(struct k_work *work)
+static void data_tx_doi_drain_work(struct k_work *work)
 {
-	struct acs_procedure *req = CONTAINER_OF(work, struct acs_procedure, work);
-	struct bt_acs_conn *acs_conn = req->acs_conn;
-	struct bt_conn *conn = acs_conn ? acs_conn->conn : NULL;
+	struct bt_acs_conn *acs_conn = CONTAINER_OF(work, struct bt_acs_conn, doi_drain_work);
+	struct acs_procedure *req =
+		(struct acs_procedure *)atomic_ptr_set(&acs_conn->pending_seq_continue, NULL);
+	struct bt_conn *conn = acs_conn->conn;
 
-	if (!conn || !req->reply_seq.desc) {
-		/* Sequence was aborted or connection lost — the ALLOC ref was
-		 * deferred from acs_runtime_dispatch_protected_cp_frame(), release it here.
-		 */
-		acs_procedure_release_owner(req);
-		goto drain;
+	if (req) {
+		if (!conn || !req->reply_seq.desc) {
+			/* Sequence was aborted or connection lost — the ALLOC ref was
+			 * deferred from acs_runtime_dispatch_protected_cp_frame(), release it here.
+			 */
+			acs_procedure_release_owner(req);
+		} else {
+			acs_seq_on_confirm(req);
+		}
 	}
 
-	acs_seq_on_confirm(req);
+	data_tx_drain_doi_queue(acs_conn);
+}
 
-drain:
-	if (acs_conn) {
-		data_tx_drain_doi_queue(acs_conn);
-	}
+void acs_doi_queue_init(struct bt_acs_conn *acs_conn)
+{
+	__ASSERT_NO_MSG(acs_conn != NULL);
+
+	k_fifo_init(&acs_conn->indicate_fifo);
+	atomic_ptr_set(&acs_conn->pending_seq_continue, NULL);
+	k_work_init(&acs_conn->doi_drain_work, data_tx_doi_drain_work);
+}
+
+void acs_doi_queue_submit(struct bt_acs_conn *acs_conn)
+{
+	__ASSERT_NO_MSG(acs_conn != NULL);
+
+	k_work_submit_to_queue(acs_get_wq(), &acs_conn->doi_drain_work);
 }
 
 /**
@@ -261,8 +273,12 @@ static void data_tx_completion_cb(struct bt_conn *conn, const struct bt_gatt_att
 
 	if (continue_reply_seq) {
 		if (!err) {
-			k_work_init(&req->work, data_tx_seq_continue_work);
-			k_work_submit_to_queue(acs_get_wq(), &req->work);
+			if (!acs_conn) {
+				acs_procedure_release_owner(req);
+				return;
+			}
+			atomic_ptr_set(&acs_conn->pending_seq_continue, req);
+			acs_doi_queue_submit(acs_conn);
 			return;
 		}
 
@@ -271,7 +287,7 @@ static void data_tx_completion_cb(struct bt_conn *conn, const struct bt_gatt_att
 	}
 
 	if (acs_conn) {
-		data_tx_drain_doi_queue(acs_conn);
+		acs_doi_queue_submit(acs_conn);
 	}
 }
 
@@ -425,7 +441,6 @@ int acs_tx_submit(struct acs_procedure *proc, const struct acs_reply *reply)
 		return data_tx_send_indicate(proc);
 #endif
 	default:
-		CODE_UNREACHABLE;
 		LOG_ERR("invalid channel %d", (int)reply->channel);
 		return -EINVAL;
 	}
@@ -456,7 +471,7 @@ static int data_tx_send_indicate(struct acs_procedure *req)
 
 	acs_procedure_ref(req, ACS_PROCEDURE_REF_TX);
 	k_fifo_put(&acs_conn->indicate_fifo, req);
-	data_tx_drain_doi_queue(acs_conn);
+	acs_doi_queue_submit(acs_conn);
 	return 0;
 }
 #endif /* CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION */

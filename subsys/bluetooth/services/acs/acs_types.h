@@ -403,7 +403,6 @@ struct acs_procedure {
 	sys_snode_t node;                     /**< k_fifo linkage for send queue (DOI) */
 	struct bt_acs_conn *acs_conn;         /**< Owning ACS connection; NULL after disconnect */
 	enum acs_proc_kind kind;              /**< Plain CP singleton vs protected request */
-	struct k_work work;                   /**< Deferred dispatch work item */
 	struct acs_reply_seq_state reply_seq; /**< Multi-indication reply-sequence state */
 	struct acs_proc_buffers buffers;      /**< Request/response buffer ownership */
 	struct acs_proc_route route;          /**< Resource routing metadata */
@@ -440,11 +439,15 @@ struct bt_acs_conn {
 #endif
 	struct acs_seg_rx_ctx cp_rx;   /**< CP path RX reassembly context */
 	struct acs_seg_rx_ctx data_rx; /**< Data In path RX reassembly context */
+	struct k_fifo request_fifo;    /**< Pending protected request FIFO */
+	struct k_work request_work;    /**< Protected request dispatch worker */
 	/** In-flight request slots, one per concurrent protected request. */
 	atomic_ptr_t inflight_reqs[CONFIG_BT_ACS_MAX_INFLIGHT_REQ_PER_CONN];
 #if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION)
-	struct k_fifo indicate_fifo;    /**< Pending Data Out Indicate response FIFO */
-	atomic_ptr_t active_indication; /**< Currently in-flight DOI response slot */
+	struct k_fifo indicate_fifo;       /**< Pending Data Out Indicate response FIFO */
+	struct k_work doi_drain_work;      /**< DOI drain / continuation worker */
+	atomic_ptr_t active_indication;    /**< Currently in-flight DOI response slot */
+	atomic_ptr_t pending_seq_continue; /**< Reply sequence waiting to continue on workq */
 #endif
 };
 

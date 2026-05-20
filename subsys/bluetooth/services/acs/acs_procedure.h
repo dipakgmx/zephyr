@@ -64,6 +64,12 @@ void acs_procedure_release_owner(struct acs_procedure *req);
 /** @brief Drop the TX-path reference on @p req. */
 void acs_procedure_release_tx(struct acs_procedure *req);
 
+/** @brief Initialise the per-connection protected request queue. */
+void acs_request_queue_init(struct bt_acs_conn *acs_conn);
+
+/** @brief Enqueue @p req for deferred protected request handling. */
+void acs_request_queue_submit(struct bt_acs_conn *acs_conn, struct acs_procedure *req);
+
 /** @brief Abort all in-flight protected resource requests on @p acs_conn. */
 void acs_procedure_abort_all(struct bt_acs_conn *acs_conn);
 

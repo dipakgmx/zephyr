@@ -138,7 +138,6 @@ struct acs_procedure *acs_procedure_alloc(struct bt_acs_conn *acs_conn, uint16_t
 	memset(req, 0, sizeof(*req));
 	atomic_set(&req->lifetime.ref_count, 1);
 	atomic_set_bit(req->lifetime.ref_flags, ACS_PROCEDURE_REF_ALLOC);
-	k_work_init(&req->work, acs_req_work_handler);
 	req->acs_conn = acs_conn;
 	req->kind = ACS_PROC_KIND_PROTECTED_REQ;
 	req->route.resource_handle = resource_handle;
@@ -162,6 +161,23 @@ struct acs_procedure *acs_procedure_alloc(struct bt_acs_conn *acs_conn, uint16_t
 	LOG_WRN("No free ACS request slot for conn %p", (void *)acs_conn);
 	k_mem_slab_free(&acs_req_ctx_slab, req);
 	return NULL;
+}
+
+void acs_request_queue_init(struct bt_acs_conn *acs_conn)
+{
+	__ASSERT_NO_MSG(acs_conn != NULL);
+
+	k_fifo_init(&acs_conn->request_fifo);
+	k_work_init(&acs_conn->request_work, acs_req_work_handler);
+}
+
+void acs_request_queue_submit(struct bt_acs_conn *acs_conn, struct acs_procedure *req)
+{
+	__ASSERT_NO_MSG(acs_conn != NULL);
+	__ASSERT_NO_MSG(req != NULL);
+
+	k_fifo_put(&acs_conn->request_fifo, req);
+	k_work_submit_to_queue(acs_get_wq(), &acs_conn->request_work);
 }
 
 void acs_procedure_release_owner(struct acs_procedure *req)
@@ -275,38 +291,46 @@ void acs_procedure_abort_all(struct bt_acs_conn *acs_conn)
 {
 	struct acs_procedure *req;
 	uint16_t req_count = 0U;
-	struct k_work_sync req_sync;
+	struct k_work_sync request_sync;
 	uint16_t queued_count = 0U;
+	sys_snode_t *snode;
 
 	if (!acs_conn) {
 		return;
 	}
 
+	k_work_cancel_sync(&acs_conn->request_work, &request_sync);
+
+	while ((snode = k_fifo_get(&acs_conn->request_fifo, K_NO_WAIT)) != NULL) {
+		ARG_UNUSED(snode);
+	}
+
 #if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION)
+	{
+		struct k_work_sync doi_sync;
+
+		k_work_cancel_sync(&acs_conn->doi_drain_work, &doi_sync);
+	}
+
 	atomic_ptr_set(&acs_conn->active_indication, NULL);
+	atomic_ptr_set(&acs_conn->pending_seq_continue, NULL);
 
 	/* Flush pending indications from the send FIFO, releasing their TX refs. */
-	{
-		sys_snode_t *snode;
+	while ((snode = k_fifo_get(&acs_conn->indicate_fifo, K_NO_WAIT)) != NULL) {
+		struct acs_procedure *queued = CONTAINER_OF(snode, struct acs_procedure, node);
 
-		while ((snode = k_fifo_get(&acs_conn->indicate_fifo, K_NO_WAIT)) != NULL) {
-			struct acs_procedure *queued =
-				CONTAINER_OF(snode, struct acs_procedure, node);
-
-			acs_procedure_release_tx(queued);
-			queued_count++;
-		}
+		acs_procedure_release_tx(queued);
+		queued_count++;
 	}
 #endif /* CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION */
 
-	/* Atomically detach each request, cancel its work item, and drop held references. */
+	/* Atomically detach each request and drop held references. */
 	for (uint8_t i = 0; i < CONFIG_BT_ACS_MAX_INFLIGHT_REQ_PER_CONN; i++) {
 		req = atomic_ptr_set(&acs_conn->inflight_reqs[i], NULL);
 		if (!req) {
 			continue;
 		}
 
-		k_work_cancel_sync(&req->work, &req_sync);
 		req_count++;
 		req->acs_conn = NULL;
 
@@ -327,30 +351,35 @@ void acs_procedure_abort_all(struct bt_acs_conn *acs_conn)
 
 static void acs_req_work_handler(struct k_work *work)
 {
-	struct acs_procedure *req = CONTAINER_OF(work, struct acs_procedure, work);
-	struct bt_conn const *conn = acs_procedure_conn(req);
-	int err = 0;
+	struct bt_acs_conn *acs_conn = CONTAINER_OF(work, struct bt_acs_conn, request_work);
+	sys_snode_t *snode;
 
-	if (!conn || !req->acs_conn) {
+	while ((snode = k_fifo_get(&acs_conn->request_fifo, K_NO_WAIT)) != NULL) {
+		struct acs_procedure *req = CONTAINER_OF(snode, struct acs_procedure, node);
+		struct bt_conn const *conn = acs_procedure_conn(req);
+		int err;
+
+		if (!conn || !req->acs_conn) {
+			acs_procedure_release_owner(req);
+			continue;
+		}
+
+		err = acs_auto_respond(req);
+		if (err) {
+			LOG_WRN("ACS auto-response failed for handle 0x%04x: %d",
+				req->route.resource_handle, err);
+		}
+
+		/* The handler / auto_respond consumed the input bytes already.
+		 * Drop decrypted_request now so it returns to the pool while we wait
+		 * for the indication / notification to confirm — acs_req_free will see
+		 * NULL and skip the free at refcount-zero.
+		 */
+		if (req->buffers.request_buf) {
+			acs_buf_free(req->buffers.request_buf);
+			req->buffers.request_buf = NULL;
+		}
+
 		acs_procedure_release_owner(req);
-		return;
 	}
-
-	err = acs_auto_respond(req);
-	if (err) {
-		LOG_WRN("ACS auto-response failed for handle 0x%04x: %d",
-			req->route.resource_handle, err);
-	}
-
-	/* The handler / auto_respond consumed the input bytes already.
-	 * Drop decrypted_request now so it returns to the pool while we wait
-	 * for the indication / notification to confirm — acs_req_free will see
-	 * NULL and skip the free at refcount-zero.
-	 */
-	if (req->buffers.request_buf) {
-		acs_buf_free(req->buffers.request_buf);
-		req->buffers.request_buf = NULL;
-	}
-
-	acs_procedure_release_owner(req);
 }

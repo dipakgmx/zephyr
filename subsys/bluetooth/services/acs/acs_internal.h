@@ -90,6 +90,14 @@ int acs_doi_ccc_check(struct bt_conn *conn);
 /** @brief Indicate the ACS Status characteristic to @p conn. */
 void acs_status_indicate(struct bt_conn *conn);
 
+#if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION)
+/** @brief Initialise the per-connection DOI drain queue state. */
+void acs_doi_queue_init(struct bt_acs_conn *acs_conn);
+
+/** @brief Schedule DOI drain / reply-sequence continuation work. */
+void acs_doi_queue_submit(struct bt_acs_conn *acs_conn);
+#endif
+
 /* ---- Service init + callbacks ------------------------------------------ */
 
 /** @brief Return true if the ACS service has been initialised. */

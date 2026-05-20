@@ -83,15 +83,10 @@ int acs_runtime_dispatch_protected_cp_frame(struct acs_frame *frame, struct bt_a
 
 	/* Spec-mandated: reject Data In write if DOI CCC not configured. */
 	err = acs_doi_ccc_check(frame->conn);
-	if (err == -EINVAL) {
+	if (err) {
 		LOG_WRN("Data In: DOI indications not enabled for protected CP handle 0x%04x",
 			frame->resource_handle);
 		return ACS_DATA_ERR_CCC_IMPROPER_CONF;
-	}
-	if (err) {
-		LOG_WRN("Data In: DOI unavailable for protected CP handle 0x%04x (%d)",
-			frame->resource_handle, err);
-		return err;
 	}
 
 	LOG_DBG("Data In: routing handle 0x%04x to CP dispatcher (respond via DOI)",
@@ -165,7 +160,7 @@ int acs_runtime_dispatch_protected_char_frame(struct acs_frame *frame, struct bt
 	net_buf_pull(req_ctx->buffers.request_buf,
 		     (size_t)(frame->payload - req_ctx->buffers.request_buf->data));
 
-	k_work_submit_to_queue(acs_get_wq(), &req_ctx->work);
+	acs_request_queue_submit(acs_conn, req_ctx);
 	return 0;
 }
 #endif /* CONFIG_BT_ACS_FEAT_AUTHENTICATION */

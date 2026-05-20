@@ -124,8 +124,9 @@ struct bt_acs_conn *acs_conn_alloc(struct bt_conn *conn)
 	acs_conn->restriction_map_id =
 		IS_ENABLED(CONFIG_BT_ACS_FEAT_AUTHORIZATION) ? CONFIG_BT_ACS_ACTIVE_RMAP_ID : 0;
 	/* pending_reqs[] is zero-initialised by memset above (NULL = free slot) */
+	acs_request_queue_init(acs_conn);
 #if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION)
-	k_fifo_init(&acs_conn->indicate_fifo);
+	acs_doi_queue_init(acs_conn);
 #endif /* CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION */
 
 	/* Wire up the embedded plain-CP procedure singleton. The conn's own
