@@ -21,6 +21,8 @@
 #include <zephyr/logging/log.h>
 LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
 
+#define ACS_OUTPUT_NUMERIC_BUCKET_COUNT 9U
+
 int acs_cp_kex_get_current_key_list(struct acs_procedure *proc)
 {
 	/* count(1 byte) + up to ACS_KEY_ID_COUNT x Key_ID(2 bytes) */
@@ -364,7 +366,7 @@ int acs_cp_kex_start(struct acs_procedure *proc, struct net_buf_simple *buf)
 #if IS_ENABLED(CONFIG_BT_ACS_CONFIRMATION_OUTPUT_NUMERIC)
 		oob_num = (oob_num % CONFIG_BT_ACS_CONFIRMATION_OUTPUT_MAX_VALUE) + 1;
 #else
-		oob_num = (oob_num % 9) + 1;
+		oob_num = (oob_num % ACS_OUTPUT_NUMERIC_BUCKET_COUNT) + 1;
 #endif
 		sys_put_be32(
 			oob_num,

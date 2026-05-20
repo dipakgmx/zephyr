@@ -37,7 +37,13 @@ static inline enum bt_acs_cp_response_code errno_to_acs_status(int err)
 	case -ERANGE:
 		return BT_ACS_CP_RESPONSE_PARAMETER_OUT_OF_RANGE;
 	case -EALREADY:
+	case -EAGAIN:
 		return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE;
+	case -ENOTSUP:
+		return BT_ACS_CP_RESPONSE_OPCODE_NOT_SUPPORTED;
+	case -ENOSPC:
+	case -EACCES:
+		return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED;
 	default:
 		return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED;
 	}

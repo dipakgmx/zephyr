@@ -8,6 +8,7 @@
 #include <stdbool.h>
 #include <string.h>
 
+#include <zephyr/kernel.h>
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/bluetooth/conn.h>
 #include <zephyr/bluetooth/gatt.h>
@@ -33,6 +34,7 @@ struct acs_settings_cache_entry {
 };
 
 static struct acs_settings_cache_entry acs_settings_cache[CONFIG_BT_MAX_CONN];
+K_SEM_DEFINE(acs_settings_cache_lock, 1, 1);
 
 static int acs_session_store_exchange_key(struct bt_acs_conn const *acs_conn,
 					  struct bt_acs_runtime_key_state **exchange_key)
@@ -68,14 +70,19 @@ static int acs_session_store_exchange_key(struct bt_acs_conn const *acs_conn,
 
 bool acs_session_cache_has_room(const bt_addr_le_t *addr)
 {
+	k_sem_take(&acs_settings_cache_lock, K_FOREVER);
+
 	for (int i = 0; i < CONFIG_BT_MAX_CONN; i++) {
 		if (!acs_settings_cache[i].valid) {
+			k_sem_give(&acs_settings_cache_lock);
 			return true; /* free slot */
 		}
 		if (bt_addr_le_eq(&acs_settings_cache[i].addr, addr)) {
+			k_sem_give(&acs_settings_cache_lock);
 			return true; /* existing entry for this peer */
 		}
 	}
+	k_sem_give(&acs_settings_cache_lock);
 	return false;
 }
 
@@ -172,26 +179,33 @@ void acs_session_store(struct bt_conn const *conn, struct bt_acs_conn const *acs
 	}
 
 	/* Update in-memory cache for same-boot reconnects. */
+	{
+		k_sem_take(&acs_settings_cache_lock, K_FOREVER);
 
-	for (int i = 0; i < CONFIG_BT_MAX_CONN; i++) {
-		if (acs_settings_cache[i].valid &&
-		    bt_addr_le_eq(&acs_settings_cache[i].addr, addr)) {
-			cache_found = i;
-			break;
+		for (int i = 0; i < CONFIG_BT_MAX_CONN; i++) {
+			if (acs_settings_cache[i].valid &&
+			    bt_addr_le_eq(&acs_settings_cache[i].addr, addr)) {
+				cache_found = i;
+				break;
+			}
+			if (cache_empty < 0 && !acs_settings_cache[i].valid) {
+				cache_empty = i;
+			}
 		}
-		if (cache_empty < 0 && !acs_settings_cache[i].valid) {
-			cache_empty = i;
+
+		if (cache_found >= 0) {
+			acs_settings_cache[cache_found].store = store;
+			LOG_DBG("ACS session stored for peer");
+		} else if (cache_empty >= 0) {
+			bt_addr_le_copy(&acs_settings_cache[cache_empty].addr, addr);
+			acs_settings_cache[cache_empty].store = store;
+			acs_settings_cache[cache_empty].valid = true;
 		}
+
+		k_sem_give(&acs_settings_cache_lock);
 	}
 
-	if (cache_found >= 0) {
-		acs_settings_cache[cache_found].store = store;
-		LOG_DBG("ACS session stored for peer");
-	} else if (cache_empty >= 0) {
-		bt_addr_le_copy(&acs_settings_cache[cache_empty].addr, addr);
-		acs_settings_cache[cache_empty].store = store;
-		acs_settings_cache[cache_empty].valid = true;
-	} else {
+	if (cache_found < 0 && cache_empty < 0) {
 		LOG_WRN("ACS session written to NVS but cache full "
 			"(CONFIG_BT_MAX_CONN=%d) — session will not be "
 			"restored on reconnect this boot",
@@ -218,6 +232,8 @@ static int acs_settings_set(const char *name, size_t len_rd, settings_read_cb re
 
 	if (len_rd == 0) {
 		/* Key deleted — clear cache entry for this peer */
+		k_sem_take(&acs_settings_cache_lock, K_FOREVER);
+
 		for (int i = 0; i < CONFIG_BT_MAX_CONN; i++) {
 			if (acs_settings_cache[i].valid &&
 			    bt_addr_le_eq(&acs_settings_cache[i].addr, &addr)) {
@@ -225,6 +241,7 @@ static int acs_settings_set(const char *name, size_t len_rd, settings_read_cb re
 				break;
 			}
 		}
+		k_sem_give(&acs_settings_cache_lock);
 		LOG_DBG("ACS session deleted for peer");
 		return 0;
 	}
@@ -235,15 +252,22 @@ static int acs_settings_set(const char *name, size_t len_rd, settings_read_cb re
 		return -EINVAL;
 	}
 
-	for (int i = 0; i < CONFIG_BT_MAX_CONN; i++) {
-		if (!acs_settings_cache[i].valid) {
-			bt_addr_le_copy(&acs_settings_cache[i].addr, &addr);
-			acs_settings_cache[i].store = store;
-			acs_settings_cache[i].valid = true;
-			bt_addr_le_to_str(&addr, addr_str, sizeof(addr_str));
-			LOG_INF("Loaded session key for peer %s (slot %d)", addr_str, i);
-			break;
+	{
+		k_sem_take(&acs_settings_cache_lock, K_FOREVER);
+
+		for (int i = 0; i < CONFIG_BT_MAX_CONN; i++) {
+			if (!acs_settings_cache[i].valid) {
+				bt_addr_le_copy(&acs_settings_cache[i].addr, &addr);
+				acs_settings_cache[i].store = store;
+				acs_settings_cache[i].valid = true;
+				bt_addr_le_to_str(&addr, addr_str, sizeof(addr_str));
+				LOG_INF("Loaded session key for peer %s (slot %d)", addr_str,
+					i);
+				break;
+			}
 		}
+
+		k_sem_give(&acs_settings_cache_lock);
 	}
 
 	return 0;
@@ -253,11 +277,15 @@ static int acs_settings_commit(void)
 {
 	int count = 0;
 
+	k_sem_take(&acs_settings_cache_lock, K_FOREVER);
+
 	for (int i = 0; i < CONFIG_BT_MAX_CONN; i++) {
 		if (acs_settings_cache[i].valid) {
 			count++;
 		}
 	}
+
+	k_sem_give(&acs_settings_cache_lock);
 
 	if (count > 0) {
 		LOG_INF("%d stored session key(s) ready for reconnect", count);
@@ -273,12 +301,26 @@ BT_SETTINGS_DEFINE(acs, "acs", acs_settings_set, acs_settings_commit);
 void acs_session_restore(struct bt_conn *conn, struct bt_acs_conn *acs_conn)
 {
 	const bt_addr_le_t *addr = bt_conn_get_dst(conn);
-	struct bt_acs_session_store const *s;
+	struct bt_acs_session_store store_copy;
+	bool found = false;
 	const struct bt_acs_cb *cb = acs_cb_get();
 
-	for (int i = 0; i < CONFIG_BT_MAX_CONN; i++) {
-		if (acs_settings_cache[i].valid &&
-		    bt_addr_le_eq(&acs_settings_cache[i].addr, addr)) {
+	{
+		k_sem_take(&acs_settings_cache_lock, K_FOREVER);
+
+		for (int i = 0; i < CONFIG_BT_MAX_CONN; i++) {
+			if (acs_settings_cache[i].valid &&
+			    bt_addr_le_eq(&acs_settings_cache[i].addr, addr)) {
+				store_copy = acs_settings_cache[i].store;
+				found = true;
+				break;
+			}
+		}
+
+		k_sem_give(&acs_settings_cache_lock);
+	}
+
+	if (found) {
 			struct bt_acs_runtime_key_state *parent_key;
 			int err;
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
@@ -286,20 +328,19 @@ void acs_session_restore(struct bt_conn *conn, struct bt_acs_conn *acs_conn)
 #endif
 			struct bt_acs_runtime_key_state *established_key;
 
-			s = &acs_settings_cache[i].store;
-			err = acs_crypto_current_key_lookup(acs_conn, s->parent_key_id,
+			err = acs_crypto_current_key_lookup(acs_conn, store_copy.parent_key_id,
 							    &parent_key);
 
 			if (err) {
 				LOG_ERR("No runtime key state for restored parent Key_ID 0x%04x",
-					s->parent_key_id);
+					store_copy.parent_key_id);
 				return;
 			}
 
-			acs_conn->restriction_map_id = s->restriction_map_id;
+			acs_conn->restriction_map_id = store_copy.restriction_map_id;
 
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF) && !IS_ENABLED(CONFIG_BT_ACS_KDF_SESSION_KEY)
-			if (s->kdf_child_valid) {
+			if (store_copy.kdf_child_valid) {
 				/* Restore both current keys: the exchanged parent key remains
 				 * addressable by Key_ID, while the KDF child resumes as the live
 				 * AEAD key with its own nonce state. */
@@ -310,19 +351,20 @@ void acs_session_restore(struct bt_conn *conn, struct bt_acs_conn *acs_conn)
 					return;
 				}
 
-				memcpy(parent_key->key, s->parent_key,
+				memcpy(parent_key->key, store_copy.parent_key,
 				       CONFIG_BT_ACS_SESSION_KEY_SIZE);
-				memcpy(kdf_key->key, s->child_key, CONFIG_BT_ACS_SESSION_KEY_SIZE);
+				memcpy(kdf_key->key, store_copy.child_key,
+				       CONFIG_BT_ACS_SESSION_KEY_SIZE);
 			} else
 #endif
 			{
-				memcpy(parent_key->key, s->parent_key,
+				memcpy(parent_key->key, store_copy.parent_key,
 				       CONFIG_BT_ACS_SESSION_KEY_SIZE);
 			}
 
 			if (acs_crypto_import_current_key(
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF) && !IS_ENABLED(CONFIG_BT_ACS_KDF_SESSION_KEY)
-				    s->kdf_child_valid ? kdf_key :
+				    store_copy.kdf_child_valid ? kdf_key :
 #endif
 						       parent_key) != 0) {
 				LOG_ERR("Failed to import restored session key into PSA");
@@ -332,7 +374,7 @@ void acs_session_restore(struct bt_conn *conn, struct bt_acs_conn *acs_conn)
 			}
 
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF) && !IS_ENABLED(CONFIG_BT_ACS_KDF_SESSION_KEY)
-			if (s->kdf_child_valid) {
+			if (store_copy.kdf_child_valid) {
 				if (acs_crypto_import_current_key(parent_key) != 0) {
 					LOG_ERR("Failed to import restored parent key into PSA");
 					return;
@@ -347,10 +389,10 @@ void acs_session_restore(struct bt_conn *conn, struct bt_acs_conn *acs_conn)
 				return;
 			}
 
-			for (size_t rec_idx = 0; rec_idx < s->nonce_record_count; rec_idx++) {
+			for (size_t rec_idx = 0; rec_idx < store_copy.nonce_record_count; rec_idx++) {
 				struct bt_acs_record_state *record_state;
 				const struct bt_acs_session_store_record_state *stored_record =
-					&s->nonce_records[rec_idx];
+					&store_copy.nonce_records[rec_idx];
 
 				err = acs_crypto_record_state_lookup(
 					acs_conn, stored_record->key_id, &record_state);
@@ -413,7 +455,6 @@ void acs_session_restore(struct bt_conn *conn, struct bt_acs_conn *acs_conn)
 							 CONFIG_BT_ACS_SESSION_KEY_SIZE);
 			}
 			return;
-		}
 	}
 }
 
@@ -428,14 +469,21 @@ static void acs_bond_deleted(uint8_t id, const bt_addr_le_t *peer)
 		return;
 	}
 
-	for (int i = 0; i < CONFIG_BT_MAX_CONN; i++) {
-		if (acs_settings_cache[i].valid &&
-		    bt_addr_le_eq(&acs_settings_cache[i].addr, peer)) {
-			acs_settings_cache[i].valid = false;
-			bt_addr_le_to_str(peer, addr_str, sizeof(addr_str));
-			LOG_INF("Session key deleted for peer %s (bond removed)", addr_str);
-			break;
+	{
+		k_sem_take(&acs_settings_cache_lock, K_FOREVER);
+
+		for (int i = 0; i < CONFIG_BT_MAX_CONN; i++) {
+			if (acs_settings_cache[i].valid &&
+			    bt_addr_le_eq(&acs_settings_cache[i].addr, peer)) {
+				acs_settings_cache[i].valid = false;
+				bt_addr_le_to_str(peer, addr_str, sizeof(addr_str));
+				LOG_INF("Session key deleted for peer %s (bond removed)",
+					addr_str);
+				break;
+			}
 		}
+
+		k_sem_give(&acs_settings_cache_lock);
 	}
 }
 
@@ -447,27 +495,49 @@ struct bt_conn_auth_info_cb acs_auth_info_cb = {
 void acs_session_clear_all(struct bt_conn const *conn)
 {
 	struct bt_conn_info info;
+	bt_addr_le_t addrs[CONFIG_BT_MAX_CONN];
 	char addr_str[BT_ADDR_LE_STR_LEN];
+	size_t addr_count = 0U;
 	int ret;
 
 	if (bt_conn_get_info(conn, &info) != 0) {
 		return;
 	}
 
-	for (int i = 0; i < CONFIG_BT_MAX_CONN; i++) {
-		if (!acs_settings_cache[i].valid) {
-			continue;
+	{
+		k_sem_take(&acs_settings_cache_lock, K_FOREVER);
+
+		for (int i = 0; i < CONFIG_BT_MAX_CONN; i++) {
+			if (!acs_settings_cache[i].valid) {
+				continue;
+			}
+
+			if (bt_addr_le_eq(&acs_settings_cache[i].addr, bt_conn_get_dst(conn))) {
+				continue;
+			}
+
+			addrs[addr_count++] = acs_settings_cache[i].addr;
 		}
 
-		if (bt_addr_le_eq(&acs_settings_cache[i].addr, bt_conn_get_dst(conn))) {
-			continue;
-		}
+		k_sem_give(&acs_settings_cache_lock);
+	}
 
-		ret = bt_settings_delete("acs", info.id, &acs_settings_cache[i].addr);
+	for (size_t i = 0; i < addr_count; i++) {
+		ret = bt_settings_delete("acs", info.id, &addrs[i]);
 		if (ret == 0 || ret == -ENOENT) {
-			bt_addr_le_to_str(&acs_settings_cache[i].addr, addr_str, sizeof(addr_str));
+			k_sem_take(&acs_settings_cache_lock, K_FOREVER);
+
+			for (int slot = 0; slot < CONFIG_BT_MAX_CONN; slot++) {
+				if (acs_settings_cache[slot].valid &&
+				    bt_addr_le_eq(&acs_settings_cache[slot].addr, &addrs[i])) {
+					acs_settings_cache[slot].valid = false;
+					break;
+				}
+			}
+			k_sem_give(&acs_settings_cache_lock);
+
+			bt_addr_le_to_str(&addrs[i], addr_str, sizeof(addr_str));
 			LOG_INF("Session key erased for peer %s (invalidate all)", addr_str);
-			acs_settings_cache[i].valid = false;
 		} else {
 			LOG_WRN("Failed to delete stored session (err %d)", ret);
 		}
@@ -476,6 +546,8 @@ void acs_session_clear_all(struct bt_conn const *conn)
 
 void acs_session_invalidate_cache(const bt_addr_le_t *addr)
 {
+	k_sem_take(&acs_settings_cache_lock, K_FOREVER);
+
 	for (int i = 0; i < CONFIG_BT_MAX_CONN; i++) {
 		if (acs_settings_cache[i].valid &&
 		    bt_addr_le_eq(&acs_settings_cache[i].addr, addr)) {
@@ -483,6 +555,8 @@ void acs_session_invalidate_cache(const bt_addr_le_t *addr)
 			break;
 		}
 	}
+
+	k_sem_give(&acs_settings_cache_lock);
 }
 
 #endif /* CONFIG_BT_SETTINGS */

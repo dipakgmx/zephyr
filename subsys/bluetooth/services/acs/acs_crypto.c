@@ -32,7 +32,7 @@ int acs_crypto_current_key_id_from_key_desc(const struct bt_acs_key_desc_record 
 	uint8_t depth = 0U;
 
 	if (!rec || !current_key_id) {
-		LOG_ERR("current key descriptor resolution called with invalid arguments");
+		LOG_DBG("current key descriptor resolution called with invalid arguments");
 		__ASSERT_NO_MSG(rec != NULL);
 		__ASSERT_NO_MSG(current_key_id != NULL);
 		return -EINVAL;
@@ -81,8 +81,9 @@ void acs_crypto_init_slots(struct bt_acs_conn *acs_conn)
 		record_state = &acs_conn->crypto.record_states[record_slot++];
 		record_state->key_desc = rec;
 		err = acs_crypto_current_key_id_from_key_desc(rec, &record_state->current_key_id);
-		__ASSERT_NO_MSG(err == 0);
 		if (err != 0) {
+			LOG_WRN("Unable to resolve current key for descriptor Key_ID 0x%04x",
+				rec->key_id);
 			record_state->current_key_id = 0U;
 		}
 	}
@@ -92,7 +93,7 @@ int acs_crypto_current_key_lookup(struct bt_acs_conn *acs_conn, uint16_t key_id,
 				  struct bt_acs_runtime_key_state **current_key)
 {
 	if (!acs_conn || !current_key) {
-		LOG_ERR("current key lookup called with invalid arguments");
+		LOG_DBG("current key lookup called with invalid arguments");
 		__ASSERT_NO_MSG(acs_conn != NULL);
 		__ASSERT_NO_MSG(current_key != NULL);
 		return -EINVAL;
@@ -119,7 +120,7 @@ int acs_crypto_current_key_from_isc(struct bt_acs_conn *acs_conn, uint16_t isc_i
 	int err;
 
 	if (!acs_conn || !current_key) {
-		LOG_ERR("current key resolution from ISC called with invalid arguments");
+		LOG_DBG("current key resolution from ISC called with invalid arguments");
 		__ASSERT_NO_MSG(acs_conn != NULL);
 		__ASSERT_NO_MSG(current_key != NULL);
 		return -EINVAL;
@@ -150,7 +151,7 @@ int acs_crypto_record_state_lookup(struct bt_acs_conn *acs_conn, uint16_t key_id
 				   struct bt_acs_record_state **record_state)
 {
 	if (!acs_conn || !record_state) {
-		LOG_ERR("record state lookup called with invalid arguments");
+		LOG_DBG("record state lookup called with invalid arguments");
 		__ASSERT_NO_MSG(acs_conn != NULL);
 		__ASSERT_NO_MSG(record_state != NULL);
 		return -EINVAL;

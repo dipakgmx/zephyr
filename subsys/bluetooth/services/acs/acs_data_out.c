@@ -14,13 +14,6 @@
 #include <zephyr/bluetooth/gatt.h>
 #include <zephyr/bluetooth/services/acs.h>
 
-#include <zephyr/device.h>
-#include <zephyr/drivers/emul.h>
-#include <zephyr/drivers/emul_sensor.h>
-#include <zephyr/drivers/spi.h>
-#include <zephyr/drivers/spi_emul.h>
-#include <zephyr/logging/log.h>
-
 #include "acs_internal.h"
 #include "acs_isc.h"
 

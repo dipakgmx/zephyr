@@ -29,9 +29,6 @@ struct bt_acs_conn;
 /** AES-CMAC: ParentID(2) + MsgType(1) + MAC(1) — nonce fields excluded per Table 4.45 C.1 */
 #define ACS_KEY_DESC_AES_CMAC_DATA_SIZE 4
 
-/* Backwards-compatible alias for existing code */
-#define ACS_KEY_DESC_AES_CCM_MANDATORY_SIZE ACS_KEY_DESC_AES_ALG_MANDATORY_SIZE
-
 /** OOB Data: OOB_Method(1) + ServerFmt(1) + ClientFmt(1) + Curve(1) + KDF(1) (Table 4.37) */
 #define ACS_KEY_DESC_OOB_DATA_SIZE 5
 
