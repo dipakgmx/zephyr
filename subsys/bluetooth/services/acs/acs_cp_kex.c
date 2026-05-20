@@ -319,17 +319,6 @@ int acs_cp_kex_start(struct acs_procedure *proc, struct net_buf_simple *buf)
 	} else
 #endif /* CONFIG_BT_ACS_KEY_EXCHANGE_KDF */
 	{
-		struct bt_acs_runtime_key_state const *established_key =
-			acs_key_exchange_established_key(acs_conn);
-
-		if (established_key != NULL) {
-			LOG_WRN("Start Key Exchange: Key_ID 0x%04x rejected — current key 0x%04x "
-				"already established, invalidate first",
-				key_id, acs_runtime_key_id(established_key));
-			return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_START_KEY_EXCHANGE,
-						 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE);
-		}
-
 		if (!acs_conn->crypto.kex) {
 			if (acs_kex_alloc(acs_conn) != 0) {
 				LOG_ERR("No free KEX context");

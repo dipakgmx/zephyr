@@ -46,6 +46,17 @@ static inline bool is_active_key_id(uint16_t key_id)
 	       ((ACS_ACTIVE_KEY_ID_MASK & BIT(key_id)) != 0U);
 }
 
+static bool current_key_is_valid(struct bt_acs_conn *acs_conn, uint16_t key_id)
+{
+	struct bt_acs_runtime_key_state *current_key;
+
+	if (acs_crypto_current_key_lookup(acs_conn, key_id, &current_key) != 0) {
+		return false;
+	}
+
+	return current_key->psa_key_id != 0U;
+}
+
 static int invalidate_self_step(struct acs_procedure *proc)
 {
 	struct bt_acs_conn *acs_conn = proc->acs_conn;
@@ -157,13 +168,12 @@ int acs_sec_mgmt_invalidate_key(struct acs_procedure *proc, struct net_buf_simpl
 					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 	}
 
-	if (!acs_session_established(proc->acs_conn)) {
-		LOG_ERR("Invalidate Key ID 0x%04x: no security established", key_id);
-		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_INVALIDATE_KEY,
-					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE);
-	}
-
 	if (key_id == BT_ACS_GET_KEY_DESC_ALL_RECORDS_FILTER) {
+		if (acs_key_exchange_established_key(proc->acs_conn) == NULL) {
+			return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_INVALIDATE_KEY,
+						 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE);
+		}
+
 		bt_acs_invalidate_security(proc->acs_conn->conn);
 		response_code = BT_ACS_CP_RESPONSE_SUCCESS;
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
@@ -225,13 +235,18 @@ int acs_sec_mgmt_invalidate_key(struct acs_procedure *proc, struct net_buf_simpl
 		}
 #endif
 	} else if (is_active_key_id(key_id)) {
-		ret = bt_acs_invalidate_security(proc->acs_conn->conn);
-		if (ret) {
-			LOG_ERR("Failed to invalidate security for key ID 0x%04x: %d", key_id, ret);
-			response_code = BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED;
+		if (!current_key_is_valid(proc->acs_conn, key_id)) {
+			response_code = BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE;
 		} else {
-			response_code = BT_ACS_CP_RESPONSE_SUCCESS;
-			LOG_DBG("Key ID 0x%04x invalidated (full teardown)", key_id);
+			ret = bt_acs_invalidate_security(proc->acs_conn->conn);
+			if (ret) {
+				LOG_ERR("Failed to invalidate security for key ID 0x%04x: %d",
+					key_id, ret);
+				response_code = BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED;
+			} else {
+				response_code = BT_ACS_CP_RESPONSE_SUCCESS;
+				LOG_DBG("Key ID 0x%04x invalidated (full teardown)", key_id);
+			}
 		}
 	} else {
 		LOG_ERR("Invalidate Key received with unknown Key ID 0x%04x", key_id);

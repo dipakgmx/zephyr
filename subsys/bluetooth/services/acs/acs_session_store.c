@@ -414,22 +414,18 @@ void acs_session_restore(struct bt_conn *conn, struct bt_acs_conn *acs_conn)
 				record_state->rx_nonce_counter = stored_record->rx_nonce_counter;
 			}
 
-			/* Security is only fully established when the AEAD key is
-			 * available.  With KDF configured, that means the child key
-			 * must be present; the ECDH parent alone cannot perform
-			 * protected operations. */
+			if (parent_key->psa_key_id != 0U
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
-			if (kdf_key && kdf_key->psa_key_id != 0U) {
+			    || (kdf_key && kdf_key->psa_key_id != 0U)
+#endif
+			) {
 				acs_conn->status_flags |= BT_ACS_STATUS_SECURITY_ESTABLISHED;
 			}
-#else
-			acs_conn->status_flags |= BT_ACS_STATUS_SECURITY_ESTABLISHED;
-#endif
 
 			LOG_INF("ACS session restored for bonded peer%s",
 				(acs_conn->status_flags & BT_ACS_STATUS_SECURITY_ESTABLISHED)
 					? " (security established)"
-					: " (parent only, KDF child required)");
+					: " (no valid restored key)");
 
 			established_key = parent_key;
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
