@@ -98,6 +98,9 @@ bool acs_is_initialized(void);
 /** @brief Return the registered application callbacks, or NULL. */
 const struct bt_acs_cb *acs_cb_get(void);
 
+/** @brief Return the dedicated ACS workqueue. */
+struct k_work_q *acs_get_wq(void);
+
 /* ---- Connection state lookup -------------------------------------------- */
 
 /**

@@ -606,6 +606,21 @@ config BT_ACS_MAX_INFLIGHT_REQ_PER_CONN
 	  into request contexts from a slab so new requests can still be admitted while
 	  earlier responses are waiting to be sent.
 
+config BT_ACS_WORKQUEUE_STACK_SIZE
+	int "ACS workqueue stack size"
+	default 2048
+	range 1024 8192
+	help
+	  Stack size for the dedicated ACS workqueue used for protected request
+	  handling and segmented Data Out indication continuation.
+
+config BT_ACS_WORKQUEUE_THREAD_PRIO
+	int "ACS workqueue thread priority"
+	default 3
+	help
+	  Scheduling priority of the dedicated ACS workqueue used for protected
+	  request handling and segmented Data Out indication continuation.
+
 
 config BT_ACS_GATT_AUTHORIZATION
 	bool "Auto-register GATT authorization callback"

@@ -203,21 +203,6 @@ uint8_t acs_key_desc_nonce_size(const struct bt_acs_key_desc_record *rec)
 	}
 }
 
-uint8_t acs_key_desc_nonce_var_size(const struct bt_acs_key_desc_record *rec)
-{
-	return rec ? rec->aes.nonce_var_size : 0U;
-}
-
-uint8_t acs_key_desc_nonce_fixed_size(const struct bt_acs_key_desc_record *rec)
-{
-	return rec ? rec->aes.nonce_fixed_size : 0U;
-}
-
-uint8_t acs_key_desc_auth_tag_size(const struct bt_acs_key_desc_record *rec)
-{
-	return rec ? rec->aes.mac_size : 0U;
-}
-
 /**
  * @brief Serialize an AES algorithm record into the response buffer.
  *

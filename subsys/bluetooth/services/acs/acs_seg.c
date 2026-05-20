@@ -10,7 +10,7 @@
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/bluetooth/gatt.h>
 
-#include "acs_seg.h"
+#include "acs_internal.h"
 
 #include <zephyr/logging/log.h>
 LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
@@ -247,7 +247,7 @@ static void acs_seg_tx_confirm_cb(struct bt_conn *conn, struct bt_gatt_indicate_
 		LOG_DBG("seg_tx: indication confirmed, more segments pending offset=%u "
 			"total_len=%u",
 			ctx->tx_offset, buf_len);
-		k_work_submit(&ctx->tx_work);
+		k_work_submit_to_queue(acs_get_wq(), &ctx->tx_work);
 		return;
 	}
 
@@ -459,6 +459,6 @@ int acs_seg_tx_send(struct acs_seg_tx_ctx *ctx, struct bt_conn *conn,
 	__ASSERT_NO_MSG(ctx->tx_conn == NULL);
 	ctx->tx_conn = bt_conn_ref(conn);
 
-	k_work_submit(&ctx->tx_work);
+	k_work_submit_to_queue(acs_get_wq(), &ctx->tx_work);
 	return 0;
 }

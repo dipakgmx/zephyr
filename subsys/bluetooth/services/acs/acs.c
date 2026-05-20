@@ -8,6 +8,7 @@
 #include <stdbool.h>
 #include <string.h>
 
+#include <zephyr/kernel.h>
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/bluetooth/conn.h>
 #include <zephyr/bluetooth/gatt.h>
@@ -25,6 +26,12 @@ LOG_MODULE_REGISTER(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
 static const struct bt_acs_cb *acs_cb;
 static bool acs_initialized;
 
+static struct k_work_q acs_work_q;
+K_THREAD_STACK_DEFINE(acs_work_q_stack, CONFIG_BT_ACS_WORKQUEUE_STACK_SIZE);
+static const struct k_work_queue_config acs_work_q_config = {
+	.name = "BT_ACS_WQ",
+};
+
 bool acs_is_initialized(void)
 {
 	return acs_initialized;
@@ -33,6 +40,11 @@ bool acs_is_initialized(void)
 const struct bt_acs_cb *acs_cb_get(void)
 {
 	return acs_cb;
+}
+
+struct k_work_q *acs_get_wq(void)
+{
+	return &acs_work_q;
 }
 
 static ssize_t acs_status_read(struct bt_conn *conn, const struct bt_gatt_attr *attr, void *buf,
@@ -256,6 +268,13 @@ int bt_acs_init(const struct bt_acs_cb *cb)
 	}
 
 	acs_cb = cb;
+
+
+	k_work_queue_init(&acs_work_q);
+	k_work_queue_start(&acs_work_q, acs_work_q_stack,
+			   K_THREAD_STACK_SIZEOF(acs_work_q_stack),
+			   CONFIG_BT_ACS_WORKQUEUE_THREAD_PRIO,
+			   &acs_work_q_config);
 
 	ret = acs_gatt_attrs_cache();
 	if (ret) {

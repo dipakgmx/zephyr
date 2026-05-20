@@ -20,14 +20,6 @@
 #include <zephyr/logging/log.h>
 LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
 
-static void data_tx_put_nonce_var(uint8_t *secure_data, uint8_t nonce_var_size, uint64_t tx_counter)
-{
-	__ASSERT_NO_MSG(secure_data != NULL);
-	__ASSERT_NO_MSG(nonce_var_size <= sizeof(tx_counter));
-
-	sys_put_le(secure_data, &tx_counter, nonce_var_size);
-}
-
 /*
  * Serialise PSA output [Ciphertext-or-Data(MSO) || Tag(MSO)] into wire format
  * MAC(LSO) || Ciphertext-or-Data(LSO). All currently supported algorithms
@@ -66,7 +58,7 @@ static int data_tx_encrypt_in_place(struct bt_acs_conn *acs_conn, uint16_t isc_i
 	uint16_t cipher_len = 0;
 	uint64_t tx_counter;
 	const struct bt_acs_isc_record *isc;
-	struct bt_acs_record_state *record_state;
+	struct bt_acs_key_desc_runtime *record_state;
 	const struct bt_acs_key_desc_record *key_desc;
 	uint8_t nonce_var_size;
 	uint8_t auth_tag_size;
@@ -103,7 +95,7 @@ static int data_tx_encrypt_in_place(struct bt_acs_conn *acs_conn, uint16_t isc_i
 	plaintext = buf->data;
 	plain_len = buf->len;
 
-	err = acs_crypto_record_state_lookup(acs_conn, isc->key_id, &record_state);
+	err = acs_crypto_key_desc_runtime_lookup(acs_conn, isc->key_id, &record_state);
 	if (err || record_state->psa_key_id == 0U) {
 		LOG_ERR("encrypt_in_place: no record state for isc_id 0x%04x", isc_id);
 		return -EACCES;
@@ -115,8 +107,7 @@ static int data_tx_encrypt_in_place(struct bt_acs_conn *acs_conn, uint16_t isc_i
 	/* Reverse plaintext to LSO order for wire (spec §3.2). */
 	sys_mem_swap(plaintext, plain_len);
 
-	err = acs_crypto_encrypt(acs_conn, record_state, plaintext, plain_len, plaintext,
-				 &cipher_len);
+	err = acs_crypto_encrypt(record_state, plaintext, plain_len, plaintext, &cipher_len);
 	if (err) {
 		if (err == -ENOSPC) {
 			LOG_WRN("Nonce exhausted on encrypt — invalidating security");
@@ -133,12 +124,10 @@ static int data_tx_encrypt_in_place(struct bt_acs_conn *acs_conn, uint16_t isc_i
 	net_buf_add(buf, auth_tag_size);
 
 	/* Push Nonce_Var and ISC_ID into the reserved headroom. */
-	{
-		uint8_t *hdr = net_buf_push(buf, nonce_var_size + 2U);
+	uint8_t *hdr = net_buf_push(buf, nonce_var_size + sizeof(uint16_t));
 
-		sys_put_le16(isc_id, hdr);
-		data_tx_put_nonce_var(hdr + 2U, nonce_var_size, tx_counter);
-	}
+	sys_put_le16(isc_id, hdr);
+	sys_put_le(hdr + sizeof(uint16_t), &tx_counter, nonce_var_size);
 
 	return 0;
 }
@@ -172,7 +161,7 @@ static void data_tx_drain_doi_queue(struct bt_acs_conn *acs_conn)
 		return;
 	}
 
-	for (uint8_t attempts = 0; attempts < CONFIG_BT_ACS_MAX_INFLIGHT_REQ_PER_CONN; attempts++) {
+	while (true) {
 		if (atomic_ptr_get(&acs_conn->active_indication) != NULL) {
 			return;
 		}
@@ -214,8 +203,9 @@ static void data_tx_drain_doi_queue(struct bt_acs_conn *acs_conn)
  * Each step in a protected CP reply sequence (e.g. Get All Active Descriptors)
  * builds a response, runs PSA crypto, and queues a new indication.  Running
  * this synchronously inside the ATT indication confirm callback would nest
- * multiple crypto frames on the sysworkq stack.  Instead, the confirm callback
- * schedules this work item so each step executes in its own stack frame.
+ * multiple crypto frames on the ACS workqueue stack.  Instead, the confirm
+ * callback schedules this work item so each step executes in its own stack
+ * frame.
  *
  * req->work is safe to reuse here: protected CP requests are dispatched
  * synchronously via acs_cp_dispatch(), not through the work queue, so the
@@ -272,7 +262,7 @@ static void data_tx_completion_cb(struct bt_conn *conn, const struct bt_gatt_att
 	if (continue_reply_seq) {
 		if (!err) {
 			k_work_init(&req->work, data_tx_seq_continue_work);
-			k_work_submit(&req->work);
+			k_work_submit_to_queue(acs_get_wq(), &req->work);
 			return;
 		}
 
@@ -340,17 +330,16 @@ struct net_buf *acs_prepare_reply_buf(struct acs_procedure *proc, bool encrypted
 		__ASSERT_NO_MSG(encrypted);
 	}
 
-	buf = proc->buffers.response_buf; /* attempting reusing the response buffer */
+	buf = proc->buffers.response_buf;
 	if (!buf) {
 		buf = acs_buf_alloc(K_NO_WAIT);
 		if (!buf) {
-			LOG_ERR("acs_prepare_reply_buf: buffer pool exhausted");
+			LOG_ERR("buffer pool exhausted");
 			return NULL;
 		}
 		proc->buffers.response_buf = buf;
-	} else {
-		net_buf_reset(buf);
 	}
+	net_buf_reset(buf);
 
 	if (encrypted) {
 		net_buf_reserve(buf, ACS_CRYPTO_HEADROOM);
@@ -436,8 +425,8 @@ int acs_tx_submit(struct acs_procedure *proc, const struct acs_reply *reply)
 		return data_tx_send_indicate(proc);
 #endif
 	default:
-		__ASSERT_UNREACHABLE;
-		LOG_ERR("acs_tx_submit: invalid channel %d", (int)reply->channel);
+		CODE_UNREACHABLE;
+		LOG_ERR("invalid channel %d", (int)reply->channel);
 		return -EINVAL;
 	}
 }

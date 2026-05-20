@@ -75,32 +75,29 @@ static int acs_runtime_classify_frame(const struct acs_frame *frame, uint16_t ma
 int acs_runtime_dispatch_protected_cp_frame(struct acs_frame *frame, struct bt_acs_conn *acs_conn)
 {
 	struct acs_procedure *req_ctx;
-	uint16_t data_offset;
-	int sub_err;
+	int err;
 
 	__ASSERT_NO_MSG(frame != NULL);
 	__ASSERT_NO_MSG(acs_conn != NULL);
 	__ASSERT_NO_MSG(acs_conn->data_rx.buf != NULL);
 
 	/* Spec-mandated: reject Data In write if DOI CCC not configured. */
-	sub_err = acs_doi_ccc_check(frame->conn);
-	if (sub_err == -EINVAL) {
+	err = acs_doi_ccc_check(frame->conn);
+	if (err == -EINVAL) {
 		LOG_WRN("Data In: DOI indications not enabled for protected CP handle 0x%04x",
 			frame->resource_handle);
 		return ACS_DATA_ERR_CCC_IMPROPER_CONF;
 	}
-	if (sub_err) {
+	if (err) {
 		LOG_WRN("Data In: DOI unavailable for protected CP handle 0x%04x (%d)",
-			frame->resource_handle, sub_err);
-		return sub_err;
+			frame->resource_handle, err);
+		return err;
 	}
 
 	LOG_DBG("Data In: routing handle 0x%04x to CP dispatcher (respond via DOI)",
 		frame->resource_handle);
 
-	data_offset = (uint16_t)(frame->payload - acs_conn->data_rx.buf->data);
-	req_ctx = acs_procedure_alloc(acs_conn, frame->resource_handle, frame->isc_id, data_offset,
-				      frame->payload_len);
+	req_ctx = acs_procedure_alloc(acs_conn, frame->resource_handle, frame->isc_id);
 	if (!req_ctx) {
 		LOG_WRN("Data In: no free CP request context for handle 0x%04x",
 			frame->resource_handle);
@@ -109,8 +106,10 @@ int acs_runtime_dispatch_protected_cp_frame(struct acs_frame *frame, struct bt_a
 
 	req_ctx->buffers.request_buf = acs_conn->data_rx.buf;
 	acs_conn->data_rx.buf = NULL;
+	net_buf_pull(req_ctx->buffers.request_buf,
+		     (size_t)(frame->payload - req_ctx->buffers.request_buf->data));
 
-	sub_err = acs_cp_dispatch(frame, acs_conn, req_ctx);
+	err = acs_cp_dispatch(frame, acs_conn, req_ctx);
 
 	/* The CP handler ran synchronously and consumed the input bytes already.
 	 * Drop the decrypted_request buffer now so it returns to the pool while
@@ -129,35 +128,32 @@ int acs_runtime_dispatch_protected_cp_frame(struct acs_frame *frame, struct bt_a
 	if (!req_ctx->reply_seq.desc) {
 		acs_procedure_release_owner(req_ctx);
 	}
-	return sub_err;
+	return err;
 }
 
 int acs_runtime_dispatch_protected_char_frame(struct acs_frame *frame, struct bt_acs_conn *acs_conn)
 {
 	struct acs_procedure *req_ctx;
-	uint16_t data_offset;
-	int sub_err;
+	int err;
 
 	__ASSERT_NO_MSG(frame != NULL);
 	__ASSERT_NO_MSG(acs_conn != NULL);
 	__ASSERT_NO_MSG(acs_conn->data_rx.buf != NULL);
 
-	sub_err = acs_require_data_out_subscription(frame->conn, frame->resource_handle,
-						    frame->payload_len);
-	if (sub_err == -EINVAL) {
+	err = acs_require_data_out_subscription(frame->conn, frame->resource_handle,
+						frame->payload_len);
+	if (err == -EINVAL) {
 		LOG_WRN("Data In: required Data Out CCC not enabled for handle 0x%04x",
 			frame->resource_handle);
 		return ACS_DATA_ERR_CCC_IMPROPER_CONF;
 	}
-	if (sub_err) {
+	if (err) {
 		LOG_WRN("Data In: unable to resolve Data Out path for handle 0x%04x (%d)",
-			frame->resource_handle, sub_err);
-		return sub_err;
+			frame->resource_handle, err);
+		return err;
 	}
 
-	data_offset = (uint16_t)(frame->payload - acs_conn->data_rx.buf->data);
-	req_ctx = acs_procedure_alloc(acs_conn, frame->resource_handle, frame->isc_id, data_offset,
-				      frame->payload_len);
+	req_ctx = acs_procedure_alloc(acs_conn, frame->resource_handle, frame->isc_id);
 	if (!req_ctx) {
 		LOG_WRN("Data In: no free request context for handle 0x%04x",
 			frame->resource_handle);
@@ -166,8 +162,10 @@ int acs_runtime_dispatch_protected_char_frame(struct acs_frame *frame, struct bt
 
 	req_ctx->buffers.request_buf = acs_conn->data_rx.buf;
 	acs_conn->data_rx.buf = NULL;
+	net_buf_pull(req_ctx->buffers.request_buf,
+		     (size_t)(frame->payload - req_ctx->buffers.request_buf->data));
 
-	k_work_submit(&req_ctx->work);
+	k_work_submit_to_queue(acs_get_wq(), &req_ctx->work);
 	return 0;
 }
 #endif /* CONFIG_BT_ACS_FEAT_AUTHENTICATION */

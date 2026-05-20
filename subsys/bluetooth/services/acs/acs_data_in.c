@@ -89,7 +89,7 @@ int acs_require_data_out_subscription(struct bt_conn *conn, uint16_t resource_ha
 }
 
 static int acs_data_in_validate(struct bt_acs_conn *acs_conn, struct net_buf_simple *buf,
-				uint16_t *isc_id, struct bt_acs_record_state **record_state,
+				uint16_t *isc_id, struct bt_acs_key_desc_runtime **record_state,
 				uint64_t *received_counter)
 {
 	const struct bt_acs_isc_record *isc;
@@ -125,7 +125,7 @@ static int acs_data_in_validate(struct bt_acs_conn *acs_conn, struct net_buf_sim
 		return ACS_DATA_ERR_INCORRECT_SECURITY_CONFIG;
 	}
 
-	if (acs_crypto_record_state_lookup(acs_conn, isc->key_id, record_state) != 0) {
+	if (acs_crypto_key_desc_runtime_lookup(acs_conn, isc->key_id, record_state) != 0) {
 		LOG_WRN("no record state installed for ISC_ID 0x%04x", *isc_id);
 		return ACS_DATA_ERR_INCORRECT_SECURITY_CONFIG;
 	}
@@ -181,7 +181,7 @@ static int acs_data_in_validate(struct bt_acs_conn *acs_conn, struct net_buf_sim
  * @return 0 on success, or an ACS Data error / negative errno on failure.
  */
 static int acs_data_in_decrypt(struct bt_acs_conn *acs_conn, struct net_buf_simple *buf,
-			       uint16_t isc_id, struct bt_acs_record_state *record_state,
+			       uint16_t isc_id, struct bt_acs_key_desc_runtime *record_state,
 			       uint64_t received_counter, uint16_t *resource_handle)
 {
 	uint16_t plain_len = 0;
@@ -200,8 +200,7 @@ static int acs_data_in_decrypt(struct bt_acs_conn *acs_conn, struct net_buf_simp
 	 * advanced receive state only if authentication succeeds. */
 	previous_rx_nonce_counter = record_state->rx_nonce_counter;
 	record_state->rx_nonce_counter = received_counter;
-	err = acs_crypto_decrypt(acs_conn, record_state, buf->data, buf->len, buf->data, &plain_len,
-				 NULL, 0);
+	err = acs_crypto_decrypt(record_state, buf->data, buf->len, buf->data, &plain_len, NULL, 0);
 	if (err) {
 		record_state->rx_nonce_counter = previous_rx_nonce_counter;
 		if (err == -ENOSPC) {
@@ -214,7 +213,7 @@ static int acs_data_in_decrypt(struct bt_acs_conn *acs_conn, struct net_buf_simp
 			return ACS_DATA_ERR_INVALID_KEY;
 		} else {
 			LOG_ERR("Decryption failed: err=%d (isc_id=0x%04x, key_id=0x%04x)", err,
-				isc_id, acs_record_key_id(record_state));
+				isc_id, acs_key_desc_runtime_key_id(record_state));
 			return ACS_DATA_ERR_INVALID_KEY;
 		}
 	}
@@ -233,34 +232,10 @@ static int acs_data_in_decrypt(struct bt_acs_conn *acs_conn, struct net_buf_simp
 	return 0;
 }
 
-static void acs_data_in_build_frame(struct bt_acs_conn *acs_conn, struct net_buf_simple *buf,
-				    uint16_t isc_id, uint16_t resource_handle,
-				    struct acs_frame *frame)
-{
-	__ASSERT_NO_MSG(acs_conn != NULL);
-	__ASSERT_NO_MSG(acs_conn->conn != NULL);
-	__ASSERT_NO_MSG(buf != NULL);
-	__ASSERT_NO_MSG(frame != NULL);
-
-	*frame = (struct acs_frame){
-		.conn = acs_conn->conn,
-		.resource_handle = resource_handle,
-		.isc_id = isc_id,
-		.payload = buf->data,
-		.payload_len = buf->len,
-		.source_channel = ACS_SRC_DATA_IN,
-		.encrypted = false,
-		/* Storage transfer to req_ctx happens inside the runtime
-		 * dispatcher; the frame itself does not own the backing buffer.
-		 */
-		.backing_buf = NULL,
-	};
-}
-
 int acs_data_in_unwrap_and_route(struct bt_acs_conn *acs_conn, struct net_buf_simple *buf)
 {
 	struct acs_frame frame;
-	struct bt_acs_record_state *record_state;
+	struct bt_acs_key_desc_runtime *record_state;
 	uint64_t received_counter;
 	uint16_t isc_id;
 	uint16_t resource_handle;
@@ -282,6 +257,16 @@ int acs_data_in_unwrap_and_route(struct bt_acs_conn *acs_conn, struct net_buf_si
 		return err;
 	}
 
-	acs_data_in_build_frame(acs_conn, buf, isc_id, resource_handle, &frame);
+	frame = (struct acs_frame){
+		.conn = acs_conn->conn,
+		.resource_handle = resource_handle,
+		.isc_id = isc_id,
+		.payload = buf->data,
+		.payload_len = buf->len,
+		.source_channel = ACS_SRC_DATA_IN,
+		.encrypted = false,
+		.backing_buf = NULL,
+	};
+
 	return acs_runtime_dispatch_frame(&frame, acs_conn);
 }

@@ -45,8 +45,7 @@ static int acs_session_store_exchange_key(struct bt_acs_conn const *acs_conn,
 	__ASSERT_NO_MSG(acs_conn != NULL);
 	__ASSERT_NO_MSG(exchange_key != NULL);
 
-	err = acs_crypto_current_key_lookup((struct bt_acs_conn *)acs_conn, ACS_KEY_ID_ECDH,
-					    &ecdh_key);
+	err = acs_crypto_current_key_lookup(acs_conn, ACS_KEY_ID_ECDH, &ecdh_key);
 	if (!err && ecdh_key->psa_key_id != 0U) {
 		*exchange_key = ecdh_key;
 		return 0;
@@ -56,8 +55,7 @@ static int acs_session_store_exchange_key(struct bt_acs_conn const *acs_conn,
 	{
 		struct bt_acs_runtime_key_state *oob_key;
 
-		err = acs_crypto_current_key_lookup((struct bt_acs_conn *)acs_conn, ACS_KEY_ID_OOB,
-						    &oob_key);
+		err = acs_crypto_current_key_lookup(acs_conn, ACS_KEY_ID_OOB, &oob_key);
 		if (!err && oob_key->psa_key_id != 0U) {
 			*exchange_key = oob_key;
 			return 0;
@@ -106,8 +104,7 @@ void acs_session_store(struct bt_conn const *conn, struct bt_acs_conn const *acs
 	}
 
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
-	err = acs_crypto_current_key_lookup((struct bt_acs_conn *)acs_conn, ACS_KEY_ID_KDF,
-					    &kdf_key);
+	err = acs_crypto_current_key_lookup(acs_conn, ACS_KEY_ID_KDF, &kdf_key);
 	if (err) {
 		LOG_ERR("Missing KDF runtime key state");
 		return;
@@ -146,8 +143,9 @@ void acs_session_store(struct bt_conn const *conn, struct bt_acs_conn const *acs
 #endif
 	}
 	store.restriction_map_id = acs_conn->restriction_map_id;
-	for (size_t i = 0; i < ARRAY_SIZE(acs_conn->crypto.record_states); i++) {
-		const struct bt_acs_record_state *record_state = &acs_conn->crypto.record_states[i];
+	for (size_t i = 0; i < ARRAY_SIZE(acs_conn->crypto.key_desc_runtimes); i++) {
+		const struct bt_acs_key_desc_runtime *record_state =
+			&acs_conn->crypto.key_desc_runtimes[i];
 		struct bt_acs_session_store_record_state *stored_record;
 
 		if (!record_state->key_desc) {
@@ -157,12 +155,12 @@ void acs_session_store(struct bt_conn const *conn, struct bt_acs_conn const *acs
 		if (store.nonce_record_count >= ARRAY_SIZE(store.nonce_records)) {
 			LOG_WRN("Dropping nonce record state for Key_ID 0x%04x due to store "
 				"capacity",
-				acs_record_key_id(record_state));
+				acs_key_desc_runtime_key_id(record_state));
 			break;
 		}
 
 		stored_record = &store.nonce_records[store.nonce_record_count++];
-		stored_record->key_id = acs_record_key_id(record_state);
+		stored_record->key_id = acs_key_desc_runtime_key_id(record_state);
 		stored_record->client_nonce_set = record_state->client_nonce_set;
 		memcpy(stored_record->server_nonce_fixed, record_state->server_nonce_fixed,
 		       sizeof(stored_record->server_nonce_fixed));
@@ -385,12 +383,12 @@ void acs_session_restore(struct bt_conn *conn, struct bt_acs_conn *acs_conn)
 		}
 
 		for (size_t rec_idx = 0; rec_idx < store_copy.nonce_record_count; rec_idx++) {
-			struct bt_acs_record_state *record_state;
+			struct bt_acs_key_desc_runtime *record_state;
 			const struct bt_acs_session_store_record_state *stored_record =
 				&store_copy.nonce_records[rec_idx];
 
-			err = acs_crypto_record_state_lookup(acs_conn, stored_record->key_id,
-							     &record_state);
+			err = acs_crypto_key_desc_runtime_lookup(acs_conn, stored_record->key_id,
+								 &record_state);
 			if (err) {
 				LOG_WRN("No runtime record state for restored Key_ID "
 					"0x%04x",

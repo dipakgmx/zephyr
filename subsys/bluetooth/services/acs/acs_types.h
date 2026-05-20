@@ -175,11 +175,6 @@ struct acs_reply {
  */
 typedef int (*acs_seq_step_fn)(struct acs_procedure *proc);
 
-/**
- * @brief Internal request-aware ACS handler callback type.
- */
-typedef void (*bt_acs_prot_resource_handler_t)(struct acs_procedure *req);
-
 struct bt_acs_kex_ctx;
 
 /**
@@ -236,7 +231,7 @@ static inline uint16_t acs_runtime_key_id(const struct bt_acs_runtime_key_state 
 /**
  * @brief Runtime nonce + algorithm state for one AES key descriptor record.
  */
-struct bt_acs_record_state {
+struct bt_acs_key_desc_runtime {
 	/** Static AES-with-nonce key descriptor bound to this runtime slot. */
 	const struct bt_acs_key_desc_record *key_desc;
 	/** Resolved current exchange-key Key_ID for this record's parent chain. */
@@ -257,7 +252,8 @@ struct bt_acs_record_state {
 	uint64_t rx_nonce_counter;
 };
 
-static inline uint16_t acs_record_key_id(const struct bt_acs_record_state *record_state)
+static inline uint16_t
+acs_key_desc_runtime_key_id(const struct bt_acs_key_desc_runtime *record_state)
 {
 	return (record_state && record_state->key_desc) ? record_state->key_desc->key_id : 0U;
 }
@@ -277,7 +273,7 @@ struct bt_acs_crypto_session {
 	/** Transient key-exchange scratch state, if a handshake is active. */
 	struct bt_acs_kex_ctx *kex;
 	/** Per-Key_ID nonce/counter state for AES records that use nonce material. */
-	struct bt_acs_record_state record_states[CONFIG_BT_ACS_MAX_NONCE_RECORDS];
+	struct bt_acs_key_desc_runtime key_desc_runtimes[CONFIG_BT_ACS_MAX_NONCE_RECORDS];
 };
 
 struct bt_acs_session_store_record_state {
@@ -381,8 +377,6 @@ struct bt_acs_kex_ctx {
 struct acs_proc_buffers {
 	struct net_buf *request_buf;  /**< Reference-counted decrypted request buffer */
 	struct net_buf *response_buf; /**< Pool buffer for plaintext response staging */
-	uint16_t data_offset;         /**< Offset within request_buf->data where payload starts */
-	uint16_t data_length;         /**< Plaintext request payload length */
 };
 
 struct acs_proc_route {
@@ -453,32 +447,6 @@ struct bt_acs_conn {
 	atomic_ptr_t active_indication; /**< Currently in-flight DOI response slot */
 #endif
 };
-
-/**
- * @brief Internal per-resource request-aware handler registration entry.
- */
-struct bt_acs_prot_resource_handler_entry {
-	const struct bt_uuid *char_uuid;        /**< Characteristic UUID to match */
-	bt_acs_prot_resource_handler_t handler; /**< Handler invoked on match */
-};
-
-/**
- * @brief Register a protected resource handler at compile time.
- *
- * Only available when at least one data protection algorithm is enabled.
- * The handler is dispatched when an encrypted request arrives via Data In
- * for the characteristic identified by @p _char_uuid.
- */
-#if IS_ENABLED(CONFIG_BT_ACS_ANY_DATA_PROTECTION)
-#define ACS_PROT_RESOURCE_HANDLER_DEFINE(_name, _char_uuid, _handler)                              \
-	STRUCT_SECTION_ITERABLE(bt_acs_prot_resource_handler_entry, _name) = {                     \
-		.char_uuid = (_char_uuid),                                                         \
-		.handler = (_handler),                                                             \
-	}
-#else
-#define ACS_PROT_RESOURCE_HANDLER_DEFINE(_name, _char_uuid, _handler)                              \
-	BUILD_ASSERT(0, "ACS_PROT_RESOURCE_HANDLER_DEFINE requires data protection to be enabled")
-#endif
 
 /**
  * @brief Derive the canonical reply transport mode for a procedure.

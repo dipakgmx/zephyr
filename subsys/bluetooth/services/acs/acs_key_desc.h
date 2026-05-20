@@ -9,6 +9,7 @@
 
 #include <zephyr/types.h>
 #include <zephyr/net_buf.h>
+#include <zephyr/sys/__assert.h>
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/bluetooth/services/acs.h>
 
@@ -278,8 +279,22 @@ bool acs_key_desc_is_algorithm_record(const struct bt_acs_key_desc_record *rec);
 bool acs_key_desc_has_nonce_record(const struct bt_acs_key_desc_record *rec);
 uint16_t acs_key_desc_parent_key_id(const struct bt_acs_key_desc_record *rec);
 uint8_t acs_key_desc_nonce_size(const struct bt_acs_key_desc_record *rec);
-uint8_t acs_key_desc_nonce_var_size(const struct bt_acs_key_desc_record *rec);
-uint8_t acs_key_desc_nonce_fixed_size(const struct bt_acs_key_desc_record *rec);
-uint8_t acs_key_desc_auth_tag_size(const struct bt_acs_key_desc_record *rec);
+static inline uint8_t acs_key_desc_nonce_var_size(const struct bt_acs_key_desc_record *rec)
+{
+	__ASSERT_NO_MSG(rec != NULL);
+	return rec->aes.nonce_var_size;
+}
+
+static inline uint8_t acs_key_desc_nonce_fixed_size(const struct bt_acs_key_desc_record *rec)
+{
+	__ASSERT_NO_MSG(rec != NULL);
+	return rec->aes.nonce_fixed_size;
+}
+
+static inline uint8_t acs_key_desc_auth_tag_size(const struct bt_acs_key_desc_record *rec)
+{
+	__ASSERT_NO_MSG(rec != NULL);
+	return rec->aes.mac_size;
+}
 
 #endif /* BT_GATT_ACS_KEY_DESC_H_ */

@@ -12,7 +12,7 @@
  *
  * Per-connection crypto state lives on bt_acs_conn->crypto:
  *   - current_keys[] bound to key-exchange descriptor records
- *   - record_states[] bound to AES-with-nonce key descriptor records
+ *   - key_desc_runtimes[] bound to AES-with-nonce key descriptor records
  *
  * This header exposes resolution helpers and crypto operations on that state
  * plus the pooled key-exchange context lifecycle.
@@ -51,7 +51,7 @@ int acs_crypto_current_key_id_from_key_desc(const struct bt_acs_key_desc_record 
  * @return 0 on success, -ENOENT if no slot is reserved for @p key_id,
  *         -EINVAL for invalid arguments.
  */
-int acs_crypto_current_key_lookup(struct bt_acs_conn *acs_conn, uint16_t key_id,
+int acs_crypto_current_key_lookup(const struct bt_acs_conn *acs_conn, uint16_t key_id,
 				  struct bt_acs_runtime_key_state **current_key);
 
 /**
@@ -73,8 +73,8 @@ int acs_crypto_current_key_from_isc(struct bt_acs_conn *acs_conn, uint16_t isc_i
  * @return 0 on success, -ENOENT if no slot is reserved for @p key_id,
  *         -EINVAL for invalid arguments.
  */
-int acs_crypto_record_state_lookup(struct bt_acs_conn *acs_conn, uint16_t key_id,
-				   struct bt_acs_record_state **record_state);
+int acs_crypto_key_desc_runtime_lookup(struct bt_acs_conn *acs_conn, uint16_t key_id,
+				       struct bt_acs_key_desc_runtime **record_state);
 
 /** @brief Bind per-connection runtime slots to the static key-descriptor graph. */
 void acs_crypto_init_slots(struct bt_acs_conn *acs_conn);
@@ -117,10 +117,10 @@ void acs_crypto_warn_destroy_key_failure(psa_status_t status, psa_key_id_t key_i
 void acs_crypto_destroy_connection_keys(struct bt_acs_conn *acs_conn);
 
 /** @brief Import one record-state key into the PSA keystore. */
-int acs_crypto_import_record_key(struct bt_acs_record_state *record_state);
+int acs_crypto_import_record_key(struct bt_acs_key_desc_runtime *record_state);
 
 /** @brief Destroy one record-state key from the PSA keystore. */
-void acs_crypto_destroy_record_key(struct bt_acs_record_state *record_state);
+void acs_crypto_destroy_record_key(struct bt_acs_key_desc_runtime *record_state);
 
 /** @brief Destroy every imported record-state key on @p acs_conn. */
 void acs_crypto_destroy_connection_record_keys(struct bt_acs_conn *acs_conn);
@@ -146,22 +146,21 @@ void acs_crypto_reset_preserve_record_states(struct bt_acs_conn *acs_conn);
  * @brief Encrypt @p plaintext using the resolved record-state key.
  *
  * @param acs_conn   Per-connection state.
- * @param record_state Resolved runtime record state holding the key and nonce counters.
+ * @param key_desc_runtime Resolved runtime record state holding the key and nonce counters.
  * @param plaintext  Input data.
  * @param plain_len  Input length.
  * @param ciphertext Output buffer (must fit ciphertext + auth tag).
  * @param cipher_len [out] Total output length.
  * @return 0 on success, negative errno on failure.
  */
-int acs_crypto_encrypt(struct bt_acs_conn *acs_conn, struct bt_acs_record_state *record_state,
-		       const uint8_t *plaintext, uint16_t plain_len, uint8_t *ciphertext,
-		       uint16_t *cipher_len);
+int acs_crypto_encrypt(struct bt_acs_key_desc_runtime *key_desc_runtime, const uint8_t *plaintext,
+		       uint16_t plain_len, uint8_t *ciphertext, uint16_t *cipher_len);
 
 /**
  * @brief Decrypt @p ciphertext using the resolved record-state key.
  *
  * @param acs_conn   Per-connection state.
- * @param record_state Resolved runtime record state holding the key and nonce counters.
+ * @param key_desc_runtime Resolved runtime record state holding the key and nonce counters.
  * @param ciphertext Input (ciphertext + auth tag).
  * @param cipher_len Total input length.
  * @param plaintext  Output buffer.
@@ -170,9 +169,9 @@ int acs_crypto_encrypt(struct bt_acs_conn *acs_conn, struct bt_acs_record_state 
  * @param aad_len    Length of @p aad.
  * @return 0 on success, negative errno on failure.
  */
-int acs_crypto_decrypt(struct bt_acs_conn *acs_conn, struct bt_acs_record_state *record_state,
-		       const uint8_t *ciphertext, uint16_t cipher_len, uint8_t *plaintext,
-		       uint16_t *plain_len, const uint8_t *aad, uint16_t aad_len);
+int acs_crypto_decrypt(struct bt_acs_key_desc_runtime *key_desc_runtime, const uint8_t *ciphertext,
+		       uint16_t cipher_len, uint8_t *plaintext, uint16_t *plain_len,
+		       const uint8_t *aad, uint16_t aad_len);
 
 /** @brief Allocate a transient key-exchange context. Returns NULL if pool exhausted. */
 int acs_kex_alloc(struct bt_acs_conn *acs_conn);

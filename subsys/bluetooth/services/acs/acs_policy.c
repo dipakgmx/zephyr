@@ -6,6 +6,7 @@
 
 #include <errno.h>
 #include <stdbool.h>
+#include <stdio.h>
 #include <string.h>
 
 #include <zephyr/bluetooth/conn.h>
@@ -86,7 +87,7 @@ bool bt_acs_policy_is_permitted(struct bt_conn *conn, uint16_t att_handle,
 		if (attr_uuid) {
 			bt_uuid_to_str(attr_uuid, uuid_str, sizeof(uuid_str));
 		} else {
-			strncpy(uuid_str, "<unknown>", sizeof(uuid_str));
+			snprintf(uuid_str, sizeof(uuid_str), "<unknown>");
 		}
 		LOG_WRN("operation denied by ACS: handle 0x%04x (%s) direction: %s", att_handle,
 			uuid_str, acs_direction_str(direction));

@@ -12,6 +12,7 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/sys/util.h>
 
+#include <mbedtls/platform_util.h>
 #include "acs_key_exchange.h"
 #include "acs_internal.h"
 #include "acs_key_desc.h"
@@ -247,7 +248,7 @@ void acs_key_exchange_abort(struct bt_acs_conn *acs_conn)
 
 		if (acs_crypto_current_key_lookup(acs_conn, ACS_KEY_ID_KDF, &kdf_key) == 0) {
 			acs_crypto_destroy_current_key(kdf_key);
-			memset(kdf_key->key, 0, sizeof(kdf_key->key));
+			mbedtls_platform_zeroize(kdf_key->key, sizeof(kdf_key->key));
 		}
 
 		acs_crypto_rebind_record_states(acs_conn);
@@ -603,7 +604,7 @@ int acs_crypto_derive_session_key(struct bt_acs_conn *acs_conn)
 
 	ret = acs_crypto_current_key_lookup(acs_conn, key_id, &exchange_key);
 	if (ret) {
-		LOG_ERR("No runtime runtime key state for exchange Key_ID 0x%04x", key_id);
+		LOG_ERR("No runtime key state for exchange Key_ID 0x%04x", key_id);
 		return ret;
 	}
 
@@ -647,13 +648,13 @@ static int bt_acs_crypto_derive_kdf_child_key(struct bt_acs_conn *acs_conn)
 
 	ret = acs_crypto_current_key_lookup(acs_conn, ACS_KEY_ID_ECDH, &parent_key);
 	if (ret) {
-		LOG_ERR("No runtime runtime key state for ECDH parent");
+		LOG_ERR("No runtime key state for ECDH parent");
 		return ret;
 	}
 
 	ret = acs_crypto_current_key_lookup(acs_conn, ACS_KEY_ID_KDF, &kdf_key);
 	if (ret) {
-		LOG_ERR("No runtime runtime key state for KDF child");
+		LOG_ERR("No runtime key state for KDF child");
 		return ret;
 	}
 
@@ -749,9 +750,9 @@ int acs_key_exchange_ecdh_start(struct bt_acs_conn *acs_conn, uint16_t key_id)
 	{
 		bool missing_client_nonce = false;
 
-		for (size_t i = 0; i < ARRAY_SIZE(acs_conn->crypto.record_states); i++) {
-			const struct bt_acs_record_state *record_state =
-				&acs_conn->crypto.record_states[i];
+		for (size_t i = 0; i < ARRAY_SIZE(acs_conn->crypto.key_desc_runtimes); i++) {
+			const struct bt_acs_key_desc_runtime *record_state =
+				&acs_conn->crypto.key_desc_runtimes[i];
 
 			if (!record_state->key_desc ||
 			    record_state->key_desc->aes.nonce_type != ACS_NONCE_SEQ_DIFF_FIXED) {

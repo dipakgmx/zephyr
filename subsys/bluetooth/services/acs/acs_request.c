@@ -15,8 +15,6 @@
 #include <zephyr/bluetooth/services/acs.h>
 
 #include "acs_internal.h"
-#include "acs_rhandle.h"
-#include "acs_rmap.h"
 
 #include <zephyr/logging/log.h>
 LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
@@ -25,11 +23,6 @@ LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
 
 K_MEM_SLAB_DEFINE_STATIC(acs_req_ctx_slab, sizeof(struct acs_procedure), ACS_REQ_CTX_COUNT,
 			 __alignof__(struct acs_procedure));
-
-STRUCT_SECTION_ITERABLE(bt_acs_prot_resource_handler_entry, acs_req_handler_sentinel) = {
-	.char_uuid = NULL,
-	.handler = NULL,
-};
 
 static void acs_req_work_handler(struct k_work *work);
 
@@ -130,8 +123,7 @@ uint16_t acs_procedure_resource_handle(const struct acs_procedure *req)
 }
 
 struct acs_procedure *acs_procedure_alloc(struct bt_acs_conn *acs_conn, uint16_t resource_handle,
-					  uint16_t isc_id, uint16_t data_offset,
-					  uint16_t data_length)
+					  uint16_t isc_id)
 {
 	struct acs_procedure *req;
 
@@ -151,8 +143,6 @@ struct acs_procedure *acs_procedure_alloc(struct bt_acs_conn *acs_conn, uint16_t
 	req->kind = ACS_PROC_KIND_PROTECTED_REQ;
 	req->route.resource_handle = resource_handle;
 	req->route.isc_id = isc_id;
-	req->buffers.data_length = data_length;
-	req->buffers.data_offset = data_offset;
 
 	/* Response buffer is allocated lazily in acs_prepare_reply_buf
 	 * (called directly from CP / DOI / DON reply builders, or from
@@ -176,9 +166,7 @@ struct acs_procedure *acs_procedure_alloc(struct bt_acs_conn *acs_conn, uint16_t
 
 void acs_procedure_release_owner(struct acs_procedure *req)
 {
-	if (!req) {
-		return;
-	}
+	__ASSERT_NO_MSG(req != NULL);
 
 	if (atomic_test_bit(req->lifetime.ref_flags, ACS_PROCEDURE_REF_ALLOC)) {
 		acs_procedure_unref(req, ACS_PROCEDURE_REF_ALLOC);
@@ -187,9 +175,7 @@ void acs_procedure_release_owner(struct acs_procedure *req)
 
 void acs_procedure_release_tx(struct acs_procedure *req)
 {
-	if (!req) {
-		return;
-	}
+	__ASSERT_NO_MSG(req != NULL);
 
 	if (atomic_test_bit(req->lifetime.ref_flags, ACS_PROCEDURE_REF_TX)) {
 		acs_procedure_unref(req, ACS_PROCEDURE_REF_TX);
@@ -199,10 +185,8 @@ void acs_procedure_release_tx(struct acs_procedure *req)
 /* Auto-respond to a secure request when no application handler is registered. */
 static int acs_auto_respond(struct acs_procedure *req)
 {
-	const uint8_t *data = req->buffers.request_buf
-				      ? req->buffers.request_buf->data + req->buffers.data_offset
-				      : NULL;
-	uint16_t len = req->buffers.data_length;
+	const uint8_t *data = req->buffers.request_buf ? req->buffers.request_buf->data : NULL;
+	uint16_t len = req->buffers.request_buf ? req->buffers.request_buf->len : 0U;
 	ssize_t n;
 	uint8_t props = 0;
 	struct bt_conn *conn = acs_procedure_conn(req);
@@ -345,34 +329,17 @@ static void acs_req_work_handler(struct k_work *work)
 {
 	struct acs_procedure *req = CONTAINER_OF(work, struct acs_procedure, work);
 	struct bt_conn const *conn = acs_procedure_conn(req);
-	bool handled = false;
 	int err = 0;
-	uint16_t h;
 
 	if (!conn || !req->acs_conn) {
 		acs_procedure_release_owner(req);
 		return;
 	}
 
-	STRUCT_SECTION_FOREACH(bt_acs_prot_resource_handler_entry, entry) {
-		if (!entry->handler) {
-			continue;
-		}
-
-		h = acs_rhandle_find_char_handle(entry->char_uuid);
-		if (h != 0U && h == req->route.resource_handle) {
-			entry->handler(req);
-			handled = true;
-			break;
-		}
-	}
-
-	if (!handled) {
-		err = acs_auto_respond(req);
-		if (err) {
-			LOG_WRN("ACS auto-response failed for handle 0x%04x: %d",
-				req->route.resource_handle, err);
-		}
+	err = acs_auto_respond(req);
+	if (err) {
+		LOG_WRN("ACS auto-response failed for handle 0x%04x: %d",
+			req->route.resource_handle, err);
 	}
 
 	/* The handler / auto_respond consumed the input bytes already.

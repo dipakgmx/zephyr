@@ -180,7 +180,7 @@ int acs_cp_handle_att_mtu(struct acs_procedure *proc)
 int acs_cp_handle_set_client_nonce_fixed(struct acs_procedure *proc, struct net_buf_simple *buf)
 {
 	struct bt_acs_conn *acs_conn = proc->acs_conn;
-	struct bt_acs_record_state *record_state;
+	struct bt_acs_key_desc_runtime *key_desc_runtime;
 	const struct bt_acs_key_desc_record *key_desc;
 	uint8_t server_nonce_fixed[ACS_NONCE_SIZE];
 	uint16_t key_id;
@@ -218,7 +218,7 @@ int acs_cp_handle_set_client_nonce_fixed(struct acs_procedure *proc, struct net_
 					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE);
 	}
 
-	err = acs_crypto_record_state_lookup(acs_conn, key_id, &record_state);
+	err = acs_crypto_key_desc_runtime_lookup(acs_conn, key_id, &key_desc_runtime);
 	if (err) {
 		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_SET_CLIENT_NONCE_FIXED,
 					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
@@ -267,10 +267,10 @@ int acs_cp_handle_set_client_nonce_fixed(struct acs_procedure *proc, struct net_
 			continue;
 		}
 
-		for (size_t rec_idx = 0; rec_idx < ARRAY_SIZE(other->crypto.record_states);
+		for (size_t rec_idx = 0; rec_idx < ARRAY_SIZE(other->crypto.key_desc_runtimes);
 		     rec_idx++) {
-			struct bt_acs_record_state const *other_record =
-				&other->crypto.record_states[rec_idx];
+			struct bt_acs_key_desc_runtime const *other_record =
+				&other->crypto.key_desc_runtimes[rec_idx];
 			uint8_t other_fixed_size;
 
 			if (!other_record->key_desc) {
@@ -307,8 +307,8 @@ int acs_cp_handle_set_client_nonce_fixed(struct acs_procedure *proc, struct net_
 		}
 	}
 
-	memcpy(record_state->client_nonce_fixed, nonce_value, nonce_fixed_size);
-	record_state->client_nonce_set = true;
+	memcpy(key_desc_runtime->client_nonce_fixed, nonce_value, nonce_fixed_size);
+	key_desc_runtime->client_nonce_set = true;
 
 	LOG_DBG("Client nonce fixed part stored");
 

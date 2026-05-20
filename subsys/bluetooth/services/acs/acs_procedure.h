@@ -47,13 +47,10 @@ extern "C" {
  * @param acs_conn        Owning connection state.
  * @param resource_handle Protected resource ATT handle.
  * @param isc_id          ISC identifier for this request.
- * @param data_offset     Offset into the decrypted buffer where payload starts.
- * @param data_length     Plaintext payload length.
  * @return Allocated request, or NULL if no slot is free.
  */
 struct acs_procedure *acs_procedure_alloc(struct bt_acs_conn *acs_conn, uint16_t resource_handle,
-					  uint16_t isc_id, uint16_t data_offset,
-					  uint16_t data_length);
+					  uint16_t isc_id);
 
 /** @brief Increment @p req reference count for caller @p who. */
 void acs_procedure_ref(struct acs_procedure *req, enum acs_procedure_ref_who who);

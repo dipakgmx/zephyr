@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2026 Dipak Shetty
+ * Copyright (c) 2025 Dipak Shetty
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -10,6 +10,7 @@
 #include <zephyr/sys/util.h>
 #include <zephyr/bluetooth/services/acs.h>
 
+#include <mbedtls/platform_util.h>
 #include <psa/crypto.h>
 
 #include "acs_crypto.h"
@@ -37,6 +38,10 @@ int acs_crypto_import_current_key(struct bt_acs_runtime_key_state *current_key)
 	psa_set_key_usage_flags(&attrs, PSA_KEY_USAGE_ENCRYPT | PSA_KEY_USAGE_DECRYPT);
 	psa_set_key_algorithm(
 		&attrs, PSA_ALG_AEAD_WITH_SHORTENED_TAG(PSA_ALG_CCM, CONFIG_BT_ACS_CCM_MAC_SIZE));
+#elif IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_GMAC)
+	psa_set_key_usage_flags(&attrs, PSA_KEY_USAGE_ENCRYPT | PSA_KEY_USAGE_DECRYPT);
+	psa_set_key_algorithm(&attrs,
+			      PSA_ALG_AEAD_WITH_SHORTENED_TAG(PSA_ALG_GCM, ACS_GCM_MAC_SIZE));
 #else
 	psa_set_key_usage_flags(&attrs, PSA_KEY_USAGE_ENCRYPT | PSA_KEY_USAGE_DECRYPT);
 	psa_set_key_algorithm(&attrs,
@@ -75,7 +80,7 @@ void acs_crypto_destroy_connection_keys(struct bt_acs_conn *acs_conn)
 	}
 }
 
-int acs_crypto_import_record_key(struct bt_acs_record_state *record_state)
+int acs_crypto_import_record_key(struct bt_acs_key_desc_runtime *record_state)
 {
 	psa_key_attributes_t attrs = PSA_KEY_ATTRIBUTES_INIT;
 	psa_status_t status;
@@ -97,6 +102,11 @@ int acs_crypto_import_record_key(struct bt_acs_record_state *record_state)
 				      PSA_ALG_AEAD_WITH_SHORTENED_TAG(
 					      PSA_ALG_GCM, record_state->key_desc->aes.mac_size));
 		break;
+	case ACS_KEY_REC_AES_128_CMAC:
+		psa_set_key_usage_flags(&attrs,
+					PSA_KEY_USAGE_SIGN_MESSAGE | PSA_KEY_USAGE_VERIFY_MESSAGE);
+		psa_set_key_algorithm(&attrs, PSA_ALG_CMAC);
+		break;
 	default:
 		return -ENOTSUP;
 	}
@@ -109,14 +119,14 @@ int acs_crypto_import_record_key(struct bt_acs_record_state *record_state)
 				&record_state->psa_key_id);
 	if (status != PSA_SUCCESS) {
 		LOG_ERR("Record key import failed for Key_ID 0x%04x: %d",
-			acs_record_key_id(record_state), status);
+			acs_key_desc_runtime_key_id(record_state), status);
 		return -EIO;
 	}
 
 	return 0;
 }
 
-void acs_crypto_destroy_record_key(struct bt_acs_record_state *record_state)
+void acs_crypto_destroy_record_key(struct bt_acs_key_desc_runtime *record_state)
 {
 	if (record_state && record_state->psa_key_id != 0U) {
 		psa_status_t status = psa_destroy_key(record_state->psa_key_id);
@@ -129,8 +139,8 @@ void acs_crypto_destroy_record_key(struct bt_acs_record_state *record_state)
 
 void acs_crypto_destroy_connection_record_keys(struct bt_acs_conn *acs_conn)
 {
-	for (size_t i = 0; i < ARRAY_SIZE(acs_conn->crypto.record_states); i++) {
-		acs_crypto_destroy_record_key(&acs_conn->crypto.record_states[i]);
+	for (size_t i = 0; i < ARRAY_SIZE(acs_conn->crypto.key_desc_runtimes); i++) {
+		acs_crypto_destroy_record_key(&acs_conn->crypto.key_desc_runtimes[i]);
 	}
 }
 
@@ -138,8 +148,9 @@ int acs_crypto_rebind_record_states(struct bt_acs_conn *acs_conn)
 {
 	int first_err = 0;
 
-	for (size_t i = 0; i < ARRAY_SIZE(acs_conn->crypto.record_states); i++) {
-		struct bt_acs_record_state *record_state = &acs_conn->crypto.record_states[i];
+	for (size_t i = 0; i < ARRAY_SIZE(acs_conn->crypto.key_desc_runtimes); i++) {
+		struct bt_acs_key_desc_runtime *record_state =
+			&acs_conn->crypto.key_desc_runtimes[i];
 		struct bt_acs_runtime_key_state *current_key = NULL;
 		int err;
 
@@ -148,7 +159,7 @@ int acs_crypto_rebind_record_states(struct bt_acs_conn *acs_conn)
 		}
 
 		acs_crypto_destroy_record_key(record_state);
-		memset(record_state->key, 0, sizeof(record_state->key));
+		mbedtls_platform_zeroize(record_state->key, sizeof(record_state->key));
 
 		if (record_state->current_key_id == 0U) {
 			if (first_err == 0) {
@@ -179,8 +190,9 @@ int acs_crypto_rebind_record_states(struct bt_acs_conn *acs_conn)
 
 void acs_crypto_reset_record_counters(struct bt_acs_conn *acs_conn, uint16_t current_key_id)
 {
-	for (size_t i = 0; i < ARRAY_SIZE(acs_conn->crypto.record_states); i++) {
-		struct bt_acs_record_state *record_state = &acs_conn->crypto.record_states[i];
+	for (size_t i = 0; i < ARRAY_SIZE(acs_conn->crypto.key_desc_runtimes); i++) {
+		struct bt_acs_key_desc_runtime *record_state =
+			&acs_conn->crypto.key_desc_runtimes[i];
 
 		if (!record_state->key_desc) {
 			continue;
