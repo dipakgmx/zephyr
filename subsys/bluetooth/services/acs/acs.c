@@ -23,6 +23,10 @@
 
 LOG_MODULE_REGISTER(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
 
+BUILD_ASSERT(IS_ENABLED(CONFIG_BT_ACS_DESCRIPTORS) ||
+		     IS_ENABLED(CONFIG_BT_ACS_RESOURCE_HANDLE_UUID_MAP),
+	     "ACS requires descriptors or resource-handle UUID mapping support");
+
 static const struct bt_acs_cb *acs_cb;
 static bool acs_initialized;
 
@@ -92,7 +96,8 @@ static void acs_cp_ccc_changed(const struct bt_gatt_attr *attr, uint16_t value)
 	LOG_DBG("Control Point CCC: %s", (value == BT_GATT_CCC_INDICATE) ? "enabled" : "disabled");
 }
 
-#if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_WRITE)
+#if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_WRITE) ||                                          \
+	IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_READ)
 #define ACS_DATA_IN_ATTRS                                                                          \
 	BT_GATT_CHARACTERISTIC(BT_UUID_GATT_ACS_DI, BT_GATT_CHRC_WRITE, BT_GATT_PERM_WRITE, NULL,  \
 			       acs_data_in_write, NULL),
@@ -100,7 +105,8 @@ static void acs_cp_ccc_changed(const struct bt_gatt_attr *attr, uint16_t value)
 #define ACS_DATA_IN_ATTRS
 #endif
 
-#if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_NOTIFICATION)
+#if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_NOTIFICATION) ||                                   \
+	IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_READ)
 #define ACS_DON_ATTRS                                                                              \
 	BT_GATT_CHARACTERISTIC(BT_UUID_GATT_ACS_DON, BT_GATT_CHRC_NOTIFY, BT_GATT_PERM_NONE, NULL, \
 			       NULL, NULL),                                                        \
@@ -269,12 +275,9 @@ int bt_acs_init(const struct bt_acs_cb *cb)
 
 	acs_cb = cb;
 
-
 	k_work_queue_init(&acs_work_q);
-	k_work_queue_start(&acs_work_q, acs_work_q_stack,
-			   K_THREAD_STACK_SIZEOF(acs_work_q_stack),
-			   CONFIG_BT_ACS_WORKQUEUE_THREAD_PRIO,
-			   &acs_work_q_config);
+	k_work_queue_start(&acs_work_q, acs_work_q_stack, K_THREAD_STACK_SIZEOF(acs_work_q_stack),
+			   CONFIG_BT_ACS_WORKQUEUE_THREAD_PRIO, &acs_work_q_config);
 
 	ret = acs_gatt_attrs_cache();
 	if (ret) {

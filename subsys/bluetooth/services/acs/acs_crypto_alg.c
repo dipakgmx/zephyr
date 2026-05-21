@@ -44,7 +44,6 @@ static void acs_build_nonce(const uint8_t *fixed, uint64_t counter, uint8_t nonc
 	uint8_t var_size = nonce_size - fixed_size;
 	uint8_t counter_be[sizeof(counter)];
 
-	memset(nonce, 0, nonce_size);
 	if (fixed && fixed_size > 0U) {
 		for (uint8_t i = 0; i < fixed_size; i++) {
 			nonce[i] = fixed[fixed_size - 1U - i];
@@ -52,10 +51,7 @@ static void acs_build_nonce(const uint8_t *fixed, uint64_t counter, uint8_t nonc
 	}
 
 	sys_put_be64(counter, counter_be);
-	if (var_size <= sizeof(counter_be)) {
-		memcpy(&nonce[nonce_size - var_size], &counter_be[sizeof(counter_be) - var_size],
-		       var_size);
-	}
+	memcpy(&nonce[nonce_size - var_size], &counter_be[sizeof(counter_be) - var_size], var_size);
 }
 
 static void acs_build_record_tx_nonce(const struct bt_acs_key_desc_runtime *key_desc_runtime,

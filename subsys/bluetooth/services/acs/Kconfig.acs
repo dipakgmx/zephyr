@@ -72,6 +72,8 @@ menuconfig BT_ACS_KEY_EXCHANGE_ECDH
 	bool "ECDH key exchange"
 	depends on PSA_WANT_ALG_ECDH
 	depends on BT_SETTINGS
+	depends on BT_ACS_FEAT_AUTHENTICATION
+	default y if BT_ACS_FEAT_AUTHENTICATION
 	help
 	  Enable Elliptic Curve Diffie-Hellman key exchange method.
 	  Requires PSA Crypto ECDH support and BT_SETTINGS for session key persistence.
@@ -129,6 +131,7 @@ menuconfig BT_ACS_KEY_EXCHANGE_KDF
 	bool "Key Derivation Function key exchange"
 	depends on PSA_WANT_ALG_HKDF
 	depends on BT_SETTINGS
+	depends on BT_ACS_FEAT_AUTHENTICATION
 	help
 	  Enable Key Derivation Function based key exchange method.
 	  Requires BT_SETTINGS for session key persistence.
@@ -210,6 +213,7 @@ config BT_ACS_KDF_INFO_MAX_SIZE
 menuconfig BT_ACS_KEY_EXCHANGE_OOB
 	bool "Out-of-Band key exchange"
 	depends on BT_SETTINGS
+	depends on BT_ACS_FEAT_AUTHENTICATION
 	help
 	  Enable Out-of-Band key exchange. Requires BT_SETTINGS for session key persistence.
 
@@ -381,14 +385,12 @@ config BT_ACS_DATA_PROTECTION_AES_GCM
 config BT_ACS_DATA_PROTECTION_AES_CCM
 	bool "AES-128-CCM"
 	depends on BT_ACS_FEAT_CONFIDENTIALITY
-	depends on !BT_ACS_DATA_PROTECTION_AES_GCM
-	depends on !BT_ACS_DATA_PROTECTION_AES_GMAC
 	help
 	  Counter with CBC-MAC — AEAD algorithm (§3.6, Table 4.36).
 	  Alternative to GCM with configurable MAC size (4–16 bytes)
 	  and nonce scheme (SEQ_EVEN_ODD or SEQ_DIFF_FIXED, Table 4.47).
-	  Uses a 13-byte nonce incompatible with GCM/GMAC; cannot coexist
-	  with either in the same build.
+	  Uses a 13-byte nonce and may coexist with GCM/GMAC; the runtime
+	  keeps nonce state per key descriptor record.
 
 comment "Integrity — authentication without confidentiality"
 
@@ -475,6 +477,10 @@ endchoice
 
 config BT_ACS_MAX_NONCE_RECORDS
 	int
+	default 3 if BT_ACS_DATA_PROTECTION_AES_CCM && BT_ACS_DATA_PROTECTION_AES_GCM && \
+		     BT_ACS_DATA_PROTECTION_AES_GMAC
+	default 2 if BT_ACS_DATA_PROTECTION_AES_CCM && BT_ACS_DATA_PROTECTION_AES_GCM
+	default 2 if BT_ACS_DATA_PROTECTION_AES_CCM && BT_ACS_DATA_PROTECTION_AES_GMAC
 	default 2 if BT_ACS_DATA_PROTECTION_AES_GCM && BT_ACS_DATA_PROTECTION_AES_GMAC
 	default 1
 
@@ -490,16 +496,16 @@ config BT_ACS_ANY_DATA_PROTECTION
 
 config BT_ACS_ISC_MAX_CONTROLS
 	int
-	default 3 if BT_ACS_FEAT_INTEGRITY
-	default 2 if BT_ACS_KEY_EXCHANGE_ECDH
+	default 3 if BT_ACS_FEAT_CONFIDENTIALITY
+	default 2 if BT_ACS_FEAT_INTEGRITY
 	default 1
 	help
 	  Maximum number of Information_Security_Controls entries in a single ISC record
 	  (§4.4.4.13.1.3.1.2 / Table 4.33). Sized to the active protection level
 	  (Table 4.61 Protection_Methods bits):
-	    Integrity or Confidentiality (Bit 1 or Bit 0) → 3  (Nonce + MAC + AuthEnc/Authenticated)
-	    Authentication + ECDH only   (Bit 2 + ECDH)   → 2  (Nonce + MAC, no encryption)
-	    Authentication alone         (Bit 2)           → 1  (MAC only)
+	    Confidentiality (Bit 0)      → 3  (Nonce + MAC + AuthEnc)
+	    Integrity (Bit 1)            → 2  (Nonce + MAC)
+	    Authentication only (Bit 2)  → 1  (MAC only)
 
 config BT_ACS_HAS_NONCE_FIXED
 	bool
@@ -536,6 +542,7 @@ config BT_ACS_MULTIPLE_RESTRICTION_MAPS
 
 config BT_ACS_DESCRIPTORS
 	bool "ACS descriptors"
+	default y
 	help
 	  Enable exhaustive ACS descriptor support.
 
@@ -559,6 +566,8 @@ config BT_ACS_PROTECTED_RESOURCE_WRITE
 config BT_ACS_PROTECTED_RESOURCE_READ
 	bool "Protected resource read"
 	default y
+	select BT_ACS_PROTECTED_RESOURCE_WRITE
+	select BT_ACS_PROTECTED_RESOURCE_NOTIFICATION
 	help
 	  Enable strict read protection logic for specific resources.
 

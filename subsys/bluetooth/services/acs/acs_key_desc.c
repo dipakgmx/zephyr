@@ -152,11 +152,20 @@ const struct bt_acs_key_desc_record *acs_key_desc_lookup(uint16_t key_id)
 
 bool acs_key_desc_is_algorithm_record(const struct bt_acs_key_desc_record *rec)
 {
-	return rec && (rec->type_id == ACS_KEY_REC_AES_128_CCM ||
-		       rec->type_id == ACS_KEY_REC_AES_128_GCM ||
-		       rec->type_id == ACS_KEY_REC_AES_128_EAX ||
-		       rec->type_id == ACS_KEY_REC_AES_128_CMAC ||
-		       rec->type_id == ACS_KEY_REC_AES_128_GMAC);
+	return rec && (
+#if IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_CCM)
+			      rec->type_id == ACS_KEY_REC_AES_128_CCM ||
+#endif
+#if IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_GCM)
+			      rec->type_id == ACS_KEY_REC_AES_128_GCM ||
+#endif
+#if IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_CMAC)
+			      rec->type_id == ACS_KEY_REC_AES_128_CMAC ||
+#endif
+#if IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_GMAC)
+			      rec->type_id == ACS_KEY_REC_AES_128_GMAC ||
+#endif
+			      false);
 }
 
 bool acs_key_desc_has_nonce_record(const struct bt_acs_key_desc_record *rec)
@@ -174,11 +183,18 @@ uint16_t acs_key_desc_parent_key_id(const struct bt_acs_key_desc_record *rec)
 	switch (rec->type_id) {
 	case ACS_KEY_REC_KDF:
 		return rec->kdf.parent_key_id;
+#if IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_CCM)
 	case ACS_KEY_REC_AES_128_CCM:
+#endif
+#if IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_GCM)
 	case ACS_KEY_REC_AES_128_GCM:
-	case ACS_KEY_REC_AES_128_EAX:
+#endif
+#if IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_CMAC)
 	case ACS_KEY_REC_AES_128_CMAC:
+#endif
+#if IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_GMAC)
 	case ACS_KEY_REC_AES_128_GMAC:
+#endif
 		return rec->aes.parent_key_id;
 	default:
 		return 0U;
@@ -269,7 +285,7 @@ static int append_aes_record(const struct bt_acs_key_desc_record *rec, struct ne
 	net_buf_simple_add_mem(buf, &wire, sizeof(wire));
 
 	if (rec->aes.nonce_fixed_size > 0) {
-		uint8_t server_fixed_nonce[ACS_NONCE_SIZE];
+		uint8_t server_fixed_nonce[ACS_MAX_NONCE_FIXED_SIZE];
 		int err = acs_crypto_get_server_nonce_fixed(
 			acs_conn, rec->key_id, server_fixed_nonce, rec->aes.nonce_fixed_size);
 
@@ -290,9 +306,20 @@ static int append_aes_record(const struct bt_acs_key_desc_record *rec, struct ne
 
 static bool is_aes_type(uint8_t type_id)
 {
-	return type_id == ACS_KEY_REC_AES_128_CCM || type_id == ACS_KEY_REC_AES_128_GCM ||
-	       type_id == ACS_KEY_REC_AES_128_EAX || type_id == ACS_KEY_REC_AES_128_CMAC ||
-	       type_id == ACS_KEY_REC_AES_128_GMAC;
+	return
+#if IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_CCM)
+		type_id == ACS_KEY_REC_AES_128_CCM ||
+#endif
+#if IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_GCM)
+		type_id == ACS_KEY_REC_AES_128_GCM ||
+#endif
+#if IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_CMAC)
+		type_id == ACS_KEY_REC_AES_128_CMAC ||
+#endif
+#if IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_GMAC)
+		type_id == ACS_KEY_REC_AES_128_GMAC ||
+#endif
+		false;
 }
 
 int acs_key_desc_build_response(struct net_buf_simple *operand, struct net_buf_simple *buf,

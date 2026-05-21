@@ -182,7 +182,7 @@ int acs_cp_handle_set_client_nonce_fixed(struct acs_procedure *proc, struct net_
 	struct bt_acs_conn *acs_conn = proc->acs_conn;
 	struct bt_acs_key_desc_runtime *key_desc_runtime;
 	const struct bt_acs_key_desc_record *key_desc;
-	uint8_t server_nonce_fixed[ACS_NONCE_SIZE];
+	uint8_t server_nonce_fixed[ACS_MAX_NONCE_FIXED_SIZE];
 	uint16_t key_id;
 	const uint8_t *nonce_value;
 	uint8_t nonce_fixed_size;

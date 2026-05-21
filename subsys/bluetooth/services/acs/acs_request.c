@@ -279,8 +279,6 @@ static int acs_auto_respond(struct acs_procedure *req)
 		reply = (struct acs_reply){
 			.channel = channel,
 			.plaintext = rsp_buf,
-			.encrypted = true,
-			.needs_confirm = channel == ACS_REPLY_DOI,
 		};
 
 		return acs_tx_submit(req, &reply);

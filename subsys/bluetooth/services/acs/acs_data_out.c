@@ -402,8 +402,8 @@ int acs_tx_submit(struct acs_procedure *proc, const struct acs_reply *reply)
 	}
 
 	/* Contract assertions — keep callers honest about every reply field, so
-	 * future call sites cannot drift channel/proc/encrypted/needs_confirm
-	 * out of sync without immediately tripping a debug build.
+	 * future call sites cannot drift channel/proc ownership out of sync
+	 * without immediately tripping a debug build.
 	 */
 	switch (reply->channel) {
 	case ACS_REPLY_CP:
@@ -413,9 +413,6 @@ int acs_tx_submit(struct acs_procedure *proc, const struct acs_reply *reply)
 		__ASSERT(reply->plaintext == proc->buffers.response_buf,
 			 "ACS_REPLY_CP plaintext must be the staged "
 			 "plain_cp_proc.buffers.response_buf");
-		__ASSERT(!reply->encrypted, "ACS_REPLY_CP must be unencrypted (plain transport)");
-		__ASSERT(reply->needs_confirm,
-			 "ACS_REPLY_CP is always confirmed (segmented indication)");
 		return acs_tx_submit_plain_cp(proc);
 #if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_NOTIFICATION)
 	case ACS_REPLY_DON:
@@ -424,8 +421,6 @@ int acs_tx_submit(struct acs_procedure *proc, const struct acs_reply *reply)
 		__ASSERT(proc != NULL, "protected-request proc missing req");
 		__ASSERT(reply->plaintext == proc->buffers.response_buf,
 			 "ACS_REPLY_DON plaintext must be the staged req->buffers.response_buf");
-		__ASSERT(reply->encrypted, "ACS_REPLY_DON must be encrypted");
-		__ASSERT(!reply->needs_confirm, "ACS_REPLY_DON is unconfirmed (notification)");
 		return data_tx_send_notify(proc);
 #endif
 #if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION)
@@ -435,9 +430,6 @@ int acs_tx_submit(struct acs_procedure *proc, const struct acs_reply *reply)
 		__ASSERT(proc != NULL, "protected-request proc missing req");
 		__ASSERT(reply->plaintext == proc->buffers.response_buf,
 			 "ACS_REPLY_DOI plaintext must be the staged req->buffers.response_buf");
-		__ASSERT(reply->encrypted, "ACS_REPLY_DOI must be encrypted");
-		__ASSERT(reply->needs_confirm,
-			 "ACS_REPLY_DOI is always confirmed (segmented indication)");
 		return data_tx_send_indicate(proc);
 #endif
 	default:

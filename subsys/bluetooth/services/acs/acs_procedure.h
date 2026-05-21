@@ -152,9 +152,9 @@ int acs_tx_submit(struct acs_procedure *proc, const struct acs_reply *reply);
  * @brief Send the staged CP reply assembled from @p proc.
  *
  * Reads the active procedure's staged response buffer, builds an @ref acs_reply
- * using @ref acs_proc_reply_mode for the canonical channel/encrypted/needs_confirm
- * defaults, and submits via @ref acs_tx_submit. Aborts any active reply sequence
- * on submit failure and logs the failure.
+ * using @ref acs_proc_reply_mode for the canonical channel/encrypted
+ * defaults, and submits via @ref acs_tx_submit. Aborts any active reply
+ * sequence on submit failure and logs the failure.
  *
  * @return 0 on success, negative errno on failure.
  */

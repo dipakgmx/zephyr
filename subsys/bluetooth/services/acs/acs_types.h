@@ -145,16 +145,14 @@ enum acs_reply_channel {
 struct acs_reply_mode {
 	enum acs_reply_channel channel;
 	bool encrypted;
-	bool needs_confirm;
 };
 
 /**
  * @brief Logical outbound message produced by a domain handler.
  *
  * Built by the CP-domain or service-adapter handlers and consumed by the
- * data-out channel layer. The data-out layer decides how to transport @c
- * plaintext (it may encrypt in place when @c encrypted is true) and whether
- * to wait for an indication confirmation.
+ * data-out channel layer. The data-out layer decides how to transport
+ * @c plaintext based on @c channel.
  *
  * @c plaintext lifetime is owned by the caller (typically the in-flight
  * procedure / request context); the data-out layer only borrows it for the
@@ -163,8 +161,6 @@ struct acs_reply_mode {
 struct acs_reply {
 	enum acs_reply_channel channel;
 	struct net_buf *plaintext;
-	bool encrypted;
-	bool needs_confirm;
 };
 
 /**
@@ -241,9 +237,9 @@ struct bt_acs_key_desc_runtime {
 	/** Key material copied from the current parent/child exchange key. */
 	uint8_t key[CONFIG_BT_ACS_SESSION_KEY_SIZE];
 	/** AC Server nonce fixed value for this Key_ID (wire LSO...MSO). */
-	uint8_t server_nonce_fixed[ACS_NONCE_SIZE];
+	uint8_t server_nonce_fixed[ACS_MAX_NONCE_FIXED_SIZE];
 	/** AC Client nonce fixed value for this Key_ID (wire LSO...MSO). */
-	uint8_t client_nonce_fixed[ACS_NONCE_SIZE];
+	uint8_t client_nonce_fixed[ACS_MAX_NONCE_FIXED_SIZE];
 	/** True once the client has set or restored AC_Client_Nonce_Fixed_Value. */
 	bool client_nonce_set;
 	/** Server TX nonce-variable counter for this Key_ID. */
@@ -279,8 +275,8 @@ struct bt_acs_crypto_session {
 struct bt_acs_session_store_record_state {
 	uint16_t key_id;
 	bool client_nonce_set;
-	uint8_t server_nonce_fixed[ACS_NONCE_SIZE];
-	uint8_t client_nonce_fixed[ACS_NONCE_SIZE];
+	uint8_t server_nonce_fixed[ACS_MAX_NONCE_FIXED_SIZE];
+	uint8_t client_nonce_fixed[ACS_MAX_NONCE_FIXED_SIZE];
 	uint64_t tx_nonce_counter;
 	uint64_t rx_nonce_counter;
 };
@@ -464,7 +460,6 @@ static inline struct acs_reply_mode acs_proc_reply_mode(const struct acs_procedu
 	return (struct acs_reply_mode){
 		.channel = (proc->kind == ACS_PROC_KIND_PLAIN_CP) ? ACS_REPLY_CP : ACS_REPLY_DOI,
 		.encrypted = (proc->kind == ACS_PROC_KIND_PROTECTED_REQ),
-		.needs_confirm = true,
 	};
 }
 

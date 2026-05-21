@@ -89,12 +89,16 @@ int acs_crypto_import_record_key(struct bt_acs_key_desc_runtime *record_state)
 	__ASSERT_NO_MSG(record_state->key_desc != NULL);
 
 	switch (record_state->key_desc->type_id) {
+#if IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_CCM)
 	case ACS_KEY_REC_AES_128_CCM:
 		psa_set_key_usage_flags(&attrs, PSA_KEY_USAGE_ENCRYPT | PSA_KEY_USAGE_DECRYPT);
 		psa_set_key_algorithm(&attrs,
 				      PSA_ALG_AEAD_WITH_SHORTENED_TAG(
 					      PSA_ALG_CCM, record_state->key_desc->aes.mac_size));
 		break;
+#endif
+#if IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_GCM) ||                                           \
+	IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_GMAC)
 	case ACS_KEY_REC_AES_128_GCM:
 	case ACS_KEY_REC_AES_128_GMAC:
 		psa_set_key_usage_flags(&attrs, PSA_KEY_USAGE_ENCRYPT | PSA_KEY_USAGE_DECRYPT);
@@ -102,11 +106,14 @@ int acs_crypto_import_record_key(struct bt_acs_key_desc_runtime *record_state)
 				      PSA_ALG_AEAD_WITH_SHORTENED_TAG(
 					      PSA_ALG_GCM, record_state->key_desc->aes.mac_size));
 		break;
+#endif
+#if IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_CMAC)
 	case ACS_KEY_REC_AES_128_CMAC:
 		psa_set_key_usage_flags(&attrs,
 					PSA_KEY_USAGE_SIGN_MESSAGE | PSA_KEY_USAGE_VERIFY_MESSAGE);
 		psa_set_key_algorithm(&attrs, PSA_ALG_CMAC);
 		break;
+#endif
 	default:
 		return -ENOTSUP;
 	}

@@ -30,13 +30,6 @@ extern "C" {
 #define ACS_CCM_NONCE_FIXED_SIZE CONFIG_BT_ACS_CCM_NONCE_FIXED_SIZE
 /** @brief Variable (counter) part of the CCM nonce in bytes. */
 #define ACS_CCM_NONCE_VAR_SIZE   (ACS_NONCE_SIZE - ACS_CCM_NONCE_FIXED_SIZE)
-#elif defined(CONFIG_BT_ACS_CCM_NONCE_SEQ_EVEN_ODD)
-/** @brief CCM nonce type tag: even/odd sequential scheme — no fixed prefix. */
-#define ACS_CCM_NONCE_TYPE       ACS_NONCE_SEQ_EVEN_ODD /**< 0x01 */
-/** @brief Fixed-prefix length is zero for the even/odd scheme. */
-#define ACS_CCM_NONCE_FIXED_SIZE 0
-/** @brief The full 13-byte nonce is the counter for the even/odd scheme. */
-#define ACS_CCM_NONCE_VAR_SIZE   ACS_NONCE_SIZE /**< 13 bytes */
 #endif
 /** @} */
 
@@ -46,17 +39,10 @@ extern "C" {
  * When the counter reaches these values the nonce space is exhausted and the
  * session key must be replaced before further messages can be sent or received.
  */
-#if defined(CONFIG_BT_ACS_CCM_NONCE_SEQ_EVEN_ODD)
-/** @brief Last valid even server-TX nonce (EVEN_ODD scheme). */
-#define ACS_COUNTER_TX_MAX UINT64_C(0xFFFFFFFFFFFFFFFE)
-/** @brief Last valid odd client-RX nonce (EVEN_ODD scheme). */
-#define ACS_COUNTER_RX_MAX UINT64_C(0xFFFFFFFFFFFFFFFD)
-#else
 /** @brief Safe 64-bit TX counter ceiling (DIFF_FIXED and other schemes). */
 #define ACS_COUNTER_TX_MAX UINT64_C(0xFFFFFFFFFFFFFFFE)
 /** @brief Safe 64-bit RX counter ceiling (DIFF_FIXED and other schemes). */
 #define ACS_COUNTER_RX_MAX UINT64_C(0xFFFFFFFFFFFFFFFE)
-#endif
 /** @} */
 
 /** @brief AES authentication tag overhead in bytes (AES-GCM and AES-CCM). */
@@ -102,27 +88,33 @@ extern "C" {
 #define ACS_GMAC_MAC_SIZE         ACS_GCM_MAC_SIZE
 
 #if defined(CONFIG_BT_ACS_DATA_PROTECTION_AES_CCM)
-#define ACS_CCM_NONCE_SIZE_OR_0     ACS_NONCE_SIZE
-#define ACS_CCM_NONCE_VAR_SIZE_OR_0 ACS_CCM_NONCE_VAR_SIZE
+#define ACS_CCM_NONCE_SIZE_OR_0       ACS_NONCE_SIZE
+#define ACS_CCM_NONCE_VAR_SIZE_OR_0   ACS_CCM_NONCE_VAR_SIZE
+#define ACS_CCM_NONCE_FIXED_SIZE_OR_0 ACS_CCM_NONCE_FIXED_SIZE
 #else
-#define ACS_CCM_NONCE_SIZE_OR_0     0
-#define ACS_CCM_NONCE_VAR_SIZE_OR_0 0
+#define ACS_CCM_NONCE_SIZE_OR_0       0
+#define ACS_CCM_NONCE_VAR_SIZE_OR_0   0
+#define ACS_CCM_NONCE_FIXED_SIZE_OR_0 0
 #endif
 
 #if defined(CONFIG_BT_ACS_DATA_PROTECTION_AES_GCM)
-#define ACS_GCM_NONCE_SIZE_OR_0     ACS_GCM_NONCE_SIZE
-#define ACS_GCM_NONCE_VAR_SIZE_OR_0 ACS_GCM_NONCE_VAR_SIZE
+#define ACS_GCM_NONCE_SIZE_OR_0       ACS_GCM_NONCE_SIZE
+#define ACS_GCM_NONCE_VAR_SIZE_OR_0   ACS_GCM_NONCE_VAR_SIZE
+#define ACS_GCM_NONCE_FIXED_SIZE_OR_0 ACS_GCM_NONCE_FIXED_SIZE
 #else
-#define ACS_GCM_NONCE_SIZE_OR_0     0
-#define ACS_GCM_NONCE_VAR_SIZE_OR_0 0
+#define ACS_GCM_NONCE_SIZE_OR_0       0
+#define ACS_GCM_NONCE_VAR_SIZE_OR_0   0
+#define ACS_GCM_NONCE_FIXED_SIZE_OR_0 0
 #endif
 
 #if defined(CONFIG_BT_ACS_DATA_PROTECTION_AES_GMAC)
-#define ACS_GMAC_NONCE_SIZE_OR_0     ACS_GMAC_NONCE_SIZE
-#define ACS_GMAC_NONCE_VAR_SIZE_OR_0 ACS_GMAC_NONCE_VAR_SIZE
+#define ACS_GMAC_NONCE_SIZE_OR_0       ACS_GMAC_NONCE_SIZE
+#define ACS_GMAC_NONCE_VAR_SIZE_OR_0   ACS_GMAC_NONCE_VAR_SIZE
+#define ACS_GMAC_NONCE_FIXED_SIZE_OR_0 ACS_GMAC_NONCE_FIXED_SIZE
 #else
-#define ACS_GMAC_NONCE_SIZE_OR_0     0
-#define ACS_GMAC_NONCE_VAR_SIZE_OR_0 0
+#define ACS_GMAC_NONCE_SIZE_OR_0       0
+#define ACS_GMAC_NONCE_VAR_SIZE_OR_0   0
+#define ACS_GMAC_NONCE_FIXED_SIZE_OR_0 0
 #endif
 
 /** @brief Largest nonce size used by any enabled data-protection algorithm. */
@@ -144,6 +136,16 @@ extern "C" {
 		 : ((ACS_GCM_NONCE_VAR_SIZE_OR_0 > ACS_GMAC_NONCE_VAR_SIZE_OR_0)                   \
 			    ? ACS_GCM_NONCE_VAR_SIZE_OR_0                                          \
 			    : ACS_GMAC_NONCE_VAR_SIZE_OR_0))
+
+/** @brief Largest nonce-fixed size used by any enabled data-protection algorithm. */
+#define ACS_MAX_NONCE_FIXED_SIZE                                                                   \
+	((ACS_CCM_NONCE_FIXED_SIZE_OR_0 > ACS_GCM_NONCE_FIXED_SIZE_OR_0)                           \
+		 ? ((ACS_CCM_NONCE_FIXED_SIZE_OR_0 > ACS_GMAC_NONCE_FIXED_SIZE_OR_0)               \
+			    ? ACS_CCM_NONCE_FIXED_SIZE_OR_0                                        \
+			    : ACS_GMAC_NONCE_FIXED_SIZE_OR_0)                                      \
+		 : ((ACS_GCM_NONCE_FIXED_SIZE_OR_0 > ACS_GMAC_NONCE_FIXED_SIZE_OR_0)               \
+			    ? ACS_GCM_NONCE_FIXED_SIZE_OR_0                                        \
+			    : ACS_GMAC_NONCE_FIXED_SIZE_OR_0))
 
 /** @brief Largest authentication tag size used by any enabled data-protection algorithm. */
 #define ACS_MAX_AUTH_TAG_SIZE ACS_CRYPTO_AUTH_TAG_SIZE

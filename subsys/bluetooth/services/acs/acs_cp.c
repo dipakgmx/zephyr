@@ -75,8 +75,6 @@ int acs_cp_send_reply(struct acs_procedure *proc)
 
 	reply.channel = mode.channel;
 	reply.plaintext = proc->buffers.response_buf;
-	reply.encrypted = mode.encrypted;
-	reply.needs_confirm = mode.needs_confirm;
 
 	err = acs_tx_submit(proc, &reply);
 	if (err) {
@@ -118,8 +116,6 @@ int acs_cp_rsp_status(struct acs_procedure *proc, uint8_t req_opcode, uint8_t co
 	reply = (struct acs_reply){
 		.channel = mode.channel,
 		.plaintext = buf,
-		.encrypted = mode.encrypted,
-		.needs_confirm = mode.needs_confirm,
 	};
 
 	err = acs_tx_submit(proc, &reply);
@@ -269,10 +265,8 @@ int acs_cp_dispatch(struct acs_frame *frame, struct bt_acs_conn *acs_conn,
 		return acs_cp_handle_get_key_descriptor(proc, payload);
 #endif /* CONFIG_BT_ACS_ANY_KEY_EXCHANGE */
 
-#if IS_ENABLED(CONFIG_BT_ACS_FEAT_AUTHENTICATION)
 	case BT_ACS_CP_OPCODE_GET_INFORMATION_SECURITY_CONFIGURATION_DESCRIPTOR:
 		return acs_cp_handle_get_isc_descriptor(proc, payload);
-#endif /* CONFIG_BT_ACS_FEAT_AUTHENTICATION */
 
 #if IS_ENABLED(CONFIG_BT_ACS_RESOURCE_HANDLE_UUID_MAP)
 	case BT_ACS_CP_OPCODE_GET_RESOURCE_HANDLE_UUID_MAP:
@@ -282,10 +276,10 @@ int acs_cp_dispatch(struct acs_frame *frame, struct bt_acs_conn *acs_conn,
 	case BT_ACS_CP_OPCODE_GET_SERVICE_CHARACTERISTIC_UUIDS_CHAR_RESOURCE_HANDLE:
 		return acs_cp_handle_get_svc_char_uuids(proc, payload);
 
-#if IS_ENABLED(CONFIG_BT_ACS_FEAT_AUTHORIZATION) && IS_ENABLED(CONFIG_BT_ACS_DESCRIPTORS)
+#if IS_ENABLED(CONFIG_BT_ACS_DESCRIPTORS)
 	case BT_ACS_CP_OPCODE_GET_ALL_ACTIVE_DESCRIPTORS:
 		return acs_cp_all_active_get(proc);
-#endif /* CONFIG_BT_ACS_FEAT_AUTHORIZATION && CONFIG_BT_ACS_DESCRIPTORS */
+#endif /* CONFIG_BT_ACS_DESCRIPTORS */
 
 #if IS_ENABLED(CONFIG_BT_ACS_ANY_KEY_EXCHANGE)
 	case BT_ACS_CP_OPCODE_GET_CURRENT_KEY_LIST:
