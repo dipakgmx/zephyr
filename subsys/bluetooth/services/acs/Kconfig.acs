@@ -76,7 +76,8 @@ menuconfig BT_ACS_KEY_EXCHANGE_ECDH
 	default y if BT_ACS_FEAT_AUTHENTICATION
 	help
 	  Enable Elliptic Curve Diffie-Hellman key exchange method.
-	  Requires PSA Crypto ECDH support and BT_SETTINGS for session key persistence.
+	  Requires PSA Crypto ECDH support and BT_SETTINGS for bonded-peer
+	  restore and cleanup of persistent ACS parent keys.
 
 if BT_ACS_KEY_EXCHANGE_ECDH
 
@@ -134,7 +135,9 @@ menuconfig BT_ACS_KEY_EXCHANGE_KDF
 	depends on BT_ACS_FEAT_AUTHENTICATION
 	help
 	  Enable Key Derivation Function based key exchange method.
-	  Requires BT_SETTINGS for session key persistence.
+	  Requires BT_SETTINGS for bonded-peer restore and cleanup of
+	  persistent ACS parent keys. The derived KDF child key is
+	  per-connection runtime state and must be re-derived on each reconnect.
 
 if BT_ACS_KEY_EXCHANGE_KDF
 
@@ -177,23 +180,6 @@ config BT_ACS_HAS_INFO_FOR_HKDF
 	             BT_ACS_KDF_HKDF_SHA512_WITH_INFO
 	default n
 
-config BT_ACS_KDF_SESSION_KEY
-	bool "Derive a fresh KDF child key on each new connection"
-	default n
-	help
-	  When enabled, a new random KDF salt is used to derive a fresh child
-	  key from the persistent ECDH parent key at the start of every
-	  connection. The child key is discarded on disconnect; the peer must
-	  redo the KDF exchange on every reconnect. This provides per-connection
-	  forward secrecy: a compromised child key cannot retroactively decrypt
-	  traffic from other connections.
-
-	  When disabled (default), the KDF child key is written to non-volatile
-	  storage alongside the parent key. The peer may reconnect and resume
-	  protected operations immediately, without repeating the KDF exchange.
-	  The Get Current Key List response includes the KDF key only after the
-	  peer has completed the KDF exchange for the current connection.
-
 endif # BT_ACS_KEY_EXCHANGE_KDF
 
 # KDF buffer sizes — always present so C code compiles when KDF is off.
@@ -215,7 +201,9 @@ menuconfig BT_ACS_KEY_EXCHANGE_OOB
 	depends on BT_SETTINGS
 	depends on BT_ACS_FEAT_AUTHENTICATION
 	help
-	  Enable Out-of-Band key exchange. Requires BT_SETTINGS for session key persistence.
+	  Enable Out-of-Band key exchange.
+	  Requires BT_SETTINGS for bonded-peer restore and cleanup of
+	  persistent ACS parent keys.
 
 if BT_ACS_KEY_EXCHANGE_OOB
 
@@ -439,16 +427,16 @@ choice BT_ACS_CCM_NONCE_TYPE
 	depends on BT_ACS_DATA_PROTECTION_AES_CCM
 	help
 	  Selects the nonce scheme advertised in the AES-128-CCM key descriptor.
-	  This implementation supports nonce variable parts up to 8 octets only.
-	  As a result, Sequence Number Even-Odd is not currently supported here,
-	  and Sequence Number Different Fixed Parts must be configured so that
-	  (13 - fixed_size) <= 8.
+	  This implementation uses an 8-octet runtime counter. For nonce schemes
+	  whose total nonce size is larger than 8 octets, the remaining prefix
+	  bytes are derived from established session key material.
 
 config BT_ACS_CCM_NONCE_SEQ_DIFF_FIXED
 	bool "Sequence Number Different Fixed Parts (0x02)"
 	help
-	  Nonce = server/client fixed part || variable counter.
-	  Requires Set Client Nonce Fixed exchange before first message.
+	  Nonce = server/client derived prefix || variable counter.
+	  The runtime derives distinct server/client prefixes from established
+	  session key material before protected traffic begins.
 
 config BT_ACS_CCM_NONCE_FIXED_SIZE
 	int "Fixed nonce part size in bytes (AES-CCM, SEQ_DIFF_FIXED)"
@@ -465,14 +453,13 @@ config BT_ACS_CCM_NONCE_FIXED_SIZE
 
 config BT_ACS_CCM_NONCE_SEQ_EVEN_ODD
 	bool "Sequence Number Even-Odd (0x01)"
-	depends on n
 	help
-	  Nonce = variable counter only (no fixed part, Nonce_Fixed_Size = 0).
+	  Nonce = derived session prefix || even/odd counter.
 	  Server uses even sequence numbers (0, 2, 4 ...).
 	  Client uses odd sequence numbers (1, 3, 5 ...).
 	  Set Client Nonce Fixed opcode is not applicable in this mode.
-	  Not supported by the current implementation because it requires a
-	  13-octet nonce variable part.
+	  The runtime derives a shared nonce prefix from the established
+	  session key material and appends the even/odd counter on the wire.
 endchoice
 
 config BT_ACS_MAX_NONCE_RECORDS

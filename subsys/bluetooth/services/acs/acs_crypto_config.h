@@ -30,6 +30,13 @@ extern "C" {
 #define ACS_CCM_NONCE_FIXED_SIZE CONFIG_BT_ACS_CCM_NONCE_FIXED_SIZE
 /** @brief Variable (counter) part of the CCM nonce in bytes. */
 #define ACS_CCM_NONCE_VAR_SIZE   (ACS_NONCE_SIZE - ACS_CCM_NONCE_FIXED_SIZE)
+#elif defined(CONFIG_BT_ACS_CCM_NONCE_SEQ_EVEN_ODD)
+/** @brief CCM nonce type tag: sequence number even-odd. */
+#define ACS_CCM_NONCE_TYPE       ACS_NONCE_SEQ_EVEN_ODD /**< 0x01 */
+/** @brief EVEN_ODD carries no spec-defined fixed prefix field. */
+#define ACS_CCM_NONCE_FIXED_SIZE 0U
+/** @brief Full CCM nonce variable field size advertised on the wire. */
+#define ACS_CCM_NONCE_VAR_SIZE   ACS_NONCE_SIZE
 #endif
 /** @} */
 

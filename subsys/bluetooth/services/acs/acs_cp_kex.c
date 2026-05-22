@@ -191,15 +191,6 @@ int acs_cp_kex_start(struct acs_procedure *proc, struct net_buf_simple *buf)
 	uint8_t oob_buf[ACS_HMAC_SHA256_SIZE];
 	int oob_err;
 
-#if defined(CONFIG_BT_SETTINGS)
-	/* Decline if session cache is full and this peer has no existing slot. */
-	if (!acs_session_cache_has_room(bt_conn_get_dst(proc->acs_conn->conn))) {
-		LOG_WRN("start_kex: session cache full");
-		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_START_KEY_EXCHANGE,
-					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
-	}
-#endif /* CONFIG_BT_SETTINGS */
-
 	/* Pull all operand data before any response buffer init. */
 	memcpy(&req_data, net_buf_simple_pull_mem(buf, sizeof(req_data)), sizeof(req_data));
 	key_id = sys_le16_to_cpu(req_data.key_id);
@@ -645,9 +636,10 @@ int acs_cp_kex_ecdh_confirm_rand(struct acs_procedure *proc, struct net_buf_simp
 		       CONFIG_BT_ACS_SESSION_KEY_SIZE);
 		err = acs_crypto_import_current_key(ecdh_key);
 		if (err == 0) {
-			err = acs_crypto_rebind_record_states(acs_conn);
+			err = acs_crypto_rebind_key_desc_runtimes(acs_conn);
 			if (err == 0) {
-				acs_crypto_reset_record_counters(acs_conn, ACS_KEY_ID_ECDH);
+				acs_crypto_reset_key_desc_runtime_counters(acs_conn,
+									   ACS_KEY_ID_ECDH);
 			}
 		}
 		if (err) {

@@ -111,8 +111,7 @@ enum acs_route_kind {
  * @brief Classification result for an inbound frame.
  *
  * Built by @ref acs_classify_frame. @c encrypted carries forward whether the
- * eventual reply must be wrapped on the way out (drives @ref acs_reply::encrypted
- * once that lands).
+ * eventual reply must be wrapped on the way out.
  */
 struct acs_route {
 	enum acs_route_kind kind;
@@ -236,9 +235,9 @@ struct bt_acs_key_desc_runtime {
 	psa_key_id_t psa_key_id;
 	/** Key material copied from the current parent/child exchange key. */
 	uint8_t key[CONFIG_BT_ACS_SESSION_KEY_SIZE];
-	/** AC Server nonce fixed value for this Key_ID (wire LSO...MSO). */
+	/** AC Server nonce fixed value for this Key_ID (runtime order for nonce build). */
 	uint8_t server_nonce_fixed[ACS_MAX_NONCE_FIXED_SIZE];
-	/** AC Client nonce fixed value for this Key_ID (wire LSO...MSO). */
+	/** AC Client nonce fixed value for this Key_ID (runtime order for nonce build). */
 	uint8_t client_nonce_fixed[ACS_MAX_NONCE_FIXED_SIZE];
 	/** True once the client has set or restored AC_Client_Nonce_Fixed_Value. */
 	bool client_nonce_set;
@@ -249,9 +248,10 @@ struct bt_acs_key_desc_runtime {
 };
 
 static inline uint16_t
-acs_key_desc_runtime_key_id(const struct bt_acs_key_desc_runtime *record_state)
+acs_key_desc_runtime_key_id(const struct bt_acs_key_desc_runtime *key_desc_runtime)
 {
-	return (record_state && record_state->key_desc) ? record_state->key_desc->key_id : 0U;
+	return (key_desc_runtime && key_desc_runtime->key_desc) ? key_desc_runtime->key_desc->key_id
+								: 0U;
 }
 
 /**
@@ -270,44 +270,6 @@ struct bt_acs_crypto_session {
 	struct bt_acs_kex_ctx *kex;
 	/** Per-Key_ID nonce/counter state for AES records that use nonce material. */
 	struct bt_acs_key_desc_runtime key_desc_runtimes[CONFIG_BT_ACS_MAX_NONCE_RECORDS];
-};
-
-struct bt_acs_session_store_record_state {
-	uint16_t key_id;
-	bool client_nonce_set;
-	uint8_t server_nonce_fixed[ACS_MAX_NONCE_FIXED_SIZE];
-	uint8_t client_nonce_fixed[ACS_MAX_NONCE_FIXED_SIZE];
-	uint64_t tx_nonce_counter;
-	uint64_t rx_nonce_counter;
-};
-
-/**
- * @brief NVS-serialised snapshot of an ACS crypto session.
- *
- * When KDF key exchange is enabled (persistent mode), this struct carries two
- * keys: the ECDH parent key in @p parent_key and, optionally, the KDF child
- * key in the @p child_key fields. The parent is the root used to derive
- * the child; only the child is ever used for AEAD, so @p tx/rx_nonce_counter
- * always remain zero for the parent. Separating the two allows Invalidate Key
- * to target either independently across connections.
- *
- * In session mode (CONFIG_BT_ACS_KDF_SESSION_KEY), only the ECDH parent is
- * stored; the child key is discarded at disconnect and re-derived on reconnect.
- */
-struct bt_acs_session_store {
-	/** ECDH/OOB exchanged parent key (spec §4.4.3.12: "top-level parent key").
-	 *  When KDF is active, the child "session" key is in @c child_key. */
-	uint8_t parent_key[CONFIG_BT_ACS_SESSION_KEY_SIZE];
-	uint16_t parent_key_id;      /**< Key_ID of @c parent_key (ECDH or OOB). */
-	uint16_t restriction_map_id; /**< Active restriction map ID */
-	uint8_t nonce_record_count;  /**< Number of valid @c nonce_records entries. */
-	struct bt_acs_session_store_record_state nonce_records[CONFIG_BT_ACS_MAX_NONCE_RECORDS];
-#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF) && !IS_ENABLED(CONFIG_BT_ACS_KDF_SESSION_KEY)
-	/** When true, the KDF child key below is valid and should be restored as
-	 *  the active AEAD key; parent_key holds the ECDH parent for reference. */
-	bool kdf_child_valid;
-	uint8_t child_key[CONFIG_BT_ACS_SESSION_KEY_SIZE]; /**< KDF-derived child key */
-#endif
 };
 
 /**

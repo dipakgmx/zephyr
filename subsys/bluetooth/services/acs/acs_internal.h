@@ -127,23 +127,21 @@ struct bt_acs_conn *acs_conn_alloc(struct bt_conn *conn);
 /** @brief Release all resources held by @p acs_conn. */
 void acs_conn_cleanup(struct bt_acs_conn *acs_conn);
 
-/* ---- Session persistence (BT_SETTINGS) ---------------------------------- */
+/* ---- Session persistence (bond-backed PSA storage) ---------------------- */
 
 #if defined(CONFIG_BT_SETTINGS)
-/** @brief Persist the crypto session for @p conn to NVS. */
+/** @brief Persist the parent ACS key for @p conn to PSA persistent storage. */
 void acs_session_store(struct bt_conn const *conn, struct bt_acs_conn const *acs_conn);
 
-/** @brief Erase all stored sessions for @p conn's peer address. */
+/** @brief Erase the stored parent key for @p conn's peer. */
+void acs_session_clear(struct bt_conn const *conn);
+
+/** @brief Erase stored parent keys for every peer except @p conn's peer. */
 void acs_session_clear_all(struct bt_conn const *conn);
 
-/** @brief Return true if the session cache has room for @p addr. */
-bool acs_session_cache_has_room(const bt_addr_le_t *addr);
-
-/** @brief Restore a previously stored session for @p conn from NVS. */
+/** @brief Restore a previously stored parent key for @p conn from PSA storage. */
 void acs_session_restore(struct bt_conn *conn, struct bt_acs_conn *acs_conn);
 
-/** @brief Invalidate any cached session state for @p addr. */
-void acs_session_invalidate_cache(const bt_addr_le_t *addr);
 extern struct bt_conn_auth_info_cb acs_auth_info_cb;
 #endif /* CONFIG_BT_SETTINGS */
 

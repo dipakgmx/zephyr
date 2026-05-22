@@ -278,7 +278,43 @@ const struct bt_acs_key_desc_record *acs_key_desc_lookup(uint16_t key_id);
 bool acs_key_desc_is_algorithm_record(const struct bt_acs_key_desc_record *rec);
 bool acs_key_desc_has_nonce_record(const struct bt_acs_key_desc_record *rec);
 uint16_t acs_key_desc_parent_key_id(const struct bt_acs_key_desc_record *rec);
-uint8_t acs_key_desc_nonce_size(const struct bt_acs_key_desc_record *rec);
+static inline uint8_t acs_key_desc_nonce_size(const struct bt_acs_key_desc_record *rec)
+{
+	__ASSERT_NO_MSG(rec != NULL);
+	return rec->aes.nonce_size != 0U
+		       ? rec->aes.nonce_size
+		       : (uint8_t)(rec->aes.nonce_var_size + rec->aes.nonce_fixed_size);
+}
+
+static inline uint8_t acs_key_desc_nonce_prefix_size(const struct bt_acs_key_desc_record *rec)
+{
+	__ASSERT_NO_MSG(rec != NULL);
+
+	switch (rec->aes.nonce_type) {
+	case ACS_NONCE_SEQ_DIFF_FIXED:
+		return rec->aes.nonce_fixed_size;
+	case ACS_NONCE_SEQ_EVEN_ODD:
+		return (uint8_t)(acs_key_desc_nonce_size(rec) - sizeof(uint64_t));
+	default:
+		return 0U;
+	}
+}
+
+static inline uint8_t acs_key_desc_nonce_counter_size(const struct bt_acs_key_desc_record *rec)
+{
+	__ASSERT_NO_MSG(rec != NULL);
+
+	return rec->aes.nonce_type == ACS_NONCE_SEQ_EVEN_ODD ? sizeof(uint64_t)
+							     : rec->aes.nonce_var_size;
+}
+
+static inline uint8_t acs_key_desc_nonce_counter_step(const struct bt_acs_key_desc_record *rec)
+{
+	__ASSERT_NO_MSG(rec != NULL);
+
+	return rec->aes.nonce_type == ACS_NONCE_SEQ_EVEN_ODD ? 2U : 1U;
+}
+
 static inline uint8_t acs_key_desc_nonce_var_size(const struct bt_acs_key_desc_record *rec)
 {
 	__ASSERT_NO_MSG(rec != NULL);

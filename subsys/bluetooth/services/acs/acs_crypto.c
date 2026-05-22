@@ -179,24 +179,24 @@ int acs_crypto_current_key_from_isc(struct bt_acs_conn *acs_conn, uint16_t isc_i
 }
 
 int acs_crypto_key_desc_runtime_lookup(struct bt_acs_conn *acs_conn, uint16_t key_id,
-				       struct bt_acs_key_desc_runtime **record_state)
+				       struct bt_acs_key_desc_runtime **key_desc_runtime)
 {
-	if (!acs_conn || !record_state) {
-		LOG_DBG("record state lookup called with invalid arguments");
+	if (!acs_conn || !key_desc_runtime) {
+		LOG_DBG("key descriptor runtime lookup called with invalid arguments");
 		__ASSERT_NO_MSG(acs_conn != NULL);
-		__ASSERT_NO_MSG(record_state != NULL);
+		__ASSERT_NO_MSG(key_desc_runtime != NULL);
 		return -EINVAL;
 	}
 
 	for (size_t i = 0; i < ARRAY_SIZE(acs_conn->crypto.key_desc_runtimes); i++) {
 		if (acs_key_desc_runtime_key_id(&acs_conn->crypto.key_desc_runtimes[i]) == key_id) {
-			*record_state = &acs_conn->crypto.key_desc_runtimes[i];
+			*key_desc_runtime = &acs_conn->crypto.key_desc_runtimes[i];
 			return 0;
 		}
 	}
 
-	*record_state = NULL;
-	LOG_ERR("No runtime record state reserved for Key_ID 0x%04x", key_id);
+	*key_desc_runtime = NULL;
+	LOG_ERR("No key descriptor runtime reserved for Key_ID 0x%04x", key_id);
 	return -ENOENT;
 }
 
@@ -204,7 +204,8 @@ int acs_crypto_get_server_nonce_fixed(struct bt_acs_conn *acs_conn, uint16_t key
 				      uint8_t *nonce_buf, size_t len)
 {
 #if IS_ENABLED(CONFIG_BT_ACS_HAS_NONCE_FIXED)
-	struct bt_acs_key_desc_runtime *record_state;
+	struct bt_acs_key_desc_runtime *key_desc_runtime;
+	uint8_t nonce_fixed_wire[ACS_MAX_NONCE_FIXED_SIZE];
 	uint8_t fixed_size;
 	bool nonce_unset = true;
 	int err;
@@ -216,32 +217,37 @@ int acs_crypto_get_server_nonce_fixed(struct bt_acs_conn *acs_conn, uint16_t key
 		return -EINVAL;
 	}
 
-	err = acs_crypto_key_desc_runtime_lookup(acs_conn, key_id, &record_state);
+	err = acs_crypto_key_desc_runtime_lookup(acs_conn, key_id, &key_desc_runtime);
 	if (err) {
 		return err;
 	}
 
-	fixed_size = acs_key_desc_nonce_fixed_size(record_state->key_desc);
+	fixed_size = acs_key_desc_nonce_fixed_size(key_desc_runtime->key_desc);
 	if (fixed_size == 0U) {
 		return -ENOTSUP;
 	}
 
-	if (fixed_size > sizeof(record_state->server_nonce_fixed)) {
+	if (fixed_size > sizeof(key_desc_runtime->server_nonce_fixed)) {
 		return -EOVERFLOW;
 	}
 
 	for (uint8_t i = 0U; i < fixed_size; i++) {
-		if (record_state->server_nonce_fixed[i] != 0U) {
+		if (key_desc_runtime->server_nonce_fixed[i] != 0U) {
 			nonce_unset = false;
 			break;
 		}
 	}
 
 	if (nonce_unset) {
-		sys_rand_get(record_state->server_nonce_fixed, fixed_size);
+		sys_rand_get(nonce_fixed_wire, fixed_size);
+		memcpy(key_desc_runtime->server_nonce_fixed, nonce_fixed_wire, fixed_size);
+		sys_mem_swap(key_desc_runtime->server_nonce_fixed, fixed_size);
+	} else {
+		memcpy(nonce_fixed_wire, key_desc_runtime->server_nonce_fixed, fixed_size);
+		sys_mem_swap(nonce_fixed_wire, fixed_size);
 	}
 
-	memcpy(nonce_buf, record_state->server_nonce_fixed, MIN(len, (size_t)fixed_size));
+	memcpy(nonce_buf, nonce_fixed_wire, MIN(len, (size_t)fixed_size));
 	return 0;
 #else
 	ARG_UNUSED(acs_conn);

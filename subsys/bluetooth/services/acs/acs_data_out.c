@@ -36,6 +36,22 @@ static void data_tx_format_wire(uint8_t *ciphertext_and_tag, uint16_t plain_len,
 	memcpy(ciphertext_and_tag, tag_tmp, tag_size);
 }
 
+static void data_tx_put_nonce_var(uint8_t *dst,
+				  const struct bt_acs_key_desc_runtime *key_desc_runtime,
+				  uint64_t tx_counter)
+{
+	const struct bt_acs_key_desc_record *key_desc = key_desc_runtime->key_desc;
+	uint8_t counter_size = acs_key_desc_nonce_counter_size(key_desc);
+	uint8_t prefix_size = acs_key_desc_nonce_prefix_size(key_desc);
+
+	sys_put_le(dst, &tx_counter, counter_size);
+
+	if (key_desc->aes.nonce_type == ACS_NONCE_SEQ_EVEN_ODD && prefix_size > 0U) {
+		memcpy(&dst[counter_size], key_desc_runtime->server_nonce_fixed, prefix_size);
+		sys_mem_swap(&dst[counter_size], prefix_size);
+	}
+}
+
 /**
  * @brief Encrypt the response buffer in-place for wire transmission.
  *
@@ -69,7 +85,7 @@ static int data_tx_encrypt_in_place(struct bt_acs_conn *acs_conn, uint16_t isc_i
 	__ASSERT_NO_MSG(buf->len > 0);
 
 	if (net_buf_headroom(buf) < ACS_CRYPTO_HEADROOM) {
-		LOG_ERR("encrypt_in_place: insufficient headroom (%zu < %u)", net_buf_headroom(buf),
+		LOG_ERR("insufficient headroom for encrypt (%zu < %u)", net_buf_headroom(buf),
 			ACS_CRYPTO_HEADROOM);
 		return -ENOMEM;
 	}
@@ -87,8 +103,8 @@ static int data_tx_encrypt_in_place(struct bt_acs_conn *acs_conn, uint16_t isc_i
 	auth_tag_size = acs_key_desc_auth_tag_size(key_desc);
 
 	if (net_buf_tailroom(buf) < auth_tag_size) {
-		LOG_ERR("encrypt_in_place: insufficient tailroom for auth tag (%zu < %u)",
-			net_buf_tailroom(buf), auth_tag_size);
+		LOG_ERR("insufficient tailroom for auth tag (%zu < %u)", net_buf_tailroom(buf),
+			auth_tag_size);
 		return -ENOMEM;
 	}
 
@@ -97,7 +113,7 @@ static int data_tx_encrypt_in_place(struct bt_acs_conn *acs_conn, uint16_t isc_i
 
 	err = acs_crypto_key_desc_runtime_lookup(acs_conn, isc->key_id, &record_state);
 	if (err || record_state->psa_key_id == 0U) {
-		LOG_ERR("encrypt_in_place: no record state for isc_id 0x%04x", isc_id);
+		LOG_ERR("no key runtime for isc_id 0x%04x", isc_id);
 		return -EACCES;
 	}
 
@@ -110,10 +126,10 @@ static int data_tx_encrypt_in_place(struct bt_acs_conn *acs_conn, uint16_t isc_i
 	err = acs_crypto_encrypt(record_state, plaintext, plain_len, plaintext, &cipher_len);
 	if (err) {
 		if (err == -ENOSPC) {
-			LOG_WRN("Nonce exhausted on encrypt — invalidating security");
+			LOG_WRN("nonce exhausted on encrypt, invalidating security");
 			bt_acs_invalidate_security(acs_conn->conn);
 		}
-		LOG_ERR("Data encryption failed (isc_id 0x%04x, err %d)", isc_id, err);
+		LOG_ERR("data encryption failed for isc_id 0x%04x: %d", isc_id, err);
 		return err;
 	}
 
@@ -127,7 +143,7 @@ static int data_tx_encrypt_in_place(struct bt_acs_conn *acs_conn, uint16_t isc_i
 	uint8_t *hdr = net_buf_push(buf, nonce_var_size + sizeof(uint16_t));
 
 	sys_put_le16(isc_id, hdr);
-	sys_put_le(hdr + sizeof(uint16_t), &tx_counter, nonce_var_size);
+	data_tx_put_nonce_var(hdr + sizeof(uint16_t), record_state, tx_counter);
 
 	return 0;
 }

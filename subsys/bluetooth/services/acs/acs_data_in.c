@@ -44,6 +44,25 @@ static uint64_t acs_get_le_var_counter(const uint8_t *src, size_t len)
 	return counter;
 }
 
+static bool
+acs_nonce_var_matches_runtime_prefix(const uint8_t *nonce_var,
+				     const struct bt_acs_key_desc_runtime *key_desc_runtime)
+{
+	const struct bt_acs_key_desc_record *key_desc = key_desc_runtime->key_desc;
+	uint8_t counter_size = acs_key_desc_nonce_counter_size(key_desc);
+	uint8_t prefix_size = acs_key_desc_nonce_prefix_size(key_desc);
+	uint8_t expected_prefix[ACS_MAX_NONCE_FIXED_SIZE];
+
+	if (key_desc->aes.nonce_type != ACS_NONCE_SEQ_EVEN_ODD || prefix_size == 0U) {
+		return true;
+	}
+
+	memcpy(expected_prefix, key_desc_runtime->client_nonce_fixed, prefix_size);
+	sys_mem_swap(expected_prefix, prefix_size);
+
+	return memcmp(&nonce_var[counter_size], expected_prefix, prefix_size) == 0;
+}
+
 static uint8_t acs_data_rx_find_char_attrs_cb(const struct bt_gatt_attr *attr, uint16_t handle,
 					      void *user_data)
 {
@@ -107,7 +126,7 @@ static int acs_data_in_validate(struct bt_acs_conn *acs_conn, struct net_buf_sim
 	*received_counter = 0U;
 
 	if (buf->len < ACS_DATA_IN_HDR_SIZE) {
-		LOG_ERR("Data In payload too short for ISC_ID");
+		LOG_ERR("data-in payload too short for ISC_ID");
 		return -EINVAL;
 	}
 
@@ -140,17 +159,22 @@ static int acs_data_in_validate(struct bt_acs_conn *acs_conn, struct net_buf_sim
 
 	/* Wire format after ISC_ID: Nonce_Var(LSO) || MAC(LSO) || Cipher(LSO) */
 	if (buf->len <= (uint16_t)(nonce_var_size + auth_tag_size)) {
-		LOG_ERR("Data In: Secure_Data too short (%u)", buf->len);
+		LOG_ERR("secure data too short (%u)", buf->len);
 		return -EINVAL;
 	}
 
 	nonce_var = net_buf_simple_pull_mem(buf, nonce_var_size);
+	*received_counter =
+		acs_get_le_var_counter(nonce_var, acs_key_desc_nonce_counter_size(key_desc));
 
-	*received_counter = acs_get_le_var_counter(nonce_var, nonce_var_size);
+	if (!acs_nonce_var_matches_runtime_prefix(nonce_var, *record_state)) {
+		LOG_WRN("received nonce variable prefix does not match runtime state");
+		return ACS_DATA_ERR_INCORRECT_SECURITY_CONFIG;
+	}
 
 	/* Reject stale/replayed messages. */
 	if (*received_counter < (*record_state)->rx_nonce_counter) {
-		LOG_WRN("Data In: stale/replayed nonce (received=0x%016llx vs "
+		LOG_WRN("stale or replayed nonce (received=0x%016llx vs "
 			"min_expected=0x%016llx)",
 			(unsigned long long)*received_counter,
 			(unsigned long long)(*record_state)->rx_nonce_counter);
@@ -204,15 +228,15 @@ static int acs_data_in_decrypt(struct bt_acs_conn *acs_conn, struct net_buf_simp
 	if (err) {
 		record_state->rx_nonce_counter = previous_rx_nonce_counter;
 		if (err == -ENOSPC) {
-			LOG_WRN("Nonce exhausted on decrypt — invalidating security");
+			LOG_WRN("nonce exhausted on decrypt, invalidating security");
 			bt_acs_invalidate_security(acs_conn->conn);
 			return ACS_DATA_ERR_INVALID_KEY;
 		} else if (err == -EACCES) {
-			LOG_ERR("Decryption failed: authentication tag mismatch (invalid "
+			LOG_ERR("decryption failed: authentication tag mismatch (invalid "
 				"key/tampered data)");
 			return ACS_DATA_ERR_INVALID_KEY;
 		} else {
-			LOG_ERR("Decryption failed: err=%d (isc_id=0x%04x, key_id=0x%04x)", err,
+			LOG_ERR("decryption failed: err=%d (isc_id=0x%04x, key_id=0x%04x)", err,
 				isc_id, acs_key_desc_runtime_key_id(record_state));
 			return ACS_DATA_ERR_INVALID_KEY;
 		}
@@ -223,7 +247,7 @@ static int acs_data_in_decrypt(struct bt_acs_conn *acs_conn, struct net_buf_simp
 	buf->len = plain_len;
 
 	if (plain_len < ACS_SECURE_DATA_PLAIN_MIN_SIZE) {
-		LOG_ERR("Data In decrypted payload too short (%u)", plain_len);
+		LOG_ERR("decrypted payload too short (%u)", plain_len);
 		return -EINVAL;
 	}
 

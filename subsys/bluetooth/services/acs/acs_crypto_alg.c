@@ -18,10 +18,6 @@
 LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
 
 BUILD_ASSERT(CONFIG_BT_ACS_SESSION_KEY_SIZE == 16, "AES-128 session key fixed at 16 bytes");
-BUILD_ASSERT(ACS_MAX_NONCE_VAR_SIZE <= ACS_NONCE_VAR_COUNTER_SIZE,
-	     "ACS runtime currently supports at most an 8-octet nonce variable part");
-BUILD_ASSERT(!IS_ENABLED(CONFIG_BT_ACS_CCM_NONCE_SEQ_EVEN_ODD),
-	     "EVEN_ODD not supported by the current runtime");
 
 #if IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_CCM)
 #define ACS_AEAD_BASE_ALG PSA_ALG_CCM
@@ -39,19 +35,17 @@ BUILD_ASSERT(!IS_ENABLED(CONFIG_BT_ACS_CCM_NONCE_SEQ_EVEN_ODD),
 #endif
 
 static void acs_build_nonce(const uint8_t *fixed, uint64_t counter, uint8_t nonce_size,
-			    uint8_t fixed_size, uint8_t *nonce)
+			    uint8_t prefix_size, uint8_t *nonce)
 {
-	uint8_t var_size = nonce_size - fixed_size;
+	uint8_t var_size = nonce_size - prefix_size;
 	uint8_t counter_be[sizeof(counter)];
 
-	if (fixed && fixed_size > 0U) {
-		for (uint8_t i = 0; i < fixed_size; i++) {
-			nonce[i] = fixed[fixed_size - 1U - i];
-		}
+	if (fixed && prefix_size > 0U) {
+		memcpy(nonce, fixed, prefix_size);
 	}
 
 	sys_put_be64(counter, counter_be);
-	memcpy(&nonce[nonce_size - var_size], &counter_be[sizeof(counter_be) - var_size], var_size);
+	memcpy(&nonce[prefix_size], &counter_be[sizeof(counter_be) - var_size], var_size);
 }
 
 static void acs_build_record_tx_nonce(const struct bt_acs_key_desc_runtime *key_desc_runtime,
@@ -59,7 +53,7 @@ static void acs_build_record_tx_nonce(const struct bt_acs_key_desc_runtime *key_
 {
 	acs_build_nonce(key_desc_runtime->server_nonce_fixed, key_desc_runtime->tx_nonce_counter,
 			acs_key_desc_nonce_size(key_desc_runtime->key_desc),
-			acs_key_desc_nonce_fixed_size(key_desc_runtime->key_desc), nonce);
+			acs_key_desc_nonce_prefix_size(key_desc_runtime->key_desc), nonce);
 }
 
 static void acs_build_record_rx_nonce(const struct bt_acs_key_desc_runtime *key_desc_runtime,
@@ -67,7 +61,7 @@ static void acs_build_record_rx_nonce(const struct bt_acs_key_desc_runtime *key_
 {
 	acs_build_nonce(key_desc_runtime->client_nonce_fixed, key_desc_runtime->rx_nonce_counter,
 			acs_key_desc_nonce_size(key_desc_runtime->key_desc),
-			acs_key_desc_nonce_fixed_size(key_desc_runtime->key_desc), nonce);
+			acs_key_desc_nonce_prefix_size(key_desc_runtime->key_desc), nonce);
 }
 
 #if IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_CCM) ||                                           \
@@ -81,9 +75,10 @@ static int acs_crypto_aead_encrypt(struct bt_acs_key_desc_runtime *key_desc_runt
 	size_t out_len;
 	uint8_t nonce_size = acs_key_desc_nonce_size(key_desc_runtime->key_desc);
 	uint8_t tag_len = acs_key_desc_auth_tag_size(key_desc_runtime->key_desc);
+	uint8_t counter_step = acs_key_desc_nonce_counter_step(key_desc_runtime->key_desc);
 
-	if (key_desc_runtime->tx_nonce_counter > ACS_COUNTER_TX_MAX) {
-		LOG_ERR("TX nonce space exhausted — rekey required");
+	if (key_desc_runtime->tx_nonce_counter > (ACS_COUNTER_TX_MAX - (counter_step - 1U))) {
+		LOG_ERR("TX nonce space exhausted, rekey required");
 		return -ENOSPC;
 	}
 
@@ -101,7 +96,7 @@ static int acs_crypto_aead_encrypt(struct bt_acs_key_desc_runtime *key_desc_runt
 
 	__ASSERT_NO_MSG(out_len <= UINT16_MAX);
 	*cipher_len = (uint16_t)out_len;
-	key_desc_runtime->tx_nonce_counter++;
+	key_desc_runtime->tx_nonce_counter += counter_step;
 
 	return 0;
 }
@@ -116,13 +111,14 @@ static int acs_crypto_aead_decrypt(struct bt_acs_key_desc_runtime *key_desc_runt
 	size_t out_len;
 	uint8_t nonce_size = acs_key_desc_nonce_size(key_desc_runtime->key_desc);
 	uint8_t tag_len = acs_key_desc_auth_tag_size(key_desc_runtime->key_desc);
+	uint8_t counter_step = acs_key_desc_nonce_counter_step(key_desc_runtime->key_desc);
 
 	if (cipher_len < tag_len) {
 		return -EINVAL;
 	}
 
-	if (key_desc_runtime->rx_nonce_counter > ACS_COUNTER_RX_MAX) {
-		LOG_ERR("RX nonce space exhausted — rekey required");
+	if (key_desc_runtime->rx_nonce_counter > (ACS_COUNTER_RX_MAX - (counter_step - 1U))) {
+		LOG_ERR("RX nonce space exhausted, rekey required");
 		return -ENOSPC;
 	}
 
@@ -142,7 +138,7 @@ static int acs_crypto_aead_decrypt(struct bt_acs_key_desc_runtime *key_desc_runt
 
 	__ASSERT_NO_MSG(out_len <= UINT16_MAX);
 	*plain_len = (uint16_t)out_len;
-	key_desc_runtime->rx_nonce_counter++;
+	key_desc_runtime->rx_nonce_counter += counter_step;
 
 	return 0;
 }
@@ -157,9 +153,10 @@ static int acs_crypto_cmac_encrypt(struct bt_acs_key_desc_runtime *key_desc_runt
 	psa_status_t status;
 	psa_mac_operation_t op = PSA_MAC_OPERATION_INIT;
 	size_t mac_len;
+	uint8_t counter_step = acs_key_desc_nonce_counter_step(key_desc_runtime->key_desc);
 
-	if (key_desc_runtime->tx_nonce_counter > ACS_COUNTER_TX_MAX) {
-		LOG_ERR("TX nonce space exhausted — rekey required");
+	if (key_desc_runtime->tx_nonce_counter > (ACS_COUNTER_TX_MAX - (counter_step - 1U))) {
+		LOG_ERR("TX nonce space exhausted, rekey required");
 		return -ENOSPC;
 	}
 
@@ -167,7 +164,7 @@ static int acs_crypto_cmac_encrypt(struct bt_acs_key_desc_runtime *key_desc_runt
 
 	status = psa_mac_sign_setup(&op, key_desc_runtime->psa_key_id, PSA_ALG_CMAC);
 	if (status != PSA_SUCCESS) {
-		LOG_ERR("ACS CMAC sign setup failed: %d", status);
+		LOG_ERR("CMAC sign setup failed: %d", status);
 		return -EIO;
 	}
 
@@ -187,18 +184,18 @@ static int acs_crypto_cmac_encrypt(struct bt_acs_key_desc_runtime *key_desc_runt
 		psa_status_t abort_status = psa_mac_abort(&op);
 
 		if (abort_status != PSA_SUCCESS) {
-			LOG_WRN("ACS CMAC sign abort failed: %d", abort_status);
+			LOG_WRN("CMAC sign abort failed: %d", abort_status);
 		}
 	}
 
 	if (status != PSA_SUCCESS) {
-		LOG_ERR("ACS CMAC sign failed: %d", status);
+		LOG_ERR("CMAC sign failed: %d", status);
 		return -EIO;
 	}
 
 	__ASSERT_NO_MSG(mac_len <= UINT16_MAX);
 	*cipher_len = plain_len + (uint16_t)mac_len;
-	key_desc_runtime->tx_nonce_counter++;
+	key_desc_runtime->tx_nonce_counter += counter_step;
 
 	return 0;
 }
@@ -213,6 +210,7 @@ static int acs_crypto_cmac_decrypt(struct bt_acs_key_desc_runtime *key_desc_runt
 	uint8_t nonce[ACS_MAX_NONCE_SIZE];
 	psa_status_t status;
 	psa_mac_operation_t op = PSA_MAC_OPERATION_INIT;
+	uint8_t counter_step = acs_key_desc_nonce_counter_step(key_desc_runtime->key_desc);
 
 	ARG_UNUSED(aad);
 	ARG_UNUSED(aad_len);
@@ -221,8 +219,8 @@ static int acs_crypto_cmac_decrypt(struct bt_acs_key_desc_runtime *key_desc_runt
 		return -EINVAL;
 	}
 
-	if (key_desc_runtime->rx_nonce_counter > ACS_COUNTER_RX_MAX) {
-		LOG_ERR("RX nonce space exhausted — rekey required");
+	if (key_desc_runtime->rx_nonce_counter > (ACS_COUNTER_RX_MAX - (counter_step - 1U))) {
+		LOG_ERR("RX nonce space exhausted, rekey required");
 		return -ENOSPC;
 	}
 
@@ -232,7 +230,7 @@ static int acs_crypto_cmac_decrypt(struct bt_acs_key_desc_runtime *key_desc_runt
 
 	status = psa_mac_verify_setup(&op, key_desc_runtime->psa_key_id, PSA_ALG_CMAC);
 	if (status != PSA_SUCCESS) {
-		LOG_ERR("ACS CMAC verify setup failed: %d", status);
+		LOG_ERR("CMAC verify setup failed: %d", status);
 		return -EIO;
 	}
 
@@ -246,12 +244,12 @@ static int acs_crypto_cmac_decrypt(struct bt_acs_key_desc_runtime *key_desc_runt
 		psa_status_t abort_status = psa_mac_abort(&op);
 
 		if (abort_status != PSA_SUCCESS) {
-			LOG_WRN("ACS CMAC verify abort failed: %d", abort_status);
+			LOG_WRN("CMAC verify abort failed: %d", abort_status);
 		}
 	}
 
 	if (status != PSA_SUCCESS) {
-		LOG_ERR("ACS CMAC verify failed: %d (cipher_len=%u rx_counter=%llu)", status,
+		LOG_ERR("CMAC verify failed: %d (cipher_len=%u rx_counter=%llu)", status,
 			cipher_len, (unsigned long long)key_desc_runtime->rx_nonce_counter);
 		return -EACCES;
 	}
@@ -260,7 +258,7 @@ static int acs_crypto_cmac_decrypt(struct bt_acs_key_desc_runtime *key_desc_runt
 		memcpy(plaintext, ciphertext, data_len);
 	}
 	*plain_len = data_len;
-	key_desc_runtime->rx_nonce_counter++;
+	key_desc_runtime->rx_nonce_counter += counter_step;
 
 	return 0;
 }
@@ -275,9 +273,10 @@ static int acs_crypto_gmac_encrypt(struct bt_acs_key_desc_runtime *key_desc_runt
 	psa_status_t status;
 	uint8_t tag[ACS_PSA_GMAC_TAG_LEN];
 	size_t tag_len;
+	uint8_t counter_step = acs_key_desc_nonce_counter_step(key_desc_runtime->key_desc);
 
-	if (key_desc_runtime->tx_nonce_counter > ACS_COUNTER_TX_MAX) {
-		LOG_ERR("TX nonce space exhausted — rekey required");
+	if (key_desc_runtime->tx_nonce_counter > (ACS_COUNTER_TX_MAX - (counter_step - 1U))) {
+		LOG_ERR("TX nonce space exhausted, rekey required");
 		return -ENOSPC;
 	}
 
@@ -287,7 +286,7 @@ static int acs_crypto_gmac_encrypt(struct bt_acs_key_desc_runtime *key_desc_runt
 				  acs_key_desc_nonce_size(key_desc_runtime->key_desc), plaintext,
 				  plain_len, NULL, 0, tag, sizeof(tag), &tag_len);
 	if (status != PSA_SUCCESS) {
-		LOG_ERR("ACS GMAC encrypt failed: %d", status);
+		LOG_ERR("GMAC encrypt failed: %d", status);
 		return -EIO;
 	}
 
@@ -301,7 +300,7 @@ static int acs_crypto_gmac_encrypt(struct bt_acs_key_desc_runtime *key_desc_runt
 
 	__ASSERT_NO_MSG(tag_len <= UINT16_MAX);
 	*cipher_len = plain_len + (uint16_t)tag_len;
-	key_desc_runtime->tx_nonce_counter++;
+	key_desc_runtime->tx_nonce_counter += counter_step;
 
 	return 0;
 }
@@ -315,6 +314,7 @@ static int acs_crypto_gmac_decrypt(struct bt_acs_key_desc_runtime *key_desc_runt
 	uint8_t nonce[ACS_MAX_NONCE_SIZE];
 	psa_status_t status;
 	size_t out_len;
+	uint8_t counter_step = acs_key_desc_nonce_counter_step(key_desc_runtime->key_desc);
 
 	ARG_UNUSED(aad);
 	ARG_UNUSED(aad_len);
@@ -323,8 +323,8 @@ static int acs_crypto_gmac_decrypt(struct bt_acs_key_desc_runtime *key_desc_runt
 		return -EINVAL;
 	}
 
-	if (key_desc_runtime->rx_nonce_counter > ACS_COUNTER_RX_MAX) {
-		LOG_ERR("RX nonce space exhausted — rekey required");
+	if (key_desc_runtime->rx_nonce_counter > (ACS_COUNTER_RX_MAX - (counter_step - 1U))) {
+		LOG_ERR("RX nonce space exhausted, rekey required");
 		return -ENOSPC;
 	}
 
@@ -336,7 +336,7 @@ static int acs_crypto_gmac_decrypt(struct bt_acs_key_desc_runtime *key_desc_runt
 				  data_len, &ciphertext[data_len], ACS_PSA_GMAC_TAG_LEN, NULL, 0,
 				  &out_len);
 	if (status != PSA_SUCCESS) {
-		LOG_ERR("ACS GMAC verify failed: %d (cipher_len=%u rx_counter=%llu)", status,
+		LOG_ERR("GMAC verify failed: %d (cipher_len=%u rx_counter=%llu)", status,
 			cipher_len, (unsigned long long)key_desc_runtime->rx_nonce_counter);
 		return -EACCES;
 	}
@@ -345,7 +345,7 @@ static int acs_crypto_gmac_decrypt(struct bt_acs_key_desc_runtime *key_desc_runt
 		memcpy(plaintext, ciphertext, data_len);
 	}
 	*plain_len = data_len;
-	key_desc_runtime->rx_nonce_counter++;
+	key_desc_runtime->rx_nonce_counter += counter_step;
 
 	return 0;
 }

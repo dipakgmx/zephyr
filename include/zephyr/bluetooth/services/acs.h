@@ -496,6 +496,7 @@ struct bt_acs_key_desc_record {
 			uint8_t msg_type;
 			uint8_t mac_size;
 			uint8_t nonce_type;
+			uint8_t nonce_size;
 			uint8_t nonce_var_size;
 			uint8_t nonce_fixed_size;
 		} aes;
@@ -521,6 +522,7 @@ struct bt_acs_key_desc_record {
  *                .msg_type = ACS_MSG_TYPE_PROTECTED,
  *                .mac_size = 16,
  *                .nonce_type = ACS_NONCE_SEQ_DIFF_FIXED,
+ *                .nonce_size = 12,
  *                .nonce_var_size = 8,
  *                .nonce_fixed_size = 4 });
  * @endcode

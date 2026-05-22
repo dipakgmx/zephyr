@@ -105,18 +105,7 @@ static int kex_step_status(struct acs_procedure *proc)
 	}
 
 #if defined(CONFIG_BT_SETTINGS)
-#if IS_ENABLED(CONFIG_BT_ACS_KDF_SESSION_KEY)
-	{
-		struct bt_acs_runtime_key_state *kdf_key;
-
-		if (acs_crypto_current_key_lookup(acs_conn, ACS_KEY_ID_KDF, &kdf_key) != 0 ||
-		    kdf_key->psa_key_id == 0U) {
-			acs_session_store(proc->acs_conn->conn, acs_conn);
-		}
-	}
-#else
 	acs_session_store(proc->acs_conn->conn, acs_conn);
-#endif
 #endif
 
 	acs_seq_clear(proc);
@@ -251,15 +240,15 @@ void acs_key_exchange_abort(struct bt_acs_conn *acs_conn)
 			mbedtls_platform_zeroize(kdf_key->key, sizeof(kdf_key->key));
 		}
 
-		acs_crypto_rebind_record_states(acs_conn);
-		acs_crypto_reset_record_counters(acs_conn, ACS_KEY_ID_KDF);
+		acs_crypto_rebind_key_desc_runtimes(acs_conn);
+		acs_crypto_reset_key_desc_runtime_counters(acs_conn, ACS_KEY_ID_KDF);
 		acs_key_exchange_free_ctx(acs_conn);
 		return;
 	}
 #endif
 
 	acs_crypto_destroy_connection_keys(acs_conn);
-	acs_crypto_rebind_record_states(acs_conn);
+	acs_crypto_rebind_key_desc_runtimes(acs_conn);
 	acs_key_exchange_free_ctx(acs_conn);
 }
 
@@ -389,6 +378,107 @@ cleanup:
 		return -EIO;
 	}
 	return ret;
+}
+
+static size_t acs_nonce_label_build(uint16_t key_id, uint8_t kind, uint8_t *label, size_t len)
+{
+	static const uint8_t prefix[] = "ACS:nonce:";
+
+	__ASSERT_NO_MSG(len >= sizeof(prefix) + sizeof(kind) + sizeof(key_id));
+
+	memcpy(label, prefix, sizeof(prefix) - 1U);
+	label[sizeof(prefix) - 1U] = kind;
+	sys_put_le16(key_id, &label[sizeof(prefix)]);
+
+	return sizeof(prefix) + sizeof(key_id);
+}
+
+static int acs_key_desc_runtime_derive_nonce_state(struct bt_acs_key_desc_runtime *key_desc_runtime,
+						   const uint8_t *key_material,
+						   size_t key_material_len)
+{
+	const struct bt_acs_key_desc_record *key_desc = key_desc_runtime->key_desc;
+	uint8_t prefix_size = acs_key_desc_nonce_prefix_size(key_desc);
+	uint16_t key_id = acs_key_desc_runtime_key_id(key_desc_runtime);
+	uint8_t label[sizeof("ACS:nonce:") + sizeof(uint8_t) + sizeof(uint16_t)];
+	size_t label_len;
+	int ret;
+
+	memset(key_desc_runtime->server_nonce_fixed, 0,
+	       sizeof(key_desc_runtime->server_nonce_fixed));
+	memset(key_desc_runtime->client_nonce_fixed, 0,
+	       sizeof(key_desc_runtime->client_nonce_fixed));
+	key_desc_runtime->client_nonce_set = false;
+	key_desc_runtime->tx_nonce_counter = 0U;
+	key_desc_runtime->rx_nonce_counter =
+		key_desc->aes.nonce_type == ACS_NONCE_SEQ_EVEN_ODD ? 1U : 0U;
+
+	if (prefix_size == 0U) {
+		return 0;
+	}
+
+	switch (key_desc->aes.nonce_type) {
+	case ACS_NONCE_SEQ_DIFF_FIXED:
+		label_len = acs_nonce_label_build(key_id, 's', label, sizeof(label));
+		ret = acs_hkdf(acs_get_psa_hkdf_alg(), NULL, 0U, key_material, key_material_len,
+			       label, label_len, key_desc_runtime->server_nonce_fixed, prefix_size);
+		if (ret != 0) {
+			return ret;
+		}
+
+		label_len = acs_nonce_label_build(key_id, 'c', label, sizeof(label));
+		ret = acs_hkdf(acs_get_psa_hkdf_alg(), NULL, 0U, key_material, key_material_len,
+			       label, label_len, key_desc_runtime->client_nonce_fixed, prefix_size);
+		if (ret != 0) {
+			return ret;
+		}
+		break;
+
+	case ACS_NONCE_SEQ_EVEN_ODD:
+		label_len = acs_nonce_label_build(key_id, 'e', label, sizeof(label));
+		ret = acs_hkdf(acs_get_psa_hkdf_alg(), NULL, 0U, key_material, key_material_len,
+			       label, label_len, key_desc_runtime->server_nonce_fixed, prefix_size);
+		if (ret != 0) {
+			return ret;
+		}
+		memcpy(key_desc_runtime->client_nonce_fixed, key_desc_runtime->server_nonce_fixed,
+		       prefix_size);
+		break;
+
+	default:
+		return 0;
+	}
+
+	sys_mem_swap(key_desc_runtime->server_nonce_fixed, prefix_size);
+	sys_mem_swap(key_desc_runtime->client_nonce_fixed, prefix_size);
+	key_desc_runtime->client_nonce_set = true;
+
+	return 0;
+}
+
+static int acs_derive_nonce_state_for_current_key(struct bt_acs_conn *acs_conn,
+						  uint16_t current_key_id,
+						  const uint8_t *key_material,
+						  size_t key_material_len)
+{
+	for (size_t i = 0; i < ARRAY_SIZE(acs_conn->crypto.key_desc_runtimes); i++) {
+		struct bt_acs_key_desc_runtime *key_desc_runtime =
+			&acs_conn->crypto.key_desc_runtimes[i];
+		int ret;
+
+		if (!key_desc_runtime->key_desc ||
+		    key_desc_runtime->current_key_id != current_key_id) {
+			continue;
+		}
+
+		ret = acs_key_desc_runtime_derive_nonce_state(key_desc_runtime, key_material,
+							      key_material_len);
+		if (ret != 0) {
+			return ret;
+		}
+	}
+
+	return 0;
 }
 
 /* §4.4.3.17.1.2: Salt=HMAC(Zero,PKs||PKc), ConfKey=HMAC(Salt,ECDHKey||Auth),
@@ -625,10 +715,11 @@ int acs_crypto_derive_session_key(struct bt_acs_conn *acs_conn)
 
 	ret = acs_crypto_import_current_key(exchange_key);
 	if (ret == 0) {
-		ret = acs_crypto_rebind_record_states(acs_conn);
+		ret = acs_crypto_rebind_key_desc_runtimes(acs_conn);
 		if (ret == 0) {
-			acs_crypto_reset_record_counters(acs_conn,
-							 acs_runtime_key_id(exchange_key));
+			ret = acs_derive_nonce_state_for_current_key(
+				acs_conn, acs_runtime_key_id(exchange_key), exchange_key->key,
+				CONFIG_BT_ACS_SESSION_KEY_SIZE);
 		}
 	}
 
@@ -679,9 +770,11 @@ static int bt_acs_crypto_derive_kdf_child_key(struct bt_acs_conn *acs_conn)
 	acs_crypto_destroy_current_key(kdf_key);
 	ret = acs_crypto_import_current_key(kdf_key);
 	if (ret == 0) {
-		ret = acs_crypto_rebind_record_states(acs_conn);
+		ret = acs_crypto_rebind_key_desc_runtimes(acs_conn);
 		if (ret == 0) {
-			acs_crypto_reset_record_counters(acs_conn, ACS_KEY_ID_KDF);
+			ret = acs_derive_nonce_state_for_current_key(
+				acs_conn, ACS_KEY_ID_KDF, kdf_key->key,
+				CONFIG_BT_ACS_SESSION_KEY_SIZE);
 		}
 	}
 
@@ -741,37 +834,6 @@ int acs_key_exchange_ecdh_start(struct bt_acs_conn *acs_conn, uint16_t key_id)
 		return -EALREADY;
 	}
 
-#if IS_ENABLED(CONFIG_BT_ACS_HAS_NONCE_FIXED)
-	/* Spec §4.4.3.13: SET_CLIENT_NONCE_FIXED must precede START_KEY_EXCHANGE
-	 * for SEQ_DIFF_FIXED nonce types. A non-zero value is present when:
-	 *   - The client called SET_CLIENT_NONCE_FIXED on this connection, or
-	 *   - A previous session was restored from NVS (nonces persisted).
-	 */
-	{
-		bool missing_client_nonce = false;
-
-		for (size_t i = 0; i < ARRAY_SIZE(acs_conn->crypto.key_desc_runtimes); i++) {
-			const struct bt_acs_key_desc_runtime *record_state =
-				&acs_conn->crypto.key_desc_runtimes[i];
-
-			if (!record_state->key_desc ||
-			    record_state->key_desc->aes.nonce_type != ACS_NONCE_SEQ_DIFF_FIXED) {
-				continue;
-			}
-
-			if (!record_state->client_nonce_set) {
-				missing_client_nonce = true;
-				break;
-			}
-		}
-
-		if (missing_client_nonce) {
-			LOG_WRN("client nonce fixed not set");
-			return -EALREADY;
-		}
-	}
-#endif /* CONFIG_BT_ACS_HAS_NONCE_FIXED */
-
 	/* Destroy any ECDH private key left from a prior aborted exchange. */
 	if (acs_conn->crypto.kex && acs_conn->crypto.kex->ecdh_key_id != 0) {
 		acs_crypto_warn_destroy_key_failure(
@@ -780,7 +842,9 @@ int acs_key_exchange_ecdh_start(struct bt_acs_conn *acs_conn, uint16_t key_id)
 		acs_conn->crypto.kex->ecdh_key_id = 0;
 	}
 
-	/* Reset current keys; preserve nonce fixed parts across exchanges (§4.4.3.18). */
+	/* Reset live crypto state while keeping the descriptor runtime slots bound.
+	 * Fresh session or KDF key material will repopulate the nonce prefixes.
+	 */
 	acs_crypto_destroy_connection_keys(acs_conn);
 	acs_crypto_destroy_connection_record_keys(acs_conn);
 	struct bt_acs_kex_ctx *kex = acs_conn->crypto.kex;

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2026 Dipak Shetty
+ * Copyright (c) 2025 Dipak Shetty
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -16,11 +16,6 @@
 #include <zephyr/bluetooth/services/acs.h>
 #include <zephyr/logging/log.h>
 
-#if defined(CONFIG_BT_SETTINGS)
-#include <zephyr/settings/settings.h>
-#include "host/settings.h"
-#endif
-
 #include "acs_internal.h"
 #include "acs_key_exchange.h"
 #include "zephyr/sys/check.h"
@@ -33,16 +28,6 @@ NET_BUF_POOL_FIXED_DEFINE(acs_buf_pool, ACS_BUF_COUNT, ACS_BUF_SIZE, 0, NULL);
 static struct bt_acs_conn acs_conn_state[CONFIG_BT_MAX_CONN];
 /** Pool of transient key-exchange contexts (released on handshake completion) */
 static struct bt_acs_kex_ctx acs_kex_pool[CONFIG_BT_MAX_CONN];
-
-#if defined(CONFIG_BT_SETTINGS) && IS_ENABLED(CONFIG_BT_ACS_KDF_SESSION_KEY)
-static bool acs_conn_has_current_key(struct bt_acs_conn *acs_conn, uint16_t key_id)
-{
-	struct bt_acs_runtime_key_state *current_key;
-	int err = acs_crypto_current_key_lookup(acs_conn, key_id, &current_key);
-
-	return err == 0 && current_key->psa_key_id != 0U;
-}
-#endif
 
 struct net_buf *acs_buf_alloc(k_timeout_t timeout)
 {
@@ -241,11 +226,7 @@ static void acs_bt_disconnected(struct bt_conn *conn, uint8_t reason)
 	}
 
 #if defined(CONFIG_BT_SETTINGS)
-	if (acs_session_established(acs_conn)
-#if IS_ENABLED(CONFIG_BT_ACS_KDF_SESSION_KEY)
-	    && !acs_conn_has_current_key(acs_conn, ACS_KEY_ID_KDF)
-#endif
-	) {
+	if (acs_session_established(acs_conn)) {
 		acs_session_store(conn, acs_conn);
 	}
 #endif
@@ -264,13 +245,6 @@ int bt_acs_invalidate_security(struct bt_conn *conn)
 	struct bt_acs_conn *acs_conn;
 	bool was_established;
 	const struct bt_acs_cb *cb;
-#if defined(CONFIG_BT_SETTINGS)
-	struct bt_conn_info info;
-	const bt_addr_le_t *addr;
-	char addr_str[BT_ADDR_LE_STR_LEN];
-	int del_err;
-#endif
-
 	CHECKIF(!conn) {
 		return -EINVAL;
 	}
@@ -293,17 +267,7 @@ int bt_acs_invalidate_security(struct bt_conn *conn)
 	acs_crypto_reset(acs_conn);
 
 #if defined(CONFIG_BT_SETTINGS)
-	if (bt_conn_get_info(conn, &info) == 0) {
-		addr = info.le.dst;
-		del_err = bt_settings_delete("acs", info.id, addr);
-		if (del_err && del_err != -ENOENT) {
-			LOG_WRN("Failed to delete ACS session from flash (err %d)", del_err);
-		} else {
-			acs_session_invalidate_cache(addr);
-			bt_addr_le_to_str(addr, addr_str, sizeof(addr_str));
-			LOG_INF("Session key erased for peer %s", addr_str);
-		}
-	}
+	acs_session_clear(conn);
 #endif
 
 	cb = acs_cb_get();

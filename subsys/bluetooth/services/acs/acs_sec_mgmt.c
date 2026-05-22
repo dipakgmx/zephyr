@@ -138,8 +138,8 @@ static void invalidate_kdf_child(struct bt_acs_conn *acs_conn)
 
 	acs_crypto_destroy_current_key(kdf_key);
 	mbedtls_platform_zeroize(kdf_key->key, sizeof(kdf_key->key));
-	acs_crypto_rebind_record_states(acs_conn);
-	acs_crypto_reset_record_counters(acs_conn, ACS_KEY_ID_KDF);
+	acs_crypto_rebind_key_desc_runtimes(acs_conn);
+	acs_crypto_reset_key_desc_runtime_counters(acs_conn, ACS_KEY_ID_KDF);
 	acs_conn->status_flags &= ~BT_ACS_STATUS_SECURITY_ESTABLISHED;
 }
 #endif
@@ -191,7 +191,7 @@ int acs_sec_mgmt_invalidate_key(struct acs_procedure *proc, struct net_buf_simpl
 			response_code = BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE;
 		} else {
 			invalidate_kdf_child(proc->acs_conn);
-#if defined(CONFIG_BT_SETTINGS) && !IS_ENABLED(CONFIG_BT_ACS_KDF_SESSION_KEY)
+#if defined(CONFIG_BT_SETTINGS)
 			acs_session_store(proc->acs_conn->conn, proc->acs_conn);
 #endif
 			{
@@ -213,7 +213,7 @@ int acs_sec_mgmt_invalidate_key(struct acs_procedure *proc, struct net_buf_simpl
 			/* Algorithm keys (GCM, CCM, …) use the KDF child as their actual key
 			 * material.  Invalidating them is equivalent to invalidating the child. */
 			invalidate_kdf_child(proc->acs_conn);
-#if defined(CONFIG_BT_SETTINGS) && !IS_ENABLED(CONFIG_BT_ACS_KDF_SESSION_KEY)
+#if defined(CONFIG_BT_SETTINGS)
 			acs_session_store(proc->acs_conn->conn, proc->acs_conn);
 #endif
 			{

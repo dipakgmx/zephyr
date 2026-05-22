@@ -73,6 +73,7 @@ BT_ACS_KEY_DESC_DEFINE(acs_key_desc_ccm, .type_id = ACS_KEY_REC_AES_128_CCM,
 			       .msg_type = ACS_MSG_TYPE_PROTECTED,
 			       .mac_size = ACS_CCM_MAC_SIZE,
 			       .nonce_type = ACS_CCM_NONCE_TYPE,
+			       .nonce_size = ACS_NONCE_SIZE,
 			       .nonce_var_size = ACS_CCM_NONCE_VAR_SIZE,
 			       .nonce_fixed_size = ACS_CCM_NONCE_FIXED_SIZE,
 		       });
@@ -86,6 +87,7 @@ BT_ACS_KEY_DESC_DEFINE(acs_key_desc_gcm, .type_id = ACS_KEY_REC_AES_128_GCM,
 			       .msg_type = ACS_MSG_TYPE_PROTECTED,
 			       .mac_size = ACS_GCM_MAC_SIZE,
 			       .nonce_type = ACS_NONCE_SEQ_DIFF_FIXED,
+			       .nonce_size = ACS_GCM_NONCE_SIZE,
 			       .nonce_var_size = ACS_GCM_NONCE_VAR_SIZE,
 			       .nonce_fixed_size = ACS_GCM_NONCE_FIXED_SIZE,
 		       });
@@ -100,6 +102,7 @@ BT_ACS_KEY_DESC_DEFINE(acs_key_desc_cmac, .type_id = ACS_KEY_REC_AES_128_CMAC,
 			       .msg_type = ACS_MSG_TYPE_PROTECTED,
 			       .mac_size = ACS_CRYPTO_AUTH_TAG_SIZE,
 			       .nonce_type = ACS_NONCE_PROFILE_DEF,
+			       .nonce_size = 0U,
 			       .nonce_var_size = 0U,
 			       .nonce_fixed_size = 0U,
 		       });
@@ -114,6 +117,7 @@ BT_ACS_KEY_DESC_DEFINE(acs_key_desc_gmac, .type_id = ACS_KEY_REC_AES_128_GMAC,
 			       .msg_type = ACS_MSG_TYPE_PROTECTED,
 			       .mac_size = ACS_GCM_MAC_SIZE,
 			       .nonce_type = ACS_NONCE_SEQ_DIFF_FIXED,
+			       .nonce_size = ACS_GMAC_NONCE_SIZE,
 			       .nonce_var_size = ACS_GCM_NONCE_VAR_SIZE,
 			       .nonce_fixed_size = ACS_GCM_NONCE_FIXED_SIZE,
 		       });
@@ -196,24 +200,6 @@ uint16_t acs_key_desc_parent_key_id(const struct bt_acs_key_desc_record *rec)
 	case ACS_KEY_REC_AES_128_GMAC:
 #endif
 		return rec->aes.parent_key_id;
-	default:
-		return 0U;
-	}
-}
-
-uint8_t acs_key_desc_nonce_size(const struct bt_acs_key_desc_record *rec)
-{
-	if (!rec) {
-		return 0U;
-	}
-
-	switch (rec->type_id) {
-	case ACS_KEY_REC_AES_128_CCM:
-		return ACS_NONCE_SIZE;
-	case ACS_KEY_REC_AES_128_GCM:
-		return ACS_GCM_NONCE_SIZE;
-	case ACS_KEY_REC_AES_128_GMAC:
-		return ACS_GMAC_NONCE_SIZE;
 	default:
 		return 0U;
 	}

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2026 Dipak Shetty
+ * Copyright (c) 2025 Dipak Shetty
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -73,27 +73,27 @@ static ssize_t acs_status_read(struct bt_conn *conn, const struct bt_gatt_attr *
 
 static void acs_status_ccc_changed(const struct bt_gatt_attr *attr, uint16_t value)
 {
-	LOG_DBG("Status CCC: %s", (value == BT_GATT_CCC_INDICATE) ? "enabled" : "disabled");
+	LOG_DBG("status CCC %s", (value == BT_GATT_CCC_INDICATE) ? "enabled" : "disabled");
 }
 
 #if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_NOTIFICATION)
 static void acs_don_ccc_changed(const struct bt_gatt_attr *attr, uint16_t value)
 {
-	LOG_DBG("Data Out Notify CCC: %s", (value == BT_GATT_CCC_NOTIFY) ? "enabled" : "disabled");
+	LOG_DBG("data-out notify CCC %s", (value == BT_GATT_CCC_NOTIFY) ? "enabled" : "disabled");
 }
 #endif /* CONFIG_BT_ACS_PROTECTED_RESOURCE_NOTIFICATION */
 
 #if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION)
 static void acs_doi_ccc_changed(const struct bt_gatt_attr *attr, uint16_t value)
 {
-	LOG_DBG("Data Out Indicate CCC: %s",
+	LOG_DBG("data-out indicate CCC %s",
 		(value == BT_GATT_CCC_INDICATE) ? "enabled" : "disabled");
 }
 #endif /* CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION */
 
 static void acs_cp_ccc_changed(const struct bt_gatt_attr *attr, uint16_t value)
 {
-	LOG_DBG("Control Point CCC: %s", (value == BT_GATT_CCC_INDICATE) ? "enabled" : "disabled");
+	LOG_DBG("control-point CCC %s", (value == BT_GATT_CCC_INDICATE) ? "enabled" : "disabled");
 }
 
 #if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_WRITE) ||                                          \

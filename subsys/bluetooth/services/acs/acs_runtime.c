@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2026 Dipak Shetty
+ * Copyright (c) 2025 Dipak Shetty
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -39,7 +39,7 @@ static int acs_runtime_classify_frame(const struct acs_frame *frame, uint16_t ma
 		const struct bt_acs_rmap_protected *entry;
 
 		if (acs_rmap_find_protected(map_id, frame->resource_handle, &hit, &entry) != 0) {
-			LOG_WRN("Data In handle 0x%04x not in restriction map %u",
+			LOG_WRN("data-in handle 0x%04x not in restriction map %u",
 				frame->resource_handle, map_id);
 			return -ENOENT;
 		}
@@ -53,7 +53,7 @@ static int acs_runtime_classify_frame(const struct acs_frame *frame, uint16_t ma
 			route->kind = ACS_ROUTE_PROTECTED_CHAR;
 			break;
 		default:
-			LOG_WRN("Data In handle 0x%04x not in restriction map %u",
+			LOG_WRN("data-in handle 0x%04x not in restriction map %u",
 				frame->resource_handle, map_id);
 			return -ENOENT;
 		}
@@ -66,7 +66,7 @@ static int acs_runtime_classify_frame(const struct acs_frame *frame, uint16_t ma
 	}
 #else
 	ARG_UNUSED(map_id);
-	LOG_WRN("Data In received but authorization disabled");
+	LOG_WRN("data-in received but authorization disabled");
 	return -ENOENT;
 #endif
 }
@@ -84,18 +84,16 @@ int acs_runtime_dispatch_protected_cp_frame(struct acs_frame *frame, struct bt_a
 	/* Spec-mandated: reject Data In write if DOI CCC not configured. */
 	err = acs_doi_ccc_check(frame->conn);
 	if (err) {
-		LOG_WRN("Data In: DOI indications not enabled for protected CP handle 0x%04x",
+		LOG_WRN("DOI indications not enabled for protected CP handle 0x%04x",
 			frame->resource_handle);
 		return ACS_DATA_ERR_CCC_IMPROPER_CONF;
 	}
 
-	LOG_DBG("Data In: routing handle 0x%04x to CP dispatcher (respond via DOI)",
-		frame->resource_handle);
+	LOG_DBG("routing handle 0x%04x to CP dispatcher (respond via DOI)", frame->resource_handle);
 
 	req_ctx = acs_procedure_alloc(acs_conn, frame->resource_handle, frame->isc_id);
 	if (!req_ctx) {
-		LOG_WRN("Data In: no free CP request context for handle 0x%04x",
-			frame->resource_handle);
+		LOG_WRN("no free CP request context for handle 0x%04x", frame->resource_handle);
 		return -ENOMEM;
 	}
 
@@ -138,20 +136,19 @@ int acs_runtime_dispatch_protected_char_frame(struct acs_frame *frame, struct bt
 	err = acs_require_data_out_subscription(frame->conn, frame->resource_handle,
 						frame->payload_len);
 	if (err == -EINVAL) {
-		LOG_WRN("Data In: required Data Out CCC not enabled for handle 0x%04x",
+		LOG_WRN("required data-out CCC not enabled for handle 0x%04x",
 			frame->resource_handle);
 		return ACS_DATA_ERR_CCC_IMPROPER_CONF;
 	}
 	if (err) {
-		LOG_WRN("Data In: unable to resolve Data Out path for handle 0x%04x (%d)",
+		LOG_WRN("unable to resolve data-out path for handle 0x%04x (%d)",
 			frame->resource_handle, err);
 		return err;
 	}
 
 	req_ctx = acs_procedure_alloc(acs_conn, frame->resource_handle, frame->isc_id);
 	if (!req_ctx) {
-		LOG_WRN("Data In: no free request context for handle 0x%04x",
-			frame->resource_handle);
+		LOG_WRN("no free request context for handle 0x%04x", frame->resource_handle);
 		return -ENOMEM;
 	}
 
@@ -178,12 +175,11 @@ int acs_runtime_dispatch_frame(struct acs_frame *frame, struct bt_acs_conn *acs_
 
 	err = acs_runtime_classify_frame(frame, map_id, &route);
 	if (err == -ENOENT) {
-		LOG_WRN("Runtime dispatch: handle 0x%04x not in restriction map",
-			frame->resource_handle);
+		LOG_WRN("handle 0x%04x not in restriction map", frame->resource_handle);
 		return ACS_DATA_ERR_RESOURCE_NOT_PROTECTED;
 	}
 	if (err) {
-		LOG_ERR("Runtime dispatch: classify_frame failed (%d)", err);
+		LOG_ERR("frame classification failed: %d", err);
 		return err;
 	}
 
@@ -212,17 +208,17 @@ ssize_t acs_cp_write(struct bt_conn *conn, const struct bt_gatt_attr *attr, cons
 	ARG_UNUSED(flags);
 
 	if (offset != 0) {
-		LOG_WRN("CP write: unexpected offset %u", offset);
+		LOG_WRN("unexpected CP write offset %u", offset);
 		return BT_GATT_ERR(BT_ATT_ERR_INVALID_OFFSET);
 	}
 
 	if (len < 2) {
-		LOG_WRN("CP write: PDU too short (%u bytes)", len);
+		LOG_WRN("CP write PDU too short (%u bytes)", len);
 		return BT_GATT_ERR(BT_ATT_ERR_INVALID_ATTRIBUTE_LEN);
 	}
 
 	if (!acs_is_initialized()) {
-		LOG_ERR("CP write: ACS not initialized");
+		LOG_ERR("CP write received before ACS init");
 		return BT_GATT_ERR(BT_ATT_ERR_UNLIKELY);
 	}
 
@@ -230,18 +226,18 @@ ssize_t acs_cp_write(struct bt_conn *conn, const struct bt_gatt_attr *attr, cons
 	ret = acs_cp_ccc_check(conn);
 
 	if (ret == -EINVAL) {
-		LOG_WRN("CP write: CP indications not enabled by client");
+		LOG_WRN("CP indications not enabled by client");
 		return BT_GATT_ERR(BT_ATT_ERR_CCC_IMPROPER_CONF);
 	}
 	if (ret) {
-		LOG_ERR("CP write: CCC check failed (%d)", ret);
+		LOG_ERR("CP CCC check failed: %d", ret);
 		return BT_GATT_ERR(BT_ATT_ERR_UNLIKELY);
 	}
 
 	acs_conn = acs_conn_lookup(conn);
 
 	if (!acs_conn) {
-		LOG_ERR("CP write: no ACS connection state for conn %p", (void *)conn);
+		LOG_ERR("no ACS connection state for conn %p", (void *)conn);
 		return BT_GATT_ERR(BT_ATT_ERR_UNLIKELY);
 	}
 
@@ -271,22 +267,22 @@ ssize_t acs_cp_write(struct bt_conn *conn, const struct bt_gatt_attr *attr, cons
 	case ACS_SEG_RX_PENDING:
 		break;
 	case ACS_SEG_RX_ERR_COUNTER:
-		LOG_WRN("CP RX: invalid segment counter (out-of-sequence PDU)");
+		LOG_WRN("invalid CP segment counter");
 		return BT_GATT_ERR(BT_ACS_ATT_ERR_INVALID_SEG_COUNTER);
 	case ACS_SEG_RX_ERR_OVERFLOW:
-		LOG_WRN("CP RX: overflow — accumulated payload exceeds buffer");
+		LOG_WRN("CP receive overflow: accumulated payload exceeds buffer");
 		return BT_GATT_ERR(BT_ATT_ERR_INSUFFICIENT_RESOURCES);
 	case ACS_SEG_RX_ERR_TIMEOUT:
-		LOG_WRN("CP RX: inter-segment timeout expired");
+		LOG_WRN("CP receive inter-segment timeout expired");
 		return BT_GATT_ERR(BT_ATT_ERR_UNLIKELY);
 	case ACS_SEG_RX_ERR_ORPHAN:
-		LOG_WRN("CP RX: continuation segment without prior first segment");
+		LOG_WRN("CP continuation segment without prior first segment");
 		return BT_GATT_ERR(BT_ATT_ERR_UNLIKELY);
 	case ACS_SEG_RX_ERR_LEN:
-		LOG_WRN("CP RX: invalid segment length");
+		LOG_WRN("invalid CP segment length");
 		return BT_GATT_ERR(BT_ATT_ERR_UNLIKELY);
 	default:
-		LOG_ERR("CP RX: unexpected seg_rx result %d", (int)seg_rx_result);
+		LOG_ERR("unexpected CP seg_rx result %d", (int)seg_rx_result);
 		return BT_GATT_ERR(BT_ATT_ERR_UNLIKELY);
 	}
 
@@ -306,17 +302,17 @@ ssize_t acs_data_in_write(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 	ARG_UNUSED(flags);
 
 	if (offset != 0) {
-		LOG_ERR("Data In write with non-zero offset: %u", offset);
+		LOG_ERR("data-in write with non-zero offset: %u", offset);
 		return BT_GATT_ERR(BT_ATT_ERR_INVALID_OFFSET);
 	}
 
 	if (len < 1) {
-		LOG_ERR("Data In write with invalid length: %u", len);
+		LOG_ERR("data-in write with invalid length: %u", len);
 		return BT_GATT_ERR(BT_ATT_ERR_INVALID_ATTRIBUTE_LEN);
 	}
 
 	if (!acs_is_initialized()) {
-		LOG_ERR("Data In write received but ACS not initialized");
+		LOG_ERR("data-in write received before ACS init");
 		return BT_GATT_ERR(BT_ATT_ERR_UNLIKELY);
 	}
 
@@ -347,42 +343,46 @@ ssize_t acs_data_in_write(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 		}
 
 		if (err == ACS_DATA_ERR_NOT_AUTHORIZED) {
-			LOG_WRN("Data In ATT write to handle 0x%04x: no security established",
+			LOG_WRN("data-in write to handle 0x%04x rejected: no security established",
 				attr_handle);
 			return BT_GATT_ERR(BT_ATT_ERR_AUTHORIZATION);
 		}
 		if (err == ACS_DATA_ERR_INVALID_KEY) {
-			LOG_ERR("Data In ATT write to handle 0x%04x failed with Invalid Key; inner "
+			LOG_ERR("data-in write to handle 0x%04x failed with invalid key; inner "
 				"protected resource handle is unavailable unless decryption "
 				"succeeds",
 				attr_handle);
 			return BT_GATT_ERR(BT_ACS_ATT_ERR_INVALID_KEY);
 		}
 		if (err == ACS_DATA_ERR_CCC_IMPROPER_CONF) {
-			LOG_WRN("Data In ATT write to handle 0x%04x: required CCC not configured",
+			LOG_WRN("data-in write to handle 0x%04x rejected: required CCC not "
+				"configured",
 				attr_handle);
 			return BT_GATT_ERR(BT_ATT_ERR_CCC_IMPROPER_CONF);
 		}
 		if (err == ACS_DATA_ERR_RESOURCE_NOT_PROTECTED) {
-			LOG_WRN("Data In ATT write to handle 0x%04x: resource handle not protected "
+			LOG_WRN("data-in write to handle 0x%04x rejected: resource handle not "
+				"protected "
 				"by active map",
 				attr_handle);
 			return BT_GATT_ERR(BT_ACS_ATT_ERR_RESOURCE_NOT_PROTECTED);
 		}
 		if (err == ACS_DATA_ERR_INCORRECT_SECURITY_CONFIG) {
-			LOG_WRN("Data In ATT write to handle 0x%04x: ISC_ID not found or security "
+			LOG_WRN("data-in write to handle 0x%04x rejected: ISC_ID not found or "
+				"security "
 				"config mismatch",
 				attr_handle);
 			return BT_GATT_ERR(BT_ACS_ATT_ERR_INCORRECT_SECURITY_CONFIG);
 		}
 		if (err == -ENOMEM) {
-			LOG_WRN("Data In ATT write to handle 0x%04x: no free request context for "
+			LOG_WRN("data-in write to handle 0x%04x rejected: no free request context "
+				"for "
 				"protected resource",
 				attr_handle);
 			return BT_GATT_ERR(BT_ATT_ERR_INSUFFICIENT_RESOURCES);
 		}
 		if (err) {
-			LOG_ERR("Data In processing failed: %d", err);
+			LOG_ERR("data-in processing failed: %d", err);
 			return BT_GATT_ERR(BT_ATT_ERR_UNLIKELY);
 		}
 		break;
@@ -398,7 +398,7 @@ ssize_t acs_data_in_write(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 	case ACS_SEG_RX_ERR_ORPHAN:
 	case ACS_SEG_RX_ERR_LEN:
 	default:
-		LOG_ERR("Data In processing failed");
+		LOG_ERR("data-in processing failed");
 		return BT_GATT_ERR(BT_ATT_ERR_UNLIKELY);
 	}
 
