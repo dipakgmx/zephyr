@@ -124,6 +124,7 @@ static void acs_cp_ccc_changed(const struct bt_gatt_attr *attr, uint16_t value)
 #define ACS_DOI_ATTRS
 #endif
 
+/* clang-format off */
 BT_GATT_SERVICE_DEFINE(
 	acs_svc,
 	/* Primary Service: Authorization Control Service */
@@ -148,7 +149,9 @@ BT_GATT_SERVICE_DEFINE(
 			       BT_GATT_CHRC_WRITE | BT_GATT_CHRC_INDICATE,
 			       BT_GATT_PERM_WRITE, NULL, acs_cp_write,
 			       NULL),
-	BT_GATT_CCC(acs_cp_ccc_changed, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE), );
+	BT_GATT_CCC(acs_cp_ccc_changed, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE));
+
+/* clang-format on */
 
 /** Cached GATT attribute pointers, populated once during bt_acs_init(). */
 static struct {
@@ -286,7 +289,7 @@ int bt_acs_init(const struct bt_acs_cb *cb)
 	}
 
 #if IS_ENABLED(CONFIG_BT_ACS_GATT_AUTHORIZATION)
-	ret = bt_gatt_authorization_cb_register(&acs_gatt_auth_cb);
+	ret = acs_policy_register_gatt_auth_cb();
 	if (ret) {
 		LOG_ERR("Failed to register GATT authorization callback: %d", ret);
 		return ret;
@@ -294,7 +297,7 @@ int bt_acs_init(const struct bt_acs_cb *cb)
 #endif
 
 #if defined(CONFIG_BT_SETTINGS)
-	bt_conn_auth_info_cb_register(&acs_auth_info_cb);
+	acs_session_register_auth_info_cb();
 #endif
 
 #if IS_ENABLED(CONFIG_BT_ACS_FEAT_AUTHORIZATION)
@@ -307,9 +310,6 @@ int bt_acs_init(const struct bt_acs_cb *cb)
 #endif /* CONFIG_BT_ACS_FEAT_AUTHORIZATION */
 
 #if IS_ENABLED(CONFIG_BT_ACS_GATT_AUTHORIZATION)
-	/* Resolve and cache CCCD handles for notify/indicate-protected chars so
-	 * acs_gatt_write_authorize() can gate CCCD subscriptions without ACS session.
-	 */
 	acs_policy_resolve_protected_cccds();
 #endif
 

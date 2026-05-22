@@ -400,7 +400,8 @@ struct bt_acs_conn {
 	struct k_fifo request_fifo;    /**< Pending protected request FIFO */
 	struct k_work request_work;    /**< Protected request dispatch worker */
 	/** In-flight request slots, one per concurrent protected request. */
-	atomic_ptr_t inflight_reqs[CONFIG_BT_ACS_MAX_INFLIGHT_REQ_PER_CONN];
+	atomic_ptr_t inflight_reqs[CONFIG_BT_ACS_MAX_INFLIGHT_REQ_PER_CONN]; /**< Protected request
+										dispatch worker */
 #if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION)
 	struct k_fifo indicate_fifo;       /**< Pending Data Out Indicate response FIFO */
 	struct k_work doi_drain_work;      /**< DOI drain / continuation worker */

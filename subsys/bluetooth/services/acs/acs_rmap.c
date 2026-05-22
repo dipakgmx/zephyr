@@ -75,18 +75,22 @@ int acs_rmap_lookup(uint16_t map_id, struct bt_acs_restriction_map *out)
 	return -ENOENT;
 }
 
+/**
+ * @brief Iterate over all registered protected characteristic entries for a given restriction map,
+ * invoking a callback for each.
+ *
+ * @param map The restriction map whose protected characteristic entries should be iterated over.
+ * @param cb Callback function
+ * @param user_data Pointer passed to callback
+ */
 static void acs_rmap_foreach_char(const struct bt_acs_restriction_map *map, acs_rmap_entry_cb_t cb,
 				  void *user_data)
 {
-	if (!map || !cb) {
-		return;
-	}
+	__ASSERT_NO_MSG(cb);
+	__ASSERT_NO_MSG(map);
 
-	/* Iterate characteristic entries registered for this map ID.
-	 * Skip CP entries (is_cp == true) — those are handled by acs_rmap_foreach_cp().
-	 */
 	STRUCT_SECTION_FOREACH(bt_acs_rmap_char_reg, reg) {
-		if (reg->map_id == map->map_id && reg->entry && !reg->is_cp) {
+		if (reg->map_id == map->map_id && reg->entry != NULL && !reg->is_cp) {
 			if (!cb(reg->entry, user_data)) {
 				return;
 			}
@@ -94,17 +98,25 @@ static void acs_rmap_foreach_char(const struct bt_acs_restriction_map *map, acs_
 	}
 }
 
+/**
+ * @brief Iterate over all registered protected control point entries for a given restriction map,
+ * invoking a callback for each.
+ *
+ * @param map The restriction map whose protected control point entries should be iterated over.
+ * @param cb Callback function
+ * @param user_data Pointer passed to callback
+ */
 static void acs_rmap_foreach_cp(const struct bt_acs_restriction_map *map, acs_rmap_entry_cb_t cb,
 				void *user_data)
 {
 	__ASSERT_NO_MSG(cb);
 	__ASSERT_NO_MSG(map);
 
-	/* Iterate CP entries registered for this map ID. */
 	STRUCT_SECTION_FOREACH(bt_acs_rmap_char_reg, reg) {
-		if (reg->map_id == map->map_id && reg->entry && reg->is_cp &&
-		    !cb(reg->entry, user_data)) {
-			return;
+		if (reg->map_id == map->map_id && reg->entry != NULL && reg->is_cp) {
+			if (!cb(reg->entry, user_data)) {
+				return;
+			}
 		}
 	}
 }

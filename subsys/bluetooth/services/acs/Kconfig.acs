@@ -624,6 +624,7 @@ config BT_ACS_GATT_AUTHORIZATION
 	bool "Auto-register GATT authorization callback"
 	default y
 	depends on BT_GATT_AUTHORIZATION_CUSTOM
+	depends on BT_ACS_FEAT_AUTHORIZATION
 	help
 	  When enabled, ACS registers a bt_gatt_authorization_cb at init time
 	  that automatically blocks reads/writes to protected characteristics

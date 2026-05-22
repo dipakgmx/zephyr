@@ -148,7 +148,8 @@ void acs_session_clear_all(struct bt_conn const *conn);
 /** @brief Restore a previously stored parent key for @p conn from PSA storage. */
 void acs_session_restore(struct bt_conn *conn, struct bt_acs_conn *acs_conn);
 
-extern struct bt_conn_auth_info_cb acs_auth_info_cb;
+/** @brief Register ACS's internal bond/auth-info callback. */
+void acs_session_register_auth_info_cb(void);
 #endif /* CONFIG_BT_SETTINGS */
 
 /* ---- GATT authorization policy ----------------------------------------- */
@@ -156,7 +157,8 @@ extern struct bt_conn_auth_info_cb acs_auth_info_cb;
 #if IS_ENABLED(CONFIG_BT_ACS_GATT_AUTHORIZATION)
 /** @brief Mark all protected CCCDs as requiring authorisation in the GATT table. */
 void acs_policy_resolve_protected_cccds(void);
-extern const struct bt_gatt_authorization_cb acs_gatt_auth_cb;
+/** @brief Register ACS's internal GATT authorization callback. */
+int acs_policy_register_gatt_auth_cb(void);
 #endif /* CONFIG_BT_ACS_GATT_AUTHORIZATION */
 
 #ifdef __cplusplus

@@ -392,9 +392,14 @@ static void acs_bond_deleted(uint8_t id, const bt_addr_le_t *peer)
 	LOG_INF("ACS session deleted for peer %s (bond removed)", bt_addr_le_str(peer));
 }
 
-struct bt_conn_auth_info_cb acs_auth_info_cb = {
+static struct bt_conn_auth_info_cb acs_auth_info_cb = {
 	.bond_deleted = acs_bond_deleted,
 };
+
+void acs_session_register_auth_info_cb(void)
+{
+	bt_conn_auth_info_cb_register(&acs_auth_info_cb);
+}
 
 void acs_session_clear(const struct bt_conn *conn)
 {

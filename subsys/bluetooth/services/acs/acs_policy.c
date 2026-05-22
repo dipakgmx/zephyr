@@ -155,7 +155,12 @@ static bool acs_gatt_write_authorize(struct bt_conn *conn, const struct bt_gatt_
 	return bt_acs_policy_is_permitted(conn, handle, BT_ACS_DIRECTION_WRITE);
 }
 
-const struct bt_gatt_authorization_cb acs_gatt_auth_cb = {
+static const struct bt_gatt_authorization_cb acs_gatt_auth_cb = {
 	.read_authorize = acs_gatt_read_authorize,
 	.write_authorize = acs_gatt_write_authorize,
 };
+
+int acs_policy_register_gatt_auth_cb(void)
+{
+	return bt_gatt_authorization_cb_register(&acs_gatt_auth_cb);
+}
