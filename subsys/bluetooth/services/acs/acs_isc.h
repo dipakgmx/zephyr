@@ -9,7 +9,7 @@
 
 #include <zephyr/types.h>
 #include <zephyr/net_buf.h>
-#include <zephyr/bluetooth/services/acs.h>
+#include <zephyr/sys/iterable_sections.h>
 
 /* Spec-Defined Constants (Tables 4.31 & 4.33) */
 #define BT_ACS_RECORD_TYPE_ISC_ID 0x00
@@ -87,10 +87,22 @@ enum acs_sec_control_type {
 	ACS_CTRL_MAC = 0x06
 };
 
-/*
- * struct bt_acs_isc_record is defined in the public header
- * <zephyr/bluetooth/services/acs.h> and registered via BT_ACS_ISC_DEFINE().
+/**
+ * @brief Information Security Configuration record (Table 4.32).
+ *
+ * Each ISC record describes a set of security controls and an associated key.
+ * Registered via BT_ACS_ISC_DEFINE(); discovered at runtime via the
+ * bt_acs_isc_record iterable section.
  */
+struct bt_acs_isc_record {
+	uint16_t isc_id;
+	uint8_t num_controls;
+	uint8_t controls[CONFIG_BT_ACS_ISC_MAX_CONTROLS];
+	uint16_t key_id;
+};
+
+#define BT_ACS_ISC_DEFINE(_name, ...) \
+	STRUCT_SECTION_ITERABLE(bt_acs_isc_record, _name) = {__VA_ARGS__}
 
 /**
  * @brief Look up an ISC record by ISC ID.

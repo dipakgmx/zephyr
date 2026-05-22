@@ -11,7 +11,7 @@
 #include <zephyr/net_buf.h>
 #include <zephyr/sys/__assert.h>
 #include <zephyr/sys/byteorder.h>
-#include <zephyr/bluetooth/services/acs.h>
+#include <zephyr/sys/iterable_sections.h>
 
 struct bt_acs_conn;
 
@@ -248,6 +248,49 @@ enum acs_oob_method {
 	ACS_OOB_METHOD_BAR_CODE = 0x03,     /**< Bar Code */
 	ACS_OOB_METHOD_NFC = 0x04           /**< NFC */
 };
+
+/**
+ * @brief Key Descriptor record (Table 4.36).
+ *
+ * Each record describes a key-exchange method or algorithm and its parameters.
+ * Registered via BT_ACS_KEY_DESC_DEFINE(); discovered at runtime via the
+ * bt_acs_key_desc_record iterable section.
+ */
+struct bt_acs_key_desc_record {
+	uint8_t type_id;
+	uint16_t key_id;
+	union {
+		struct {
+			uint8_t server_pk_fmt;
+			uint8_t client_pk_fmt;
+			uint8_t curve;
+			uint8_t kdf;
+		} ecdh;
+		struct {
+			uint8_t oob_method;
+			uint8_t server_pk_fmt;
+			uint8_t client_pk_fmt;
+			uint8_t curve;
+			uint8_t kdf;
+		} oob;
+		struct {
+			uint16_t parent_key_id;
+			uint8_t kdf_algorithm;
+		} kdf;
+		struct {
+			uint16_t parent_key_id;
+			uint8_t msg_type;
+			uint8_t mac_size;
+			uint8_t nonce_type;
+			uint8_t nonce_size;
+			uint8_t nonce_var_size;
+			uint8_t nonce_fixed_size;
+		} aes;
+	};
+};
+
+#define BT_ACS_KEY_DESC_DEFINE(_name, ...) \
+	STRUCT_SECTION_ITERABLE(bt_acs_key_desc_record, _name) = {__VA_ARGS__}
 
 /**
  * @brief Parses the operand and builds the Key Descriptor Response payload.

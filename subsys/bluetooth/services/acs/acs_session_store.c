@@ -9,6 +9,7 @@
 #include <string.h>
 
 #include <zephyr/sys/util.h>
+#include <zephyr/bluetooth/addr.h>
 #include <zephyr/bluetooth/conn.h>
 #include <zephyr/bluetooth/gatt.h>
 #include <zephyr/bluetooth/services/acs.h>
@@ -17,41 +18,75 @@
 
 #include <psa/crypto.h>
 
-#include "host/keys.h"
+#include "common/bt_str.h"
+#include "host/settings.h"
 #include "acs_internal.h"
 
 LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
 
 #if defined(CONFIG_BT_SETTINGS)
 
-enum acs_psa_slot {
-	ACS_PSA_SLOT_PARENT = 0,
-	ACS_PSA_SLOT_META = 1,
-	ACS_PSA_SLOT_COUNT,
-};
-
 struct acs_persistent_meta {
 	uint16_t parent_key_id;
 	uint16_t restriction_map_id;
 };
 
-struct acs_bond_slot_lookup_ctx {
-	const struct bt_keys *target;
-	size_t current;
-	size_t slot;
-	bool found;
+struct acs_session_slot {
+	bt_addr_le_t addr;
+	uint8_t bt_id;
+	struct acs_persistent_meta meta;
 };
 
-struct acs_clear_all_ctx {
-	size_t keep_slot;
-};
+static struct acs_session_slot acs_slots[CONFIG_BT_MAX_PAIRED];
 
-BUILD_ASSERT((CONFIG_BT_MAX_PAIRED * ACS_PSA_SLOT_COUNT) <= ZEPHYR_PSA_BT_ACS_KEY_ID_RANGE_SIZE,
+BUILD_ASSERT(CONFIG_BT_MAX_PAIRED <= ZEPHYR_PSA_BT_ACS_KEY_ID_RANGE_SIZE,
 	     "Bluetooth ACS PSA key ID range is too small for CONFIG_BT_MAX_PAIRED");
 
-static psa_key_id_t acs_psa_key_id(size_t bond_slot, enum acs_psa_slot slot)
+static inline bool acs_slot_is_free(size_t idx)
 {
-	return ZEPHYR_PSA_BT_ACS_KEY_ID_RANGE_BEGIN + (bond_slot * ACS_PSA_SLOT_COUNT) + slot;
+	return bt_addr_le_eq(&acs_slots[idx].addr, BT_ADDR_LE_ANY);
+}
+
+static psa_key_id_t acs_psa_key_id(size_t slot)
+{
+	return ZEPHYR_PSA_BT_ACS_KEY_ID_RANGE_BEGIN + (psa_key_id_t)slot;
+}
+
+static int acs_slot_from_addr(const bt_addr_le_t *addr, size_t *slot)
+{
+	for (size_t i = 0; i < ARRAY_SIZE(acs_slots); i++) {
+		if (bt_addr_le_eq(&acs_slots[i].addr, addr)) {
+			*slot = i;
+			return 0;
+		}
+	}
+
+	return -ENOENT;
+}
+
+static int acs_slot_alloc(const bt_addr_le_t *addr, size_t *slot)
+{
+	int err;
+
+	err = acs_slot_from_addr(addr, slot);
+	if (err == 0) {
+		return 0;
+	}
+
+	for (size_t i = 0; i < ARRAY_SIZE(acs_slots); i++) {
+		if (acs_slot_is_free(i)) {
+			bt_addr_le_copy(&acs_slots[i].addr, addr);
+			*slot = i;
+			return 0;
+		}
+	}
+
+	return -ENOMEM;
+}
+
+static void acs_slot_free_idx(size_t idx)
+{
+	memset(&acs_slots[idx], 0, sizeof(acs_slots[idx]));
 }
 
 static void acs_persistent_parent_attrs(psa_key_attributes_t *attrs, psa_key_id_t key_id)
@@ -60,16 +95,6 @@ static void acs_persistent_parent_attrs(psa_key_attributes_t *attrs, psa_key_id_
 	psa_set_key_lifetime(attrs, PSA_KEY_LIFETIME_PERSISTENT);
 	psa_set_key_type(attrs, PSA_KEY_TYPE_RAW_DATA);
 	psa_set_key_bits(attrs, CONFIG_BT_ACS_SESSION_KEY_SIZE * BITS_PER_BYTE);
-	psa_set_key_usage_flags(attrs, PSA_KEY_USAGE_EXPORT);
-	psa_set_key_algorithm(attrs, PSA_ALG_NONE);
-}
-
-static void acs_persistent_meta_attrs(psa_key_attributes_t *attrs, psa_key_id_t key_id)
-{
-	psa_set_key_id(attrs, key_id);
-	psa_set_key_lifetime(attrs, PSA_KEY_LIFETIME_PERSISTENT);
-	psa_set_key_type(attrs, PSA_KEY_TYPE_RAW_DATA);
-	psa_set_key_bits(attrs, sizeof(struct acs_persistent_meta) * BITS_PER_BYTE);
 	psa_set_key_usage_flags(attrs, PSA_KEY_USAGE_EXPORT);
 	psa_set_key_algorithm(attrs, PSA_ALG_NONE);
 }
@@ -127,86 +152,37 @@ static int acs_persistent_export_key(psa_key_id_t key_id, void *data, size_t len
 	return 0;
 }
 
-static void acs_destroy_persistent_slot(size_t bond_slot)
+static void acs_destroy_persistent_slot(size_t slot)
 {
-	psa_status_t parent_status;
-	psa_status_t meta_status;
+	psa_status_t status;
 
-	parent_status = psa_destroy_key(acs_psa_key_id(bond_slot, ACS_PSA_SLOT_PARENT));
-	meta_status = psa_destroy_key(acs_psa_key_id(bond_slot, ACS_PSA_SLOT_META));
-
-	if (parent_status != PSA_SUCCESS && parent_status != PSA_ERROR_INVALID_HANDLE) {
-		LOG_WRN("destroy persistent parent key failed for slot %zu: %d", bond_slot,
-			parent_status);
-	}
-
-	if (meta_status != PSA_SUCCESS && meta_status != PSA_ERROR_INVALID_HANDLE) {
-		LOG_WRN("destroy persistent meta key failed for slot %zu: %d", bond_slot,
-			meta_status);
+	status = psa_destroy_key(acs_psa_key_id(slot));
+	if (status != PSA_SUCCESS && status != PSA_ERROR_INVALID_HANDLE) {
+		LOG_WRN("destroy persistent parent key failed for slot %zu: %d", slot, status);
 	}
 }
 
-static void acs_find_bond_slot_cb(struct bt_keys *keys, void *user_data)
+static void acs_session_erase_slot(size_t slot)
 {
-	struct acs_bond_slot_lookup_ctx *ctx = user_data;
-
-	if (ctx->found) {
-		return;
-	}
-
-	if (keys == ctx->target) {
-		ctx->slot = ctx->current;
-		ctx->found = true;
-		return;
-	}
-
-	ctx->current++;
+	acs_destroy_persistent_slot(slot);
+	(void)bt_settings_delete("acs", acs_slots[slot].bt_id, &acs_slots[slot].addr);
+	acs_slot_free_idx(slot);
 }
 
-static int acs_bond_slot_from_keys(const struct bt_keys *keys, size_t *bond_slot)
+static bool acs_session_already_stored(size_t slot, uint16_t parent_key_id, uint16_t rmap_id)
 {
-	struct acs_bond_slot_lookup_ctx ctx = {
-		.target = keys,
-	};
+	psa_key_attributes_t attrs = PSA_KEY_ATTRIBUTES_INIT;
+	psa_status_t status;
 
-	if (!keys || !bond_slot) {
-		return -EINVAL;
+	if (acs_slots[slot].meta.parent_key_id != parent_key_id ||
+	    acs_slots[slot].meta.restriction_map_id != rmap_id) {
+		return false;
 	}
 
-	bt_keys_foreach_type(BT_KEYS_ALL, acs_find_bond_slot_cb, &ctx);
+	status = psa_get_key_attributes(acs_psa_key_id(slot), &attrs);
+	psa_reset_key_attributes(&attrs);
 
-	if (!ctx.found) {
-		return -ENOENT;
-	}
-
-	*bond_slot = ctx.slot;
-	return 0;
-}
-
-static int acs_bond_slot_from_conn(const struct bt_conn *conn, size_t *bond_slot)
-{
-	struct bt_conn_info info;
-	struct bt_keys *keys;
-	int err;
-
-	if (!conn || !bond_slot) {
-		return -EINVAL;
-	}
-
-	err = bt_conn_get_info(conn, &info);
-	if (err != 0) {
-		return -ENOTCONN;
-	}
-
-	keys = bt_keys_find_addr(info.id, info.le.dst);
-	if (!keys) {
-		keys = bt_keys_find_irk(info.id, info.le.dst);
-	}
-	if (!keys) {
-		return -ENOENT;
-	}
-
-	return acs_bond_slot_from_keys(keys, bond_slot);
+	return status == PSA_SUCCESS;
 }
 
 static int acs_session_store_exchange_key(const struct bt_acs_conn *acs_conn,
@@ -242,10 +218,10 @@ static int acs_session_store_exchange_key(const struct bt_acs_conn *acs_conn,
 void acs_session_store(const struct bt_conn *conn, const struct bt_acs_conn *acs_conn)
 {
 	struct bt_acs_runtime_key_state *parent_key;
-	struct acs_persistent_meta meta;
+	const bt_addr_le_t *addr = bt_conn_get_dst(conn);
+	struct bt_conn_info info;
 	psa_key_attributes_t parent_attrs = PSA_KEY_ATTRIBUTES_INIT;
-	psa_key_attributes_t meta_attrs = PSA_KEY_ATTRIBUTES_INIT;
-	size_t bond_slot;
+	size_t slot;
 	int err;
 
 	err = acs_session_store_exchange_key(acs_conn, &parent_key);
@@ -254,64 +230,77 @@ void acs_session_store(const struct bt_conn *conn, const struct bt_acs_conn *acs
 		return;
 	}
 
-	err = acs_bond_slot_from_conn(conn, &bond_slot);
+	err = bt_conn_get_info(conn, &info);
 	if (err) {
-		LOG_DBG("Peer has no bonded slot; skipping ACS persistent store");
+		LOG_ERR("Failed to get connection info for settings store");
 		return;
 	}
 
-	meta.parent_key_id = acs_runtime_key_id(parent_key);
-	meta.restriction_map_id = acs_conn->restriction_map_id;
+	err = acs_slot_alloc(addr, &slot);
+	if (err) {
+		LOG_WRN("No free ACS session slot for peer %s", bt_addr_le_str(addr));
+		return;
+	}
 
-	acs_persistent_parent_attrs(&parent_attrs, acs_psa_key_id(bond_slot, ACS_PSA_SLOT_PARENT));
+	if (acs_session_already_stored(slot, acs_runtime_key_id(parent_key),
+				       acs_conn->restriction_map_id)) {
+		LOG_DBG("ACS session already persisted, skipping");
+		return;
+	}
+
+	acs_slots[slot].bt_id = info.id;
+	acs_slots[slot].meta.parent_key_id = acs_runtime_key_id(parent_key);
+	acs_slots[slot].meta.restriction_map_id = acs_conn->restriction_map_id;
+
+	acs_persistent_parent_attrs(&parent_attrs, acs_psa_key_id(slot));
 	err = acs_persistent_import_key(&parent_attrs, parent_key->key, sizeof(parent_key->key),
 					"store parent key");
 	if (err) {
-		return;
+		goto err_free_slot;
 	}
 
-	acs_persistent_meta_attrs(&meta_attrs, acs_psa_key_id(bond_slot, ACS_PSA_SLOT_META));
-	err = acs_persistent_import_key(&meta_attrs, &meta, sizeof(meta), "store ACS metadata");
+	err = bt_settings_store("acs", info.id, addr, &acs_slots[slot].meta,
+				sizeof(acs_slots[slot].meta));
 	if (err) {
-		acs_destroy_persistent_slot(bond_slot);
-		return;
+		LOG_ERR("Failed to store ACS metadata in settings: %d", err);
+		acs_destroy_persistent_slot(slot);
+		goto err_free_slot;
 	}
 
-	LOG_DBG("Stored ACS parent key in PSA slot %zu", bond_slot);
+	LOG_DBG("Stored ACS session for peer %s in slot %zu", bt_addr_le_str(addr), slot);
+	return;
+
+err_free_slot:
+	acs_slot_free_idx(slot);
 }
 
 void acs_session_restore(struct bt_conn *conn, struct bt_acs_conn *acs_conn)
 {
-	struct acs_persistent_meta meta;
+	const bt_addr_le_t *addr = bt_conn_get_dst(conn);
 	struct bt_acs_runtime_key_state *parent_key;
 	const struct bt_acs_cb *cb = acs_cb_get();
-	size_t bond_slot;
+	size_t slot;
 	int err;
 
-	err = acs_bond_slot_from_conn(conn, &bond_slot);
+	err = acs_slot_from_addr(addr, &slot);
 	if (err) {
-		LOG_DBG("Peer has no bonded slot; skipping ACS restore");
+		LOG_DBG("No stored ACS session for peer %s", bt_addr_le_str(addr));
 		return;
 	}
 
-	err = acs_persistent_export_key(acs_psa_key_id(bond_slot, ACS_PSA_SLOT_META), &meta,
-					sizeof(meta), "restore ACS metadata");
+	err = acs_crypto_current_key_lookup(acs_conn, acs_slots[slot].meta.parent_key_id,
+					    &parent_key);
 	if (err) {
+		LOG_ERR("Stored ACS parent Key_ID 0x%04x has no runtime slot",
+			acs_slots[slot].meta.parent_key_id);
+		acs_session_erase_slot(slot);
 		return;
 	}
 
-	err = acs_crypto_current_key_lookup(acs_conn, meta.parent_key_id, &parent_key);
+	err = acs_persistent_export_key(acs_psa_key_id(slot), parent_key->key,
+					sizeof(parent_key->key), "restore ACS parent key");
 	if (err) {
-		LOG_ERR("Stored ACS parent Key_ID 0x%04x has no runtime slot", meta.parent_key_id);
-		acs_destroy_persistent_slot(bond_slot);
-		return;
-	}
-
-	err = acs_persistent_export_key(acs_psa_key_id(bond_slot, ACS_PSA_SLOT_PARENT),
-					parent_key->key, sizeof(parent_key->key),
-					"restore ACS parent key");
-	if (err) {
-		acs_destroy_persistent_slot(bond_slot);
+		acs_session_erase_slot(slot);
 		return;
 	}
 
@@ -322,7 +311,7 @@ void acs_session_restore(struct bt_conn *conn, struct bt_acs_conn *acs_conn)
 		return;
 	}
 
-	acs_conn->restriction_map_id = meta.restriction_map_id;
+	acs_conn->restriction_map_id = acs_slots[slot].meta.restriction_map_id;
 
 	if (acs_crypto_rebind_key_desc_runtimes(acs_conn) != 0) {
 		LOG_ERR("Failed to import restored key descriptor runtimes into PSA");
@@ -334,7 +323,7 @@ void acs_session_restore(struct bt_conn *conn, struct bt_acs_conn *acs_conn)
 		acs_conn->status_flags |= BT_ACS_STATUS_SECURITY_ESTABLISHED;
 	}
 
-	LOG_INF("ACS parent key restored from PSA for bonded peer%s",
+	LOG_INF("ACS session restored for peer %s%s", bt_addr_le_str(addr),
 		(acs_conn->status_flags & BT_ACS_STATUS_SECURITY_ESTABLISHED)
 			? " (security established)"
 			: " (no valid restored key)");
@@ -347,21 +336,14 @@ void acs_session_restore(struct bt_conn *conn, struct bt_acs_conn *acs_conn)
 
 static void acs_bond_deleted(uint8_t id, const bt_addr_le_t *peer)
 {
-	struct bt_keys *keys;
-	size_t bond_slot;
-	char addr_str[BT_ADDR_LE_STR_LEN];
+	size_t slot;
 
-	keys = bt_keys_find_addr(id, peer);
-	if (!keys) {
-		keys = bt_keys_find_irk(id, peer);
-	}
-	if (!keys || acs_bond_slot_from_keys(keys, &bond_slot) != 0) {
+	if (acs_slot_from_addr(peer, &slot) != 0) {
 		return;
 	}
 
-	acs_destroy_persistent_slot(bond_slot);
-	bt_addr_le_to_str(peer, addr_str, sizeof(addr_str));
-	LOG_INF("Stored ACS parent key deleted for peer %s (bond removed)", addr_str);
+	acs_session_erase_slot(slot);
+	LOG_INF("ACS session deleted for peer %s (bond removed)", bt_addr_le_str(peer));
 }
 
 struct bt_conn_auth_info_cb acs_auth_info_cb = {
@@ -370,44 +352,88 @@ struct bt_conn_auth_info_cb acs_auth_info_cb = {
 
 void acs_session_clear(const struct bt_conn *conn)
 {
-	size_t bond_slot;
-	char addr_str[BT_ADDR_LE_STR_LEN];
-	int err;
+	const bt_addr_le_t *addr = bt_conn_get_dst(conn);
+	size_t slot;
 
-	err = acs_bond_slot_from_conn(conn, &bond_slot);
-	if (err) {
-		LOG_DBG("Peer has no bonded slot; no ACS persistent session to clear");
+	if (acs_slot_from_addr(addr, &slot) != 0) {
+		LOG_DBG("No stored ACS session to clear for peer %s", bt_addr_le_str(addr));
 		return;
 	}
 
-	acs_destroy_persistent_slot(bond_slot);
-	bt_addr_le_to_str(bt_conn_get_dst(conn), addr_str, sizeof(addr_str));
-	LOG_INF("ACS parent key erased for peer %s", addr_str);
-}
-
-static void acs_clear_all_cb(struct bt_keys *keys, void *user_data)
-{
-	struct acs_clear_all_ctx *ctx = user_data;
-	size_t bond_slot;
-	char addr_str[BT_ADDR_LE_STR_LEN];
-
-	if (acs_bond_slot_from_keys(keys, &bond_slot) != 0 || bond_slot == ctx->keep_slot) {
-		return;
-	}
-
-	acs_destroy_persistent_slot(bond_slot);
-	bt_addr_le_to_str(&keys->addr, addr_str, sizeof(addr_str));
-	LOG_INF("Stored ACS parent key erased for peer %s (invalidate all)", addr_str);
+	acs_session_erase_slot(slot);
+	LOG_INF("ACS session erased for peer %s", bt_addr_le_str(addr));
 }
 
 void acs_session_clear_all(const struct bt_conn *conn)
 {
-	struct acs_clear_all_ctx ctx = {
-		.keep_slot = SIZE_MAX,
-	};
+	const bt_addr_le_t *keep_addr = bt_conn_get_dst(conn);
 
-	(void)acs_bond_slot_from_conn(conn, &ctx.keep_slot);
-	bt_keys_foreach_type(BT_KEYS_ALL, acs_clear_all_cb, &ctx);
+	for (size_t i = 0; i < ARRAY_SIZE(acs_slots); i++) {
+		if (acs_slot_is_free(i) || bt_addr_le_eq(&acs_slots[i].addr, keep_addr)) {
+			continue;
+		}
+
+		LOG_INF("ACS session erased for peer %s (invalidate all)",
+			bt_addr_le_str(&acs_slots[i].addr));
+
+		acs_session_erase_slot(i);
+	}
 }
+
+#define ACS_SETTINGS_ADDR_LEN 13
+
+static int acs_settings_set(const char *name, size_t len_rd, settings_read_cb read_cb,
+			    void *cb_arg)
+{
+	bt_addr_le_t addr;
+	struct acs_persistent_meta meta;
+	uint8_t bt_id = BT_ID_DEFAULT;
+	ssize_t len;
+	size_t slot;
+	int err;
+
+	if (!name) {
+		return -EINVAL;
+	}
+
+	err = bt_settings_decode_key(name, &addr);
+	if (err) {
+		LOG_ERR("ACS settings: unable to decode address from '%s'", name);
+		return -EINVAL;
+	}
+
+	if (!len_rd) {
+		if (acs_slot_from_addr(&addr, &slot) == 0) {
+			acs_slot_free_idx(slot);
+		}
+		return 0;
+	}
+
+	if (name[ACS_SETTINGS_ADDR_LEN] == '/') {
+		bt_id = (uint8_t)(name[ACS_SETTINGS_ADDR_LEN + 1] - '0');
+	}
+
+	len = read_cb(cb_arg, &meta, sizeof(meta));
+	if (len != sizeof(meta)) {
+		LOG_ERR("ACS settings: unexpected meta size (%zd)", len);
+		return -EINVAL;
+	}
+
+	err = acs_slot_alloc(&addr, &slot);
+	if (err) {
+		LOG_WRN("ACS settings: no free slot for peer %s", bt_addr_le_str(&addr));
+		return -ENOMEM;
+	}
+
+	acs_slots[slot].bt_id = bt_id;
+	acs_slots[slot].meta = meta;
+
+	LOG_DBG("ACS settings: restored meta for peer %s in slot %zu (Key_ID 0x%04x)",
+		bt_addr_le_str(&addr), slot, meta.parent_key_id);
+
+	return 0;
+}
+
+BT_SETTINGS_DEFINE(acs, "acs", acs_settings_set, NULL);
 
 #endif /* CONFIG_BT_SETTINGS */

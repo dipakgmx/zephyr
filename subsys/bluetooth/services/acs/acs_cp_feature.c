@@ -13,6 +13,7 @@
 #include <zephyr/bluetooth/services/acs.h>
 
 #include "acs_cp.h"
+#include "acs_crypto.h"
 #include "acs_internal.h"
 #include "acs_key_desc.h"
 
@@ -177,11 +178,38 @@ int acs_cp_handle_att_mtu(struct acs_procedure *proc)
 #endif /* CONFIG_BT_ACS_ATT_MTU */
 
 #if IS_ENABLED(CONFIG_BT_ACS_HAS_NONCE_FIXED)
+static bool acs_client_nonce_fixed_is_unique(struct bt_acs_conn *acs_conn,
+					     const struct bt_acs_key_desc_runtime *kdr,
+					     uint8_t fixed_size)
+{
+	for (size_t i = 0; i < ARRAY_SIZE(acs_conn->crypto.key_desc_runtimes); i++) {
+		const struct bt_acs_key_desc_runtime *other =
+			&acs_conn->crypto.key_desc_runtimes[i];
+
+		if (!other->key_desc) {
+			continue;
+		}
+
+		if (memcmp(kdr->client_nonce_fixed, other->server_nonce_fixed, fixed_size) == 0) {
+			return false;
+		}
+
+		if (other != kdr && other->client_nonce_set &&
+		    memcmp(kdr->client_nonce_fixed, other->client_nonce_fixed, fixed_size) == 0) {
+			return false;
+		}
+	}
+
+	return true;
+}
+
 int acs_cp_handle_set_client_nonce_fixed(struct acs_procedure *proc, struct net_buf_simple *buf)
 {
 	struct bt_acs_conn *acs_conn = proc->acs_conn;
 	const struct bt_acs_key_desc_record *key_desc;
+	struct bt_acs_key_desc_runtime *kdr;
 	uint16_t key_id;
+	uint8_t fixed_size;
 
 	if (!acs_conn) {
 		LOG_ERR("Request to set client nonce fixed received for unknown connection");
@@ -205,10 +233,40 @@ int acs_cp_handle_set_client_nonce_fixed(struct acs_procedure *proc, struct net_
 					 BT_ACS_CP_RESPONSE_OPCODE_NOT_SUPPORTED);
 	}
 
-	ARG_UNUSED(buf);
-	LOG_WRN("Set client nonce fixed rejected: nonce prefixes are derived from session key "
-		"material");
+	/* §4.4.3.18: reject only while a key exchange procedure is in progress. */
+	if (acs_kex_in_progress(acs_conn)) {
+		LOG_WRN("Set client nonce fixed: key exchange active");
+		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_SET_CLIENT_NONCE_FIXED,
+					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE);
+	}
+
+	if (acs_crypto_key_desc_runtime_lookup(acs_conn, key_id, &kdr) != 0) {
+		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_SET_CLIENT_NONCE_FIXED,
+					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
+	}
+
+	fixed_size = acs_key_desc_nonce_fixed_size(key_desc);
+	if (buf->len != sizeof(uint16_t) + fixed_size) {
+		LOG_WRN("Set client nonce fixed: size mismatch (got %u, expected %u)", buf->len,
+			(unsigned int)(sizeof(uint16_t) + fixed_size));
+		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_SET_CLIENT_NONCE_FIXED,
+					 BT_ACS_CP_RESPONSE_INVALID_OPERAND);
+	}
+
+	memcpy(kdr->client_nonce_fixed, buf->data + sizeof(uint16_t), fixed_size);
+	sys_mem_swap(kdr->client_nonce_fixed, fixed_size);
+
+	if (!acs_client_nonce_fixed_is_unique(acs_conn, kdr, fixed_size)) {
+		LOG_WRN("Set client nonce fixed: value collides with existing nonce fixed");
+		memset(kdr->client_nonce_fixed, 0, sizeof(kdr->client_nonce_fixed));
+		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_SET_CLIENT_NONCE_FIXED,
+					 BT_ACS_CP_RESPONSE_INVALID_OPERAND);
+	}
+
+	kdr->client_nonce_set = true;
+	LOG_DBG("Stored client nonce fixed for Key_ID 0x%04x (%u bytes)", key_id, fixed_size);
+
 	return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_SET_CLIENT_NONCE_FIXED,
-				 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE);
+				 BT_ACS_CP_RESPONSE_SUCCESS);
 }
 #endif /* BT_ACS_HAS_NONCE_FIXED */

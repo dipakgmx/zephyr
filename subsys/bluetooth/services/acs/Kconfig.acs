@@ -76,8 +76,10 @@ menuconfig BT_ACS_KEY_EXCHANGE_ECDH
 	default y if BT_ACS_FEAT_AUTHENTICATION
 	help
 	  Enable Elliptic Curve Diffie-Hellman key exchange method.
-	  Requires PSA Crypto ECDH support and BT_SETTINGS for bonded-peer
-	  restore and cleanup of persistent ACS parent keys.
+	  Requires PSA Crypto ECDH support and BT_SETTINGS for persistent
+	  ACS session keys via the PSA Crypto persistent key API.
+	  On non-TF-M platforms, enable SECURE_STORAGE for the PSA
+	  persistent key backend.
 
 if BT_ACS_KEY_EXCHANGE_ECDH
 
@@ -135,9 +137,9 @@ menuconfig BT_ACS_KEY_EXCHANGE_KDF
 	depends on BT_ACS_FEAT_AUTHENTICATION
 	help
 	  Enable Key Derivation Function based key exchange method.
-	  Requires BT_SETTINGS for bonded-peer restore and cleanup of
-	  persistent ACS parent keys. The derived KDF child key is
-	  per-connection runtime state and must be re-derived on each reconnect.
+	  Requires BT_SETTINGS for persistent ACS session keys. The derived
+	  KDF child key is per-connection runtime state and must be re-derived
+	  on each reconnect.
 
 if BT_ACS_KEY_EXCHANGE_KDF
 
@@ -202,8 +204,8 @@ menuconfig BT_ACS_KEY_EXCHANGE_OOB
 	depends on BT_ACS_FEAT_AUTHENTICATION
 	help
 	  Enable Out-of-Band key exchange.
-	  Requires BT_SETTINGS for bonded-peer restore and cleanup of
-	  persistent ACS parent keys.
+	  Requires BT_SETTINGS for persistent ACS session keys via the
+	  PSA Crypto persistent key API.
 
 if BT_ACS_KEY_EXCHANGE_OOB
 

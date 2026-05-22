@@ -371,8 +371,8 @@ struct bt_acs_rmap_char_reg {
 /**
  * @name Well-known Information Security Configuration IDs
  *
- * These ISC IDs correspond to the records registered via BT_ACS_ISC_DEFINE()
- * in the bt_acs_isc_record iterable section and are the values passed as
+ * These ISC IDs correspond to the ISC records registered internally and
+ * are the values passed as
  * @c _isc_id to BT_ACS_RMAP_OP_ENTRY() and the convenience macros below.
  *
  * @{
@@ -407,128 +407,6 @@ struct bt_acs_rmap_char_reg {
 #define BT_ACS_ISC_ID_DEFAULT BT_ACS_ISC_ID_UNENC
 #endif
 /** @} */
-
-/**
- * @brief Information Security Configuration record (Table 4.32).
- *
- * Each ISC record describes a set of security controls and an associated
- * key. Applications declare ISC records with BT_ACS_ISC_DEFINE(); the ACS
- * library discovers them at runtime via the bt_acs_isc_record iterable section.
- *
- * The spec allows different protected resources within a single restriction
- * map to reference different ISC IDs, each chaining to its own algorithm
- * and key (§3.5.5, Figure 3.4).
- */
-struct bt_acs_isc_record {
-	/** ISC ID — the Type_Value (uint16 LE) in the TLV record */
-	uint16_t isc_id;
-	/** Number of Information_Security_Controls in this record (Table 4.33) */
-	uint8_t num_controls;
-	/** Information_Security_Controls field values (Table 4.33) */
-	uint8_t controls[CONFIG_BT_ACS_ISC_MAX_CONTROLS];
-	/** Key ID referenced by this ISC (0 for unkeyed ISCs like UNENC) */
-	uint16_t key_id;
-};
-
-/**
- * @brief Register an ISC record for automatic discovery by the ACS service.
- *
- * Places the bt_acs_isc_record into the @c bt_acs_isc_record iterable section.
- * The ACS service iterates this section for ISC descriptor responses,
- * ISC lookups, and crypto dispatch — no static ISC database is required.
- *
- * @param _name C identifier for the generated symbol (must be unique)
- * @param ...   Designated initialisers for bt_acs_isc_record fields
- *
- * Example:
- * @code
- *   BT_ACS_ISC_DEFINE(isc_high_sec,
- *       .isc_id = BT_ACS_ISC_ID_HIGH_SEC,
- *       .num_controls = 3,
- *       .controls = {ACS_CTRL_NONCE, ACS_CTRL_MAC, ACS_CTRL_AUTH_ENC},
- *       .key_id = ACS_KEY_ID_GCM);
- * @endcode
- */
-#define BT_ACS_ISC_DEFINE(_name, ...) \
-	STRUCT_SECTION_ITERABLE(bt_acs_isc_record, _name) = {__VA_ARGS__}
-
-/**
- * @brief Key Descriptor record (Table 4.36).
- *
- * Each key descriptor record describes a key-exchange method or
- * algorithm and its parameters. Applications declare records with
- * BT_ACS_KEY_DESC_DEFINE(); the ACS library discovers them at runtime
- * via the bt_acs_key_desc_record iterable section.
- *
- * The union carries the type-specific fields; the correct member is
- * selected by @c type_id (enum acs_key_record_type from acs_key_desc.h).
- */
-struct bt_acs_key_desc_record {
-	/** Record type (enum acs_key_record_type) */
-	uint8_t type_id;
-	/** This record's Key_ID (Type_Value in the TLV header) */
-	uint16_t key_id;
-	/** Type-specific data */
-	union {
-		/** ECDH key exchange (Table 4.39) */
-		struct {
-			uint8_t server_pk_fmt;
-			uint8_t client_pk_fmt;
-			uint8_t curve;
-			uint8_t kdf;
-		} ecdh;
-		/** OOB key exchange (Table 4.37) */
-		struct {
-			uint8_t oob_method;
-			uint8_t server_pk_fmt;
-			uint8_t client_pk_fmt;
-			uint8_t curve;
-			uint8_t kdf;
-		} oob;
-		/** KDF key exchange */
-		struct {
-			uint16_t parent_key_id;
-			uint8_t kdf_algorithm;
-		} kdf;
-		/** AES algorithm record (Table 4.45) — CCM, GCM, CMAC, GMAC */
-		struct {
-			uint16_t parent_key_id;
-			uint8_t msg_type;
-			uint8_t mac_size;
-			uint8_t nonce_type;
-			uint8_t nonce_size;
-			uint8_t nonce_var_size;
-			uint8_t nonce_fixed_size;
-		} aes;
-	};
-};
-
-/**
- * @brief Register a key descriptor record for automatic discovery by the ACS service.
- *
- * Places the bt_acs_key_desc_record into the @c bt_acs_key_desc_record iterable section.
- * The ACS service iterates this section for key descriptor responses and
- * key lookups — no static key descriptor database is required.
- *
- * @param _name C identifier for the generated symbol (must be unique)
- * @param ...   Designated initialisers for bt_acs_key_desc_record fields
- *
- * Example:
- * @code
- *   BT_ACS_KEY_DESC_DEFINE(key_gcm,
- *       .type_id = ACS_KEY_REC_AES_128_GCM,
- *       .key_id = ACS_KEY_ID_GCM,
- *       .aes = { .parent_key_id = ACS_KEY_ID_ECDH,
- *                .msg_type = ACS_MSG_TYPE_PROTECTED,
- *                .mac_size = 16,
- *                .nonce_type = ACS_NONCE_SEQ_DIFF_FIXED,
- *                .nonce_size = 12,
- *                .nonce_var_size = 8,
- *                .nonce_fixed_size = 4 });
- * @endcode
- */
-#define BT_ACS_KEY_DESC_DEFINE(_name, ...) \
-	STRUCT_SECTION_ITERABLE(bt_acs_key_desc_record, _name) = {__VA_ARGS__}
 
 /**
  * @name Convenience macros for common protection patterns.
