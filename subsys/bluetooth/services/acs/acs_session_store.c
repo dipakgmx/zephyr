@@ -21,6 +21,7 @@
 #include "common/bt_str.h"
 #include "host/settings.h"
 #include "acs_internal.h"
+#include "acs_key_desc.h"
 
 LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
 
@@ -188,16 +189,19 @@ static bool acs_session_already_stored(size_t slot, uint16_t parent_key_id, uint
 static int acs_session_store_exchange_key(const struct bt_acs_conn *acs_conn,
 					  struct bt_acs_runtime_key_state **exchange_key)
 {
-	struct bt_acs_runtime_key_state *ecdh_key;
 	int err;
 
 	__ASSERT_NO_MSG(acs_conn != NULL);
 	__ASSERT_NO_MSG(exchange_key != NULL);
 
-	err = acs_crypto_current_key_lookup(acs_conn, ACS_KEY_ID_ECDH, &ecdh_key);
-	if (!err && ecdh_key->psa_key_id != 0U) {
-		*exchange_key = ecdh_key;
-		return 0;
+	{
+		struct bt_acs_runtime_key_state *ecdh_key;
+
+		err = acs_crypto_current_key_lookup(acs_conn, ACS_KEY_ID_ECDH, &ecdh_key);
+		if (!err && ecdh_key->psa_key_id != 0U) {
+			*exchange_key = ecdh_key;
+			return 0;
+		}
 	}
 
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_OOB)

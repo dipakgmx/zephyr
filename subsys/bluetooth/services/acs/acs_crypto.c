@@ -205,7 +205,6 @@ int acs_crypto_get_server_nonce_fixed(struct bt_acs_conn *acs_conn, uint16_t key
 {
 #if IS_ENABLED(CONFIG_BT_ACS_HAS_NONCE_FIXED)
 	struct bt_acs_key_desc_runtime *key_desc_runtime;
-	uint8_t nonce_fixed_wire[ACS_MAX_NONCE_FIXED_SIZE];
 	uint8_t fixed_size;
 	bool nonce_unset = true;
 	int err;
@@ -239,15 +238,12 @@ int acs_crypto_get_server_nonce_fixed(struct bt_acs_conn *acs_conn, uint16_t key
 	}
 
 	if (nonce_unset) {
-		sys_rand_get(nonce_fixed_wire, fixed_size);
-		memcpy(key_desc_runtime->server_nonce_fixed, nonce_fixed_wire, fixed_size);
+		sys_rand_get(key_desc_runtime->server_nonce_fixed, fixed_size);
 		sys_mem_swap(key_desc_runtime->server_nonce_fixed, fixed_size);
-	} else {
-		memcpy(nonce_fixed_wire, key_desc_runtime->server_nonce_fixed, fixed_size);
-		sys_mem_swap(nonce_fixed_wire, fixed_size);
 	}
 
-	memcpy(nonce_buf, nonce_fixed_wire, MIN(len, (size_t)fixed_size));
+	memcpy(nonce_buf, key_desc_runtime->server_nonce_fixed, MIN(len, (size_t)fixed_size));
+	sys_mem_swap(nonce_buf, MIN(len, (size_t)fixed_size));
 	return 0;
 #else
 	ARG_UNUSED(acs_conn);

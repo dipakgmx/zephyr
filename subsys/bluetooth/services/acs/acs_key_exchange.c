@@ -401,17 +401,9 @@ static int acs_key_desc_runtime_derive_nonce_state(struct bt_acs_key_desc_runtim
 	uint8_t prefix_size = acs_key_desc_nonce_prefix_size(key_desc);
 	uint16_t key_id = acs_key_desc_runtime_key_id(key_desc_runtime);
 	uint8_t label[sizeof("ACS:nonce:") + sizeof(uint8_t) + sizeof(uint16_t)];
-	bool preserve_client_nonce = key_desc_runtime->client_nonce_set;
 	size_t label_len;
 	int ret;
 
-	memset(key_desc_runtime->server_nonce_fixed, 0,
-	       sizeof(key_desc_runtime->server_nonce_fixed));
-	if (!preserve_client_nonce) {
-		memset(key_desc_runtime->client_nonce_fixed, 0,
-		       sizeof(key_desc_runtime->client_nonce_fixed));
-		key_desc_runtime->client_nonce_set = false;
-	}
 	key_desc_runtime->tx_nonce_counter = 0U;
 	key_desc_runtime->rx_nonce_counter =
 		key_desc->aes.nonce_type == ACS_NONCE_SEQ_EVEN_ODD ? 1U : 0U;
@@ -422,45 +414,33 @@ static int acs_key_desc_runtime_derive_nonce_state(struct bt_acs_key_desc_runtim
 
 	switch (key_desc->aes.nonce_type) {
 	case ACS_NONCE_SEQ_DIFF_FIXED:
-		label_len = acs_nonce_label_build(key_id, 's', label, sizeof(label));
-		ret = acs_hkdf(acs_get_psa_hkdf_alg(), NULL, 0U, key_material, key_material_len,
-			       label, label_len, key_desc_runtime->server_nonce_fixed, prefix_size);
-		if (ret != 0) {
-			return ret;
-		}
-
-		if (!preserve_client_nonce) {
-			label_len = acs_nonce_label_build(key_id, 'c', label, sizeof(label));
-			ret = acs_hkdf(acs_get_psa_hkdf_alg(), NULL, 0U, key_material,
-				       key_material_len, label, label_len,
-				       key_desc_runtime->client_nonce_fixed, prefix_size);
-			if (ret != 0) {
-				return ret;
-			}
-		}
-		break;
+		/* SEQ_DIFF_FIXED uses the fixed nonce values already exchanged with the peer.
+		 * A fresh key resets the counters, but it must not overwrite the negotiated
+		 * server/client fixed parts or decrypt will fail.
+		 */
+		return 0;
 
 	case ACS_NONCE_SEQ_EVEN_ODD:
+		memset(key_desc_runtime->server_nonce_fixed, 0,
+		       sizeof(key_desc_runtime->server_nonce_fixed));
+		memset(key_desc_runtime->client_nonce_fixed, 0,
+		       sizeof(key_desc_runtime->client_nonce_fixed));
+		key_desc_runtime->client_nonce_set = false;
+
 		label_len = acs_nonce_label_build(key_id, 'e', label, sizeof(label));
 		ret = acs_hkdf(acs_get_psa_hkdf_alg(), NULL, 0U, key_material, key_material_len,
 			       label, label_len, key_desc_runtime->server_nonce_fixed, prefix_size);
 		if (ret != 0) {
 			return ret;
 		}
-		if (!preserve_client_nonce) {
-			memcpy(key_desc_runtime->client_nonce_fixed,
-			       key_desc_runtime->server_nonce_fixed, prefix_size);
-		}
+		memcpy(key_desc_runtime->client_nonce_fixed,
+		       key_desc_runtime->server_nonce_fixed, prefix_size);
 		break;
 
 	default:
 		return 0;
 	}
 
-	sys_mem_swap(key_desc_runtime->server_nonce_fixed, prefix_size);
-	if (!preserve_client_nonce) {
-		sys_mem_swap(key_desc_runtime->client_nonce_fixed, prefix_size);
-	}
 	key_desc_runtime->client_nonce_set = true;
 
 	return 0;
