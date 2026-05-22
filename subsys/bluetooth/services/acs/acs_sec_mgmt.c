@@ -104,6 +104,8 @@ int acs_sec_mgmt_invalidate_all(struct acs_procedure *proc)
 		}
 	}
 
+	acs_session_cache_clear_all_except(bt_conn_get_dst(proc->acs_conn->conn));
+
 #if defined(CONFIG_BT_SETTINGS)
 	acs_session_clear_all(proc->acs_conn->conn);
 #endif /* CONFIG_BT_SETTINGS */

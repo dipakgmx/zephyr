@@ -101,7 +101,7 @@ struct bt_acs_isc_record {
 	uint16_t key_id;
 };
 
-#define BT_ACS_ISC_DEFINE(_name, ...) \
+#define BT_ACS_ISC_DEFINE(_name, ...)                                                              \
 	STRUCT_SECTION_ITERABLE(bt_acs_isc_record, _name) = {__VA_ARGS__}
 
 /**

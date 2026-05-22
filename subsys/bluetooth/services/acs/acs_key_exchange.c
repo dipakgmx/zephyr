@@ -433,8 +433,8 @@ static int acs_key_desc_runtime_derive_nonce_state(struct bt_acs_key_desc_runtim
 		if (ret != 0) {
 			return ret;
 		}
-		memcpy(key_desc_runtime->client_nonce_fixed,
-		       key_desc_runtime->server_nonce_fixed, prefix_size);
+		memcpy(key_desc_runtime->client_nonce_fixed, key_desc_runtime->server_nonce_fixed,
+		       prefix_size);
 		break;
 
 	default:

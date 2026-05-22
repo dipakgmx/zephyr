@@ -289,7 +289,7 @@ struct bt_acs_key_desc_record {
 	};
 };
 
-#define BT_ACS_KEY_DESC_DEFINE(_name, ...) \
+#define BT_ACS_KEY_DESC_DEFINE(_name, ...)                                                         \
 	STRUCT_SECTION_ITERABLE(bt_acs_key_desc_record, _name) = {__VA_ARGS__}
 
 /**

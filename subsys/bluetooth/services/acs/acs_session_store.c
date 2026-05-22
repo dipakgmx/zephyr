@@ -186,6 +186,41 @@ static bool acs_session_already_stored(size_t slot, uint16_t parent_key_id, uint
 	return status == PSA_SUCCESS;
 }
 
+static struct bt_acs_runtime_key_state *acs_restored_established_key(struct bt_acs_conn *acs_conn)
+{
+#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
+	struct bt_acs_runtime_key_state *kdf_key;
+
+	if (acs_crypto_current_key_lookup(acs_conn, ACS_KEY_ID_KDF, &kdf_key) == 0 &&
+	    acs_current_key_installed(kdf_key)) {
+		return kdf_key;
+	}
+
+	return NULL;
+#elif IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_ECDH)
+	struct bt_acs_runtime_key_state *ecdh_key;
+
+	if (acs_crypto_current_key_lookup(acs_conn, ACS_KEY_ID_ECDH, &ecdh_key) == 0 &&
+	    acs_current_key_installed(ecdh_key)) {
+		return ecdh_key;
+	}
+
+	return NULL;
+#elif IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_OOB)
+	struct bt_acs_runtime_key_state *oob_key;
+
+	if (acs_crypto_current_key_lookup(acs_conn, ACS_KEY_ID_OOB, &oob_key) == 0 &&
+	    acs_current_key_installed(oob_key)) {
+		return oob_key;
+	}
+
+	return NULL;
+#else
+	ARG_UNUSED(acs_conn);
+	return NULL;
+#endif
+}
+
 static int acs_session_store_exchange_key(const struct bt_acs_conn *acs_conn,
 					  struct bt_acs_runtime_key_state **exchange_key)
 {
@@ -281,6 +316,7 @@ err_free_slot:
 void acs_session_restore(struct bt_conn *conn, struct bt_acs_conn *acs_conn)
 {
 	const bt_addr_le_t *addr = bt_conn_get_dst(conn);
+	struct bt_acs_runtime_key_state *established_key;
 	struct bt_acs_runtime_key_state *parent_key;
 	const struct bt_acs_cb *cb = acs_cb_get();
 	size_t slot;
@@ -323,24 +359,30 @@ void acs_session_restore(struct bt_conn *conn, struct bt_acs_conn *acs_conn)
 		return;
 	}
 
-	if (parent_key->psa_key_id != 0U) {
+	established_key = acs_restored_established_key(acs_conn);
+	if (established_key != NULL) {
 		acs_conn->status_flags |= BT_ACS_STATUS_SECURITY_ESTABLISHED;
+	} else {
+		acs_conn->status_flags &= ~BT_ACS_STATUS_SECURITY_ESTABLISHED;
 	}
 
 	LOG_INF("ACS session restored for peer %s%s", bt_addr_le_str(addr),
 		(acs_conn->status_flags & BT_ACS_STATUS_SECURITY_ESTABLISHED)
 			? " (security established)"
-			: " (no valid restored key)");
+			: " (restored parent only; secure session not resumed)");
 
 	if ((acs_conn->status_flags & BT_ACS_STATUS_SECURITY_ESTABLISHED) && cb &&
 	    cb->security_established) {
-		cb->security_established(conn, parent_key->key, CONFIG_BT_ACS_SESSION_KEY_SIZE);
+		cb->security_established(conn, established_key->key,
+					 CONFIG_BT_ACS_SESSION_KEY_SIZE);
 	}
 }
 
 static void acs_bond_deleted(uint8_t id, const bt_addr_le_t *peer)
 {
 	size_t slot;
+
+	acs_session_cache_clear_peer(peer);
 
 	if (acs_slot_from_addr(peer, &slot) != 0) {
 		return;
@@ -386,8 +428,7 @@ void acs_session_clear_all(const struct bt_conn *conn)
 
 #define ACS_SETTINGS_ADDR_LEN 13
 
-static int acs_settings_set(const char *name, size_t len_rd, settings_read_cb read_cb,
-			    void *cb_arg)
+static int acs_settings_set(const char *name, size_t len_rd, settings_read_cb read_cb, void *cb_arg)
 {
 	bt_addr_le_t addr;
 	struct acs_persistent_meta meta;

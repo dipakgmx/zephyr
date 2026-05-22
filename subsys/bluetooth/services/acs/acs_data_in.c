@@ -270,6 +270,10 @@ int acs_data_in_unwrap_and_route(struct bt_acs_conn *acs_conn, struct net_buf_si
 	__ASSERT_NO_MSG(buf != NULL);
 	__ASSERT_NO_MSG(buf->len > 0);
 
+	if (!acs_session_established(acs_conn)) {
+		return ACS_DATA_ERR_NOT_AUTHORIZED;
+	}
+
 	err = acs_data_in_validate(acs_conn, buf, &isc_id, &record_state, &received_counter);
 	if (err) {
 		return err;

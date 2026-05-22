@@ -127,6 +127,12 @@ struct bt_acs_conn *acs_conn_alloc(struct bt_conn *conn);
 /** @brief Release all resources held by @p acs_conn. */
 void acs_conn_cleanup(struct bt_acs_conn *acs_conn);
 
+/** @brief Clear the RAM session cache entry for @p addr. */
+void acs_session_cache_clear_peer(const bt_addr_le_t *addr);
+
+/** @brief Clear all RAM session cache entries except the one for @p keep_addr. */
+void acs_session_cache_clear_all_except(const bt_addr_le_t *keep_addr);
+
 /* ---- Session persistence (bond-backed PSA storage) ---------------------- */
 
 #if defined(CONFIG_BT_SETTINGS)
