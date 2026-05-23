@@ -261,38 +261,30 @@ void acs_key_exchange_abort(struct bt_acs_conn *acs_conn)
 /* Uncompressed point prefix for NIST curves ([0x04][X_BE][Y_BE]) */
 #define ACS_ECDH_UNCOMPRESSED_POINT 0x04U
 
-/* Compile-time curve selection helpers */
-static psa_ecc_family_t acs_get_psa_ecc_family(void)
-{
-	if (IS_ENABLED(CONFIG_BT_ACS_ECDH_CURVE_CURVE25519)) {
-		return PSA_ECC_FAMILY_MONTGOMERY;
-	}
-	return PSA_ECC_FAMILY_SECP_R1;
-}
+/* Compile-time curve selection — all Kconfig-determined, no runtime branch needed */
+#if IS_ENABLED(CONFIG_BT_ACS_ECDH_CURVE_CURVE25519)
+#define ACS_PSA_ECC_FAMILY PSA_ECC_FAMILY_MONTGOMERY
+#define ACS_PSA_KEY_BITS   ACS_PSA_KEY_BITS_C25519
+#elif IS_ENABLED(CONFIG_BT_ACS_ECDH_CURVE_P521)
+#define ACS_PSA_ECC_FAMILY PSA_ECC_FAMILY_SECP_R1
+#define ACS_PSA_KEY_BITS   ACS_PSA_KEY_BITS_P521
+#elif IS_ENABLED(CONFIG_BT_ACS_ECDH_CURVE_P384)
+#define ACS_PSA_ECC_FAMILY PSA_ECC_FAMILY_SECP_R1
+#define ACS_PSA_KEY_BITS   ACS_PSA_KEY_BITS_P384
+#else
+#define ACS_PSA_ECC_FAMILY PSA_ECC_FAMILY_SECP_R1
+#define ACS_PSA_KEY_BITS   ACS_PSA_KEY_BITS_P256
+#endif
 
-static size_t acs_get_psa_key_bits(void)
-{
-	if (IS_ENABLED(CONFIG_BT_ACS_ECDH_CURVE_P521)) {
-		return ACS_PSA_KEY_BITS_P521;
-	} else if (IS_ENABLED(CONFIG_BT_ACS_ECDH_CURVE_P384)) {
-		return ACS_PSA_KEY_BITS_P384;
-	} else if (IS_ENABLED(CONFIG_BT_ACS_ECDH_CURVE_CURVE25519)) {
-		return ACS_PSA_KEY_BITS_C25519;
-	}
-	return ACS_PSA_KEY_BITS_P256;
-}
-
-static psa_algorithm_t acs_get_psa_hkdf_alg(void)
-{
-	if (IS_ENABLED(CONFIG_BT_ACS_KDF_HKDF_SHA384) ||
-	    IS_ENABLED(CONFIG_BT_ACS_KDF_HKDF_SHA384_WITH_INFO)) {
-		return PSA_ALG_HKDF(PSA_ALG_SHA_384);
-	} else if (IS_ENABLED(CONFIG_BT_ACS_KDF_HKDF_SHA512) ||
-		   IS_ENABLED(CONFIG_BT_ACS_KDF_HKDF_SHA512_WITH_INFO)) {
-		return PSA_ALG_HKDF(PSA_ALG_SHA_512);
-	}
-	return PSA_ALG_HKDF(PSA_ALG_SHA_256);
-}
+#if IS_ENABLED(CONFIG_BT_ACS_KDF_HKDF_SHA384) || \
+    IS_ENABLED(CONFIG_BT_ACS_KDF_HKDF_SHA384_WITH_INFO)
+#define ACS_PSA_HKDF_ALG PSA_ALG_HKDF(PSA_ALG_SHA_384)
+#elif IS_ENABLED(CONFIG_BT_ACS_KDF_HKDF_SHA512) || \
+      IS_ENABLED(CONFIG_BT_ACS_KDF_HKDF_SHA512_WITH_INFO)
+#define ACS_PSA_HKDF_ALG PSA_ALG_HKDF(PSA_ALG_SHA_512)
+#else
+#define ACS_PSA_HKDF_ALG PSA_ALG_HKDF(PSA_ALG_SHA_256)
+#endif
 
 static int acs_hmac_sha256(const uint8_t *key, size_t key_len, const uint8_t *msg, size_t msg_len,
 			   uint8_t out[PSA_HASH_LENGTH(PSA_ALG_SHA_256)])
@@ -428,7 +420,7 @@ static int acs_key_desc_runtime_derive_nonce_state(struct bt_acs_key_desc_runtim
 		key_desc_runtime->client_nonce_set = false;
 
 		label_len = acs_nonce_label_build(key_id, 'e', label, sizeof(label));
-		ret = acs_hkdf(acs_get_psa_hkdf_alg(), NULL, 0U, key_material, key_material_len,
+		ret = acs_hkdf(ACS_PSA_HKDF_ALG, NULL, 0U, key_material, key_material_len,
 			       label, label_len, key_desc_runtime->server_nonce_fixed, prefix_size);
 		if (ret != 0) {
 			return ret;
@@ -544,8 +536,8 @@ static int bt_acs_crypto_generate_keypair(struct bt_acs_conn *acs_conn)
 	uint8_t pub[1U + 2U * CONFIG_BT_ACS_ECDH_COORD_SIZE];
 	size_t pub_len;
 
-	psa_set_key_type(&attrs, PSA_KEY_TYPE_ECC_KEY_PAIR(acs_get_psa_ecc_family()));
-	psa_set_key_bits(&attrs, acs_get_psa_key_bits());
+	psa_set_key_type(&attrs, PSA_KEY_TYPE_ECC_KEY_PAIR(ACS_PSA_ECC_FAMILY));
+	psa_set_key_bits(&attrs, ACS_PSA_KEY_BITS);
 	psa_set_key_usage_flags(&attrs, PSA_KEY_USAGE_DERIVE);
 	psa_set_key_algorithm(&attrs, PSA_ALG_ECDH);
 
@@ -694,7 +686,7 @@ int acs_crypto_derive_session_key(struct bt_acs_conn *acs_conn)
 	memcpy(salt, acs_conn->crypto.kex->server_random, ACS_CONFIRM_VALUE_SIZE);
 	memcpy(salt + ACS_CONFIRM_VALUE_SIZE, client_random_be, ACS_CONFIRM_VALUE_SIZE);
 
-	ret = acs_hkdf(acs_get_psa_hkdf_alg(), salt, sizeof(salt),
+	ret = acs_hkdf(ACS_PSA_HKDF_ALG, salt, sizeof(salt),
 		       acs_conn->crypto.kex->shared_secret, acs_conn->crypto.kex->key_mat_len, info,
 		       sizeof(info) - 1, exchange_key->key, CONFIG_BT_ACS_SESSION_KEY_SIZE);
 
@@ -745,7 +737,7 @@ static int bt_acs_crypto_derive_kdf_child_key(struct bt_acs_conn *acs_conn)
 	sys_memcpy_swap(info_be, acs_conn->crypto.kex->kdf.info,
 			acs_conn->crypto.kex->kdf.info_size);
 
-	ret = acs_hkdf(acs_get_psa_hkdf_alg(), salt_be, acs_conn->crypto.kex->kdf.salt_size,
+	ret = acs_hkdf(ACS_PSA_HKDF_ALG, salt_be, acs_conn->crypto.kex->kdf.salt_size,
 		       parent_key->key, CONFIG_BT_ACS_SESSION_KEY_SIZE, info_be,
 		       acs_conn->crypto.kex->kdf.info_size, child_key,
 		       CONFIG_BT_ACS_SESSION_KEY_SIZE);
@@ -926,7 +918,7 @@ int acs_key_exchange_ecdh_kdf(struct bt_acs_conn *acs_conn, struct net_buf_simpl
 	sys_memcpy_swap(info_be, acs_conn->crypto.kex->kdf.info,
 			acs_conn->crypto.kex->kdf.info_size);
 
-	err = acs_hkdf(acs_get_psa_hkdf_alg(), salt_be, acs_conn->crypto.kex->kdf.salt_size,
+	err = acs_hkdf(ACS_PSA_HKDF_ALG, salt_be, acs_conn->crypto.kex->kdf.salt_size,
 		       acs_conn->crypto.kex->shared_secret, acs_conn->crypto.kex->key_mat_len,
 		       info_be, acs_conn->crypto.kex->kdf.info_size, acs_conn->crypto.kex->ecdh_key,
 		       CONFIG_BT_ACS_SESSION_KEY_SIZE);

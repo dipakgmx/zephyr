@@ -290,22 +290,9 @@ static int append_aes_record(const struct bt_acs_key_desc_record *rec, struct ne
 	return 0;
 }
 
-static bool is_aes_type(uint8_t type_id)
+static bool is_aes_type(const struct bt_acs_key_desc_record *rec)
 {
-	return
-#if IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_CCM)
-		type_id == ACS_KEY_REC_AES_128_CCM ||
-#endif
-#if IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_GCM)
-		type_id == ACS_KEY_REC_AES_128_GCM ||
-#endif
-#if IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_CMAC)
-		type_id == ACS_KEY_REC_AES_128_CMAC ||
-#endif
-#if IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_GMAC)
-		type_id == ACS_KEY_REC_AES_128_GMAC ||
-#endif
-		false;
+	return acs_key_desc_is_algorithm_record(rec);
 }
 
 int acs_key_desc_build_response(struct net_buf_simple *operand, struct net_buf_simple *buf,
@@ -399,7 +386,7 @@ int acs_key_desc_build_response(struct net_buf_simple *operand, struct net_buf_s
 			LOG_DBG("Key rec: type=KDF key_id=0x%04x parent=0x%04x kdf=%u", rec->key_id,
 				rec->kdf.parent_key_id, rec->kdf.kdf_algorithm);
 
-		} else if (is_aes_type(rec->type_id)) {
+		} else if (is_aes_type(rec)) {
 			err = append_aes_record(rec, buf, acs_conn);
 			if (err) {
 				return err;

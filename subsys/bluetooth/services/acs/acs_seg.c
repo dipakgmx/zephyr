@@ -79,9 +79,6 @@ void acs_seg_rx_init(struct acs_seg_rx_ctx *ctx)
 	__ASSERT_NO_MSG(ctx);
 
 	memset(ctx, 0, sizeof(*ctx));
-	ctx->rx_in_progress = false;
-	ctx->rx_counter = 0;
-	ctx->buf = NULL;
 }
 
 void acs_seg_rx_reset(struct acs_seg_rx_ctx *ctx)
@@ -394,14 +391,6 @@ void acs_seg_tx_init(struct acs_seg_tx_ctx *ctx)
 	__ASSERT_NO_MSG(ctx);
 
 	memset(ctx, 0, sizeof(*ctx));
-	ctx->tx_offset = 0;
-	ctx->tx_counter = 0;
-	ctx->tx_in_flight = false;
-	ctx->tx_attr = NULL;
-	ctx->tx_conn = NULL;
-	ctx->buf = NULL;
-	ctx->completion_cb = NULL;
-	ctx->completion_cb_data = NULL;
 	k_work_init(&ctx->tx_work, acs_seg_tx_work_handler);
 }
 

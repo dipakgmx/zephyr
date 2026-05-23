@@ -32,9 +32,10 @@ LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
  * advances ISC → KEY → RC on each confirm until the sequence completes.
  */
 
+static const uint8_t all_records_filter[2] = {0xFF, 0xFF};
+
 static int all_active_step_isc(struct acs_procedure *proc)
 {
-	static const uint8_t filter[2] = {0xFF, 0xFF};
 	struct net_buf *buf;
 	struct net_buf_simple operand;
 	struct acs_reply_mode reply_mode = acs_proc_reply_mode(proc);
@@ -46,7 +47,8 @@ static int all_active_step_isc(struct acs_procedure *proc)
 
 	net_buf_add_u8(buf,
 		       BT_ACS_CP_OPCODE_INFORMATION_SECURITY_CONFIGURATION_DESCRIPTOR_RESPONSE);
-	net_buf_simple_init_with_data(&operand, (void *)filter, sizeof(filter));
+	net_buf_simple_init_with_data(&operand, (void *)all_records_filter,
+				     sizeof(all_records_filter));
 
 	if (acs_isc_build_response(&operand, &buf->b) != 0) {
 		LOG_ERR("Get All Active Descriptors: ISC build failed");
@@ -60,7 +62,6 @@ static int all_active_step_isc(struct acs_procedure *proc)
 
 static int all_active_step_key(struct acs_procedure *proc)
 {
-	static const uint8_t filter[2] = {0xFF, 0xFF};
 	struct net_buf *buf;
 	struct net_buf_simple operand;
 	struct acs_reply_mode reply_mode = acs_proc_reply_mode(proc);
@@ -72,7 +73,8 @@ static int all_active_step_key(struct acs_procedure *proc)
 	}
 
 	net_buf_add_u8(buf, BT_ACS_CP_OPCODE_KEY_DESCRIPTOR_RESPONSE);
-	net_buf_simple_init_with_data(&operand, (void *)filter, sizeof(filter));
+	net_buf_simple_init_with_data(&operand, (void *)all_records_filter,
+				     sizeof(all_records_filter));
 
 	err = acs_key_desc_build_response(&operand, &buf->b, proc->acs_conn);
 
