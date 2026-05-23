@@ -192,8 +192,11 @@ void acs_cp_ind_cb(struct bt_conn *conn, const struct bt_gatt_attr *attr, int er
 
 		LOG_DBG("Deferred abort committed — sending ABORT SUCCESS");
 		/* Lock stays held — ABORT now owns it; released on confirm. */
-		acs_cp_rsp_status(&acs_conn->plain_cp_proc, BT_ACS_CP_OPCODE_ABORT,
-				  BT_ACS_CP_RESPONSE_SUCCESS);
+		if (acs_cp_rsp_status(&acs_conn->plain_cp_proc, BT_ACS_CP_OPCODE_ABORT,
+				      BT_ACS_CP_RESPONSE_SUCCESS)) {
+			LOG_ERR("Deferred ABORT response send failed");
+			atomic_set(&acs_conn->plain_cp_proc.plain_cp.locked, 0);
+		}
 		return;
 	}
 

@@ -296,9 +296,6 @@ int acs_sec_mgmt_abort(struct acs_procedure *proc)
 	 * and the send would fail with -EBUSY.
 	 */
 	can_commit = !acs_conn->cp_tx.tx_in_flight;
-#if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION)
-	can_commit = can_commit && !acs_conn->indicate_tx.tx_in_flight;
-#endif
 
 	if (!can_commit) {
 		LOG_DBG("Abort deferred — indication in flight, will commit on confirm");
