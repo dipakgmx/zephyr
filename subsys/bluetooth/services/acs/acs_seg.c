@@ -451,3 +451,36 @@ int acs_seg_tx_send(struct acs_seg_tx_ctx *ctx, struct bt_conn *conn,
 	k_work_submit_to_queue(acs_get_wq(), &ctx->tx_work);
 	return 0;
 }
+
+enum acs_seg_rx_result acs_channel_rx_feed(struct acs_seg_rx_ctx *rx_ctx, const uint8_t *data,
+					   uint16_t len)
+{
+	enum acs_seg_rx_result res;
+
+	if (len < 1) {
+		return ACS_SEG_RX_ERR_LEN;
+	}
+
+	if (IS_BIT_SET(data[0], ACS_SEG_FIRST_SEGMENT_BIT) && !rx_ctx->buf) {
+		struct net_buf *rx_buf = acs_buf_alloc(K_NO_WAIT);
+
+		if (!rx_buf) {
+			LOG_ERR("Channel RX: buffer pool exhausted");
+			return ACS_SEG_RX_ERR_OVERFLOW;
+		}
+		acs_seg_rx_begin(rx_ctx, rx_buf);
+	}
+
+	if (!rx_ctx->buf) {
+		LOG_ERR("Channel RX: continuation segment without prior first segment");
+		return ACS_SEG_RX_ERR_ORPHAN;
+	}
+
+	res = acs_seg_rx_process(rx_ctx, data, len);
+
+	if (res != ACS_SEG_RX_COMPLETE && res != ACS_SEG_RX_PENDING) {
+		acs_seg_rx_reset(rx_ctx);
+	}
+
+	return res;
+}

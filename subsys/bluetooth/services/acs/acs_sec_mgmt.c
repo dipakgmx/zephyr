@@ -47,24 +47,6 @@ static inline bool is_active_key_id(uint16_t key_id)
 	       ((ACS_ACTIVE_KEY_ID_MASK & BIT(key_id)) != 0U);
 }
 
-static int invalidate_self_step(struct acs_procedure *proc)
-{
-	struct bt_acs_conn *acs_conn = proc->acs_conn;
-
-	acs_seq_clear(proc);
-	bt_acs_invalidate_security(acs_conn->conn);
-	return 0;
-}
-
-static const acs_seq_step_fn invalidate_self_steps[] = {
-	invalidate_self_step,
-};
-
-static const struct acs_seq_desc invalidate_self_seq = {
-	.steps = invalidate_self_steps,
-	.step_count = ARRAY_SIZE(invalidate_self_steps),
-};
-
 int acs_sec_mgmt_invalidate_all(struct acs_procedure *proc)
 {
 	struct bt_acs_conn const *acs_conn = proc->acs_conn;
@@ -102,7 +84,7 @@ int acs_sec_mgmt_invalidate_all(struct acs_procedure *proc)
 	LOG_DBG("Invalidated security for %d other connection(s); deferring self", count);
 
 	/* Defer self-invalidation until after the success response is confirmed. */
-	acs_seq_begin(proc, &invalidate_self_seq);
+	proc->seq_state = ACS_CP_SEQ_INVALIDATE_SELF;
 
 	return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_INVALIDATE_ALL_ESTABLISHED_SECURITY,
 				 BT_ACS_CP_RESPONSE_SUCCESS);

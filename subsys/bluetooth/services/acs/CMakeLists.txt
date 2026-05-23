@@ -4,12 +4,10 @@
 zephyr_sources_ifdef(
   CONFIG_BT_ACS
   acs_seg.c
-  acs_channel_rx.c
   acs.c
   acs_conn.c
   acs_session.c
   acs_runtime.c
-  acs_reply_seq.c
   acs_cp.c
   acs_cp_feature.c
   acs_cp_descriptors.c
@@ -38,7 +36,6 @@ zephyr_sources_ifdef(
 zephyr_sources_ifdef(
   CONFIG_BT_ACS_ANY_DATA_PROTECTION
   acs_crypto.c
-  acs_crypto_keys.c
   acs_crypto_alg.c
 )
 
@@ -49,6 +46,4 @@ zephyr_sources_ifdef(CONFIG_BT_ACS_GATT_AUTHORIZATION acs_policy.c)
 zephyr_sources_ifdef(
   CONFIG_BT_ACS_FEAT_AUTHORIZATION
   acs_rmap.c
-  acs_cp_rmap.c
-  acs_cp_all_active.c
 )

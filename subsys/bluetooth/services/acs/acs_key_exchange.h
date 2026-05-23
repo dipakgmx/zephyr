@@ -121,7 +121,8 @@ int acs_key_exchange_kdf(struct bt_acs_conn *acs_conn, struct net_buf_simple *rs
 #endif /* CONFIG_BT_ACS_KEY_EXCHANGE_KDF */
 
 struct bt_acs_runtime_key_state *acs_key_exchange_established_key(struct bt_acs_conn *acs_conn);
-const struct acs_seq_desc *acs_key_exchange_success_seq(void);
-const struct acs_seq_desc *acs_key_exchange_fail_seq(void);
+
+int acs_key_exchange_step_response(struct acs_procedure *proc, uint8_t status);
+int acs_key_exchange_step_success_status(struct acs_procedure *proc);
 
 #endif /* BT_GATT_ACS_KEY_EXCHANGE_H_ */

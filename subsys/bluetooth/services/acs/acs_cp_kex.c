@@ -114,12 +114,12 @@ int acs_cp_kex_exchange_kdf(struct acs_procedure *proc, struct net_buf_simple *b
 		 * established and the KEX state machine has been advanced by Start Key Exchange.
 		 */
 		if (err == -EAGAIN) {
-			acs_seq_begin(proc, acs_key_exchange_fail_seq());
+			proc->seq_state = ACS_CP_SEQ_KEX_FAIL_RSP;
 			return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_KEY_EXCHANGE_KDF,
 						 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE);
 		} else if (err) {
 			LOG_ERR("KDF key exchange: internal error (err %d)", err);
-			acs_seq_begin(proc, acs_key_exchange_fail_seq());
+			proc->seq_state = ACS_CP_SEQ_KEX_FAIL_RSP;
 			return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_KEY_EXCHANGE_KDF,
 						 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 		}
@@ -132,7 +132,7 @@ int acs_cp_kex_exchange_kdf(struct acs_procedure *proc, struct net_buf_simple *b
 		 * indication is confirmed by the peer.  Setting them here would tell the
 		 * application the session is live before the peer has acknowledged it. */
 		/* KDF_RESPONSE must be delivered before KEY_EXCHANGE_RESPONSE (§4.4.3.10). */
-		acs_seq_begin(proc, acs_key_exchange_success_seq());
+		proc->seq_state = ACS_CP_SEQ_KEX_SUCCESS_RSP;
 		arm_err = acs_cp_send_reply(proc);
 
 		if (arm_err) {
@@ -153,12 +153,12 @@ int acs_cp_kex_exchange_kdf(struct acs_procedure *proc, struct net_buf_simple *b
 	err = acs_key_exchange_ecdh_kdf(acs_conn, &rsp_buf->b);
 
 	if (err == -EAGAIN) {
-		acs_seq_begin(proc, acs_key_exchange_fail_seq());
+		proc->seq_state = ACS_CP_SEQ_KEX_FAIL_RSP;
 		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_KEY_EXCHANGE_KDF,
 					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE);
 	} else if (err) {
 		LOG_ERR("ECDH KDF: internal error (err %d)", err);
-		acs_seq_begin(proc, acs_key_exchange_fail_seq());
+		proc->seq_state = ACS_CP_SEQ_KEX_FAIL_RSP;
 		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_KEY_EXCHANGE_KDF,
 					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 	}
@@ -468,16 +468,16 @@ int acs_cp_kex_exchange_ecdh(struct acs_procedure *proc, struct net_buf_simple *
 
 		if (err == -EBADMSG || err == -EINVAL) {
 			LOG_ERR("ECDH pubkey: invalid client public key (err %d)", err);
-			acs_seq_begin(proc, acs_key_exchange_fail_seq());
+			proc->seq_state = ACS_CP_SEQ_KEX_FAIL_RSP;
 			return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH,
 						 BT_ACS_CP_RESPONSE_INVALID_PUBLIC_KEY);
 		} else if (err == -EAGAIN) {
-			acs_seq_begin(proc, acs_key_exchange_fail_seq());
+			proc->seq_state = ACS_CP_SEQ_KEX_FAIL_RSP;
 			return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH,
 						 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE);
 		} else if (err) {
 			LOG_ERR("ECDH pubkey: internal error (err %d)", err);
-			acs_seq_begin(proc, acs_key_exchange_fail_seq());
+			proc->seq_state = ACS_CP_SEQ_KEX_FAIL_RSP;
 			return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH,
 						 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 		} else {
@@ -542,7 +542,7 @@ int acs_cp_kex_ecdh_confirm_code(struct acs_procedure *proc, struct net_buf_simp
 
 	if (err) {
 		/* Keep kex alive long enough to emit KEY_EXCHANGE_RESPONSE(failed). */
-		acs_seq_begin(proc, acs_key_exchange_fail_seq());
+		proc->seq_state = ACS_CP_SEQ_KEX_FAIL_RSP;
 		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_ECDH_CONFIRM_CODE,
 					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 	} else {
@@ -608,11 +608,11 @@ int acs_cp_kex_ecdh_confirm_rand(struct acs_procedure *proc, struct net_buf_simp
 
 	if (err == -EACCES) {
 		/* Confirmation code mismatch: chain KEX_RESPONSE(failed). */
-		acs_seq_begin(proc, acs_key_exchange_fail_seq());
+		proc->seq_state = ACS_CP_SEQ_KEX_FAIL_RSP;
 		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_ECDH_CONFIRM_RAND,
 					 BT_ACS_CP_RESPONSE_INVALID_KEY_EXCHANGE_CONFIRMATION_CODE);
 	} else if (err) {
-		acs_seq_begin(proc, acs_key_exchange_fail_seq());
+		proc->seq_state = ACS_CP_SEQ_KEX_FAIL_RSP;
 		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_ECDH_CONFIRM_RAND,
 					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 	}
@@ -631,7 +631,7 @@ int acs_cp_kex_ecdh_confirm_rand(struct acs_procedure *proc, struct net_buf_simp
 
 		if (acs_crypto_current_key_lookup(acs_conn, ACS_KEY_ID_ECDH, &ecdh_key) != 0) {
 			LOG_ERR("Missing ECDH runtime key state");
-			acs_seq_begin(proc, acs_key_exchange_fail_seq());
+			proc->seq_state = ACS_CP_SEQ_KEX_FAIL_RSP;
 			return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_ECDH_CONFIRM_RAND,
 						 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 		}
@@ -648,7 +648,7 @@ int acs_cp_kex_ecdh_confirm_rand(struct acs_procedure *proc, struct net_buf_simp
 		}
 		if (err) {
 			LOG_ERR("Failed to import ECDH current key: %d", err);
-			acs_seq_begin(proc, acs_key_exchange_fail_seq());
+			proc->seq_state = ACS_CP_SEQ_KEX_FAIL_RSP;
 			return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_ECDH_CONFIRM_RAND,
 						 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 		}
@@ -656,13 +656,13 @@ int acs_cp_kex_ecdh_confirm_rand(struct acs_procedure *proc, struct net_buf_simp
 		err = acs_crypto_derive_session_key(acs_conn);
 		if (err) {
 			LOG_ERR("Failed to derive session key: %d", err);
-			acs_seq_begin(proc, acs_key_exchange_fail_seq());
+			proc->seq_state = ACS_CP_SEQ_KEX_FAIL_RSP;
 			return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_ECDH_CONFIRM_RAND,
 						 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 		}
 	}
 
-	acs_seq_begin(proc, acs_key_exchange_success_seq());
+	proc->seq_state = ACS_CP_SEQ_KEX_SUCCESS_RSP;
 
 	err = acs_cp_send_reply(proc);
 	if (err) {

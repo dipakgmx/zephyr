@@ -13,8 +13,8 @@
 #include <zephyr/bluetooth/gatt.h>
 #include <zephyr/bluetooth/services/acs.h>
 
-#include "acs_channel_rx.h"
 #include "acs_internal.h"
+#include "acs_seg.h"
 #if defined(CONFIG_BT_ACS_FEAT_AUTHORIZATION)
 #include "acs_rmap.h"
 #endif
@@ -118,7 +118,7 @@ int acs_runtime_dispatch_protected_cp_frame(struct acs_frame *frame, struct bt_a
 	 * ALLOC ref and will release it in acs_seq_clear(). Otherwise, drop it
 	 * here — the single response is already queued or completed.
 	 */
-	if (!req_ctx->reply_seq.desc) {
+	if (req_ctx->seq_state == ACS_CP_SEQ_IDLE) {
 		acs_procedure_release_owner(req_ctx);
 	}
 	return err;

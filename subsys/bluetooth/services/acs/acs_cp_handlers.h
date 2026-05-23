@@ -13,6 +13,10 @@
 #if IS_ENABLED(CONFIG_BT_ACS_DESCRIPTORS)
 /** @brief Handle Get All Active Descriptors CP request (§4.4.3.1). */
 int acs_cp_all_active_get(struct acs_procedure *proc);
+
+int acs_all_active_step_isc(struct acs_procedure *proc);
+int acs_all_active_step_key(struct acs_procedure *proc);
+int acs_all_active_step_rc(struct acs_procedure *proc);
 #endif /* CONFIG_BT_ACS_DESCRIPTORS */
 
 /** @brief Handle Get Restriction Map Descriptor CP request (§4.4.3.2). */

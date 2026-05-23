@@ -33,7 +33,6 @@ extern "C" {
 
 struct acs_procedure; /**< Defined below; forward-declared for bt_acs_conn */
 struct bt_acs_conn;   /**< Defined below; forward-declared for struct acs_procedure */
-struct acs_seq_desc;  /**< Defined below; forward-declared for acs_reply_seq_state */
 
 /**
  * @brief Source GATT characteristic that produced an inbound frame.
@@ -50,7 +49,7 @@ enum acs_source_channel {
  * @brief Normalized inbound request — handoff object from transport decode into runtime dispatch.
  *
  * Lifecycle:
- * - Built by the GATT entry layer once @ref acs_channel_rx_feed reports COMPLETE.
+ * - Built by the GATT entry layer once acs_channel_rx_feed() reports COMPLETE.
  *   At this point @c payload points at the reassembled bytes in @c backing_buf,
  *   @c source_channel is set, @c encrypted is true for Data In and false for CP,
  *   and @c resource_handle / @c isc_id are 0.
@@ -163,12 +162,22 @@ struct acs_reply {
 };
 
 /**
- * @brief Signature for one step in a multi-indication reply sequence.
+ * @brief State of a multi-indication reply sequence (OTS-style enum dispatch).
  *
- * Return 0 on success (framework waits for confirm, then calls next step).
- * Return negative errno to abort the sequence.
+ * Each value identifies the next step to execute when the current CP indication
+ * is confirmed.  ACS_CP_SEQ_IDLE means no sequence is active.
  */
-typedef int (*acs_seq_step_fn)(struct acs_procedure *proc);
+enum acs_cp_seq_state {
+	ACS_CP_SEQ_IDLE = 0,
+	ACS_CP_SEQ_KEX_SUCCESS_RSP,
+	ACS_CP_SEQ_KEX_SUCCESS_STATUS,
+	ACS_CP_SEQ_KEX_FAIL_RSP,
+	ACS_CP_SEQ_KEX_FAIL_CLEANUP,
+	ACS_CP_SEQ_ALL_ACTIVE_ISC,
+	ACS_CP_SEQ_ALL_ACTIVE_KEY,
+	ACS_CP_SEQ_ALL_ACTIVE_RC,
+	ACS_CP_SEQ_INVALIDATE_SELF,
+};
 
 struct bt_acs_kex_ctx;
 
@@ -186,24 +195,6 @@ enum acs_procedure_ref_who {
 enum acs_proc_kind {
 	ACS_PROC_KIND_PLAIN_CP = 0,      /**< Embedded per-connection plain Control Point proc */
 	ACS_PROC_KIND_PROTECTED_REQ = 1, /**< Slab-allocated protected request proc */
-};
-
-/**
- * @brief Descriptor for a multi-indication reply sequence.
- */
-struct acs_seq_desc {
-	const acs_seq_step_fn *steps;
-	uint8_t step_count;
-	/** Optional hook invoked by acs_seq_abort before the sequence state is cleared. */
-	void (*on_abort)(struct acs_procedure *proc);
-};
-
-/**
- * @brief Bookkeeping state for a multi-step CP indication reply sequence.
- */
-struct acs_reply_seq_state {
-	const struct acs_seq_desc *desc; /**< NULL = no active sequence */
-	uint8_t step;                    /**< Next index into desc->steps[] */
 };
 
 /**
@@ -358,13 +349,13 @@ struct acs_proc_plain_cp_state {
 };
 
 struct acs_procedure {
-	sys_snode_t node;                     /**< k_fifo linkage for send queue (DOI) */
-	struct bt_acs_conn *acs_conn;         /**< Owning ACS connection; NULL after disconnect */
-	enum acs_proc_kind kind;              /**< Plain CP singleton vs protected request */
-	struct acs_reply_seq_state reply_seq; /**< Multi-indication reply-sequence state */
-	struct acs_proc_buffers buffers;      /**< Request/response buffer ownership */
-	struct acs_proc_route route;          /**< Resource routing metadata */
-	struct acs_proc_lifetime lifetime;    /**< Refcount bookkeeping */
+	sys_snode_t node;                  /**< k_fifo linkage for send queue (DOI) */
+	struct bt_acs_conn *acs_conn;      /**< Owning ACS connection; NULL after disconnect */
+	enum acs_proc_kind kind;           /**< Plain CP singleton vs protected request */
+	enum acs_cp_seq_state seq_state;   /**< Multi-indication reply-sequence state */
+	struct acs_proc_buffers buffers;   /**< Request/response buffer ownership */
+	struct acs_proc_route route;       /**< Resource routing metadata */
+	struct acs_proc_lifetime lifetime; /**< Refcount bookkeeping */
 	struct acs_proc_registration registration; /**< Connection slot registration */
 	struct acs_proc_plain_cp_state plain_cp;   /**< Plain-CP-only busy/abort interlock */
 };

@@ -9,8 +9,11 @@
 #include <zephyr/bluetooth/uuid.h>
 #include <zephyr/bluetooth/services/acs.h>
 
+#include "acs_cp.h"
 #include "acs_rmap.h"
 #include "acs_rhandle.h"
+#include "acs_isc.h"
+#include "acs_key_desc.h"
 #include "acs_internal.h"
 
 #include <zephyr/logging/log.h>
@@ -488,3 +491,225 @@ int acs_rmap_resolve_handles(void)
 
 	return 0;
 }
+
+int acs_cp_handle_get_restriction_map_id_list(struct acs_procedure *proc)
+{
+	struct net_buf *rsp_buf;
+	struct acs_reply_mode reply_mode = acs_proc_reply_mode(proc);
+	int build_err;
+
+	rsp_buf = acs_prepare_reply_buf(proc, reply_mode.encrypted);
+	if (!rsp_buf) {
+		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_GET_RESTRICTION_MAP_ID_LIST,
+					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
+	}
+	net_buf_add_u8(rsp_buf, BT_ACS_CP_OPCODE_RESTRICTION_MAP_ID_LIST_RESPONSE);
+	build_err = acs_rmap_build_id_list_response(&rsp_buf->b);
+	if (build_err) {
+		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_GET_RESTRICTION_MAP_ID_LIST,
+					 errno_to_acs_status(build_err));
+	} else {
+		int err = acs_cp_send_reply(proc);
+
+		if (err) {
+			LOG_WRN("CP indicate failed for opcode 0x%02x: %d",
+				BT_ACS_CP_OPCODE_GET_RESTRICTION_MAP_ID_LIST, err);
+		}
+		return err;
+	}
+}
+
+int acs_cp_handle_get_restriction_map_descriptor(struct acs_procedure *proc,
+						 struct net_buf_simple *buf)
+{
+	struct acs_rmap_get_descriptor_req desc_req;
+	struct bt_acs_restriction_map map = {0};
+	struct net_buf *rsp_buf;
+	struct acs_reply_mode reply_mode = acs_proc_reply_mode(proc);
+	int build_err;
+
+	if (buf->len != sizeof(struct acs_rmap_get_descriptor_req)) {
+		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_GET_RESTRICTION_MAP_DESCRIPTOR,
+					 BT_ACS_CP_RESPONSE_INVALID_OPERAND);
+	}
+
+	desc_req.map_id = net_buf_simple_pull_le16(buf);
+	desc_req.resource_handle_filter = net_buf_simple_pull_le16(buf);
+
+	if (acs_rmap_lookup(desc_req.map_id, &map) != 0) {
+		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_GET_RESTRICTION_MAP_DESCRIPTOR,
+					 BT_ACS_CP_RESPONSE_PARAMETER_OUT_OF_RANGE);
+	}
+
+	if (map.map_isc_id != 0 && proc->kind == ACS_PROC_KIND_PLAIN_CP) {
+		LOG_WRN("Get Restriction Map Descriptor: protected map 0x%04x requires Data In",
+			desc_req.map_id);
+		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_GET_RESTRICTION_MAP_DESCRIPTOR,
+					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE);
+	}
+
+	rsp_buf = acs_prepare_reply_buf(proc, reply_mode.encrypted);
+	if (!rsp_buf) {
+		LOG_WRN("buffer pool exhausted");
+		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_GET_RESTRICTION_MAP_DESCRIPTOR,
+					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
+	}
+	net_buf_add_u8(rsp_buf, BT_ACS_CP_OPCODE_RESTRICTION_MAP_DESCRIPTOR_RESPONSE);
+
+	build_err = acs_rmap_build_descriptor_response(&desc_req, &rsp_buf->b);
+	if (build_err) {
+		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_GET_RESTRICTION_MAP_DESCRIPTOR,
+					 errno_to_acs_status(build_err));
+	} else {
+		int err = acs_cp_send_reply(proc);
+
+		if (err) {
+			LOG_WRN("CP indicate failed for opcode 0x%02x: %d",
+				BT_ACS_CP_OPCODE_GET_RESTRICTION_MAP_DESCRIPTOR, err);
+		}
+		return err;
+	}
+}
+
+int acs_cp_handle_activate_restriction_map(struct acs_procedure *proc, struct net_buf_simple *buf)
+{
+	uint16_t map_id;
+	struct bt_acs_restriction_map map;
+
+	if (!IS_ENABLED(CONFIG_BT_ACS_MULTIPLE_RESTRICTION_MAPS)) {
+		LOG_ERR("Activate Restriction Map: feature not supported");
+		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_ACTIVATE_RESTRICTION_MAP,
+					 BT_ACS_CP_RESPONSE_OPCODE_NOT_SUPPORTED);
+	}
+
+	map_id = net_buf_simple_pull_le16(buf);
+	memset(&map, 0, sizeof(map));
+
+	if (acs_rmap_lookup(map_id, &map) != 0) {
+		LOG_WRN("Activate Restriction Map: map ID 0x%04x not found", map_id);
+		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_ACTIVATE_RESTRICTION_MAP,
+					 BT_ACS_CP_RESPONSE_PARAMETER_OUT_OF_RANGE);
+	}
+
+	if (map.map_isc_id != 0 && proc->kind == ACS_PROC_KIND_PLAIN_CP) {
+		LOG_WRN("Activate Restriction Map: map 0x%04x is protected (ISC 0x%04x) — "
+			"plain CP is not applicable",
+			map_id, map.map_isc_id);
+		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_ACTIVATE_RESTRICTION_MAP,
+					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE);
+	}
+
+	proc->acs_conn->restriction_map_id = map_id;
+	LOG_DBG("Restriction map 0x%04x activated", map_id);
+
+	return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_ACTIVATE_RESTRICTION_MAP,
+				 BT_ACS_CP_RESPONSE_SUCCESS);
+}
+
+#if IS_ENABLED(CONFIG_BT_ACS_DESCRIPTORS)
+
+static const uint8_t all_records_filter[2] = {0xFF, 0xFF};
+
+int acs_all_active_step_isc(struct acs_procedure *proc)
+{
+	struct net_buf *buf;
+	struct net_buf_simple operand;
+	struct acs_reply_mode reply_mode = acs_proc_reply_mode(proc);
+
+	buf = acs_prepare_reply_buf(proc, reply_mode.encrypted);
+	if (!buf) {
+		return -ENOMEM;
+	}
+
+	net_buf_add_u8(buf,
+		       BT_ACS_CP_OPCODE_INFORMATION_SECURITY_CONFIGURATION_DESCRIPTOR_RESPONSE);
+	net_buf_simple_init_with_data(&operand, (void *)all_records_filter,
+				      sizeof(all_records_filter));
+
+	if (acs_isc_build_response(&operand, &buf->b) != 0) {
+		LOG_ERR("Get All Active Descriptors: ISC build failed");
+		acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_GET_ALL_ACTIVE_DESCRIPTORS,
+				  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
+		acs_seq_clear(proc);
+		return 0;
+	}
+	return acs_cp_send_reply(proc);
+}
+
+int acs_all_active_step_key(struct acs_procedure *proc)
+{
+	struct net_buf *buf;
+	struct net_buf_simple operand;
+	struct acs_reply_mode reply_mode = acs_proc_reply_mode(proc);
+	int err;
+
+	buf = acs_prepare_reply_buf(proc, reply_mode.encrypted);
+	if (!buf) {
+		return -ENOMEM;
+	}
+
+	net_buf_add_u8(buf, BT_ACS_CP_OPCODE_KEY_DESCRIPTOR_RESPONSE);
+	net_buf_simple_init_with_data(&operand, (void *)all_records_filter,
+				      sizeof(all_records_filter));
+
+	err = acs_key_desc_build_response(&operand, &buf->b, proc->acs_conn);
+
+	if (err == -ENOENT) {
+		acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_GET_ALL_ACTIVE_DESCRIPTORS,
+				  BT_ACS_CP_RESPONSE_SUCCESS);
+		acs_seq_clear(proc);
+		return 0;
+	}
+	if (err) {
+		LOG_ERR("Get All Active Descriptors: Key build failed (%d)", err);
+		acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_GET_ALL_ACTIVE_DESCRIPTORS,
+				  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
+		acs_seq_clear(proc);
+		return 0;
+	}
+	return acs_cp_send_reply(proc);
+}
+
+int acs_all_active_step_rc(struct acs_procedure *proc)
+{
+	int err = acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_GET_ALL_ACTIVE_DESCRIPTORS,
+				    BT_ACS_CP_RESPONSE_SUCCESS);
+
+	acs_seq_clear(proc);
+	return err;
+}
+
+int acs_cp_all_active_get(struct acs_procedure *proc)
+{
+	struct net_buf *buf;
+	struct acs_rmap_get_descriptor_req rm_operand;
+	struct acs_reply_mode reply_mode = acs_proc_reply_mode(proc);
+	int err;
+
+	buf = acs_prepare_reply_buf(proc, reply_mode.encrypted);
+	if (buf == NULL) {
+		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_GET_ALL_ACTIVE_DESCRIPTORS,
+					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
+	}
+	net_buf_add_u8(buf, BT_ACS_CP_OPCODE_RESTRICTION_MAP_DESCRIPTOR_RESPONSE);
+
+	rm_operand.map_id = proc->acs_conn->restriction_map_id;
+	rm_operand.resource_handle_filter = ACS_RMAP_FILTER_ALL;
+	err = acs_rmap_build_descriptor_response(&rm_operand, &buf->b);
+	if (err != 0) {
+		LOG_ERR("Get All Active Descriptors: RMAP build failed (%d)", err);
+		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_GET_ALL_ACTIVE_DESCRIPTORS,
+					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
+	}
+
+	proc->seq_state = ACS_CP_SEQ_ALL_ACTIVE_ISC;
+
+	err = acs_cp_send_reply(proc);
+	if (err) {
+		acs_seq_abort(proc);
+		LOG_WRN("RMAP indication send failed (%d)", err);
+	}
+	return err;
+}
+
+#endif /* CONFIG_BT_ACS_DESCRIPTORS */

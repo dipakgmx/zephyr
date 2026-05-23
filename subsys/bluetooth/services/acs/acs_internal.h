@@ -65,7 +65,6 @@ struct net_buf *acs_buf_alloc(k_timeout_t timeout);
  */
 void acs_buf_free(struct net_buf *buf);
 
-
 const struct bt_gatt_attr *acs_attr_status(void);
 const struct bt_gatt_attr *acs_attr_cp(void);
 #if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_NOTIFICATION)
@@ -95,7 +94,6 @@ void acs_doi_queue_init(struct bt_acs_conn *acs_conn);
 void acs_doi_queue_submit(struct bt_acs_conn *acs_conn);
 #endif
 
-
 /** @brief Return true if the ACS service has been initialised. */
 bool acs_is_initialized(void);
 
@@ -104,7 +102,6 @@ const struct bt_acs_cb *acs_cb_get(void);
 
 /** @brief Return the dedicated ACS workqueue. */
 struct k_work_q *acs_get_wq(void);
-
 
 /**
  * @brief Return per-connection ACS state at pool @p index.
@@ -134,8 +131,6 @@ void acs_session_cache_clear_peer(const bt_addr_le_t *addr);
 /** @brief Clear all RAM session cache entries except the one for @p keep_addr. */
 void acs_session_cache_clear_all_except(const bt_addr_le_t *keep_addr);
 
-/* ---- Session persistence (bond-backed PSA storage) ---------------------- */
-
 #if defined(CONFIG_BT_SETTINGS)
 /** @brief Persist the parent ACS key for @p conn to PSA persistent storage. */
 void acs_session_store(struct bt_conn const *conn, struct bt_acs_conn const *acs_conn);
@@ -152,8 +147,6 @@ void acs_session_restore(struct bt_conn *conn, struct bt_acs_conn *acs_conn);
 /** @brief Register ACS's internal bond/auth-info callback. */
 void acs_session_register_auth_info_cb(void);
 #endif /* CONFIG_BT_SETTINGS */
-
-/* ---- GATT authorization policy ----------------------------------------- */
 
 #if IS_ENABLED(CONFIG_BT_ACS_GATT_AUTHORIZATION)
 /** @brief Mark all protected CCCDs as requiring authorisation in the GATT table. */

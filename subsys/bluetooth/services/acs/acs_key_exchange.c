@@ -57,7 +57,7 @@ struct bt_acs_runtime_key_state *acs_key_exchange_established_key(struct bt_acs_
 	return NULL;
 }
 
-static int kex_step_success_response(struct acs_procedure *proc)
+int acs_key_exchange_step_response(struct acs_procedure *proc, uint8_t status)
 {
 	struct bt_acs_conn *acs_conn = proc->acs_conn;
 	struct acs_reply_mode reply_mode = acs_proc_reply_mode(proc);
@@ -71,7 +71,7 @@ static int kex_step_success_response(struct acs_procedure *proc)
 
 	key_id = sys_le16_to_cpu(acs_conn->crypto.kex->start_kex.key_id);
 	sys_put_le16(key_id, &payload[0]);
-	payload[2] = 0x00;
+	payload[2] = status;
 
 	buf = acs_prepare_reply_buf(proc, reply_mode.encrypted);
 	if (!buf) {
@@ -83,7 +83,7 @@ static int kex_step_success_response(struct acs_procedure *proc)
 	return acs_cp_send_reply(proc);
 }
 
-static int kex_step_status(struct acs_procedure *proc)
+int acs_key_exchange_step_success_status(struct acs_procedure *proc)
 {
 	struct bt_acs_conn *acs_conn = proc->acs_conn;
 
@@ -111,84 +111,6 @@ static int kex_step_status(struct acs_procedure *proc)
 	acs_seq_clear(proc);
 	acs_status_indicate(acs_conn->conn);
 	return 0;
-}
-
-static void kex_on_abort(struct acs_procedure *proc)
-{
-	struct bt_acs_conn *acs_conn = proc ? proc->acs_conn : NULL;
-
-	if (!acs_conn || !acs_kex_in_progress(acs_conn)) {
-		return;
-	}
-
-	acs_key_exchange_abort(acs_conn);
-}
-
-static int kex_step_fail_response(struct acs_procedure *proc)
-{
-	struct bt_acs_conn *acs_conn = proc->acs_conn;
-	struct acs_reply_mode reply_mode = acs_proc_reply_mode(proc);
-	uint8_t payload[3];
-	uint16_t key_id;
-	struct net_buf *buf;
-
-	if (!acs_conn || !acs_conn->crypto.kex) {
-		return -EINVAL;
-	}
-
-	key_id = sys_le16_to_cpu(acs_conn->crypto.kex->start_kex.key_id);
-	sys_put_le16(key_id, &payload[0]);
-	payload[2] = 0x01;
-
-	buf = acs_prepare_reply_buf(proc, reply_mode.encrypted);
-	if (!buf) {
-		return -ENOMEM;
-	}
-
-	net_buf_add_u8(buf, BT_ACS_CP_OPCODE_KEY_EXCHANGE_RESPONSE);
-	net_buf_add_mem(buf, payload, sizeof(payload));
-	return acs_cp_send_reply(proc);
-}
-
-static int kex_step_fail_cleanup(struct acs_procedure *proc)
-{
-	struct bt_acs_conn *acs_conn = proc->acs_conn;
-
-	acs_key_exchange_abort(acs_conn);
-	acs_seq_clear(proc);
-	return 0;
-}
-
-static const acs_seq_step_fn kex_success_steps[] = {
-	kex_step_success_response,
-	kex_step_status,
-};
-
-static const struct acs_seq_desc kex_success_seq = {
-	.steps = kex_success_steps,
-	.step_count = ARRAY_SIZE(kex_success_steps),
-	.on_abort = kex_on_abort,
-};
-
-static const acs_seq_step_fn kex_fail_steps[] = {
-	kex_step_fail_response,
-	kex_step_fail_cleanup,
-};
-
-static const struct acs_seq_desc kex_fail_seq = {
-	.steps = kex_fail_steps,
-	.step_count = ARRAY_SIZE(kex_fail_steps),
-	.on_abort = kex_on_abort,
-};
-
-const struct acs_seq_desc *acs_key_exchange_success_seq(void)
-{
-	return &kex_success_seq;
-}
-
-const struct acs_seq_desc *acs_key_exchange_fail_seq(void)
-{
-	return &kex_fail_seq;
 }
 
 static int check_expected_opcode(struct bt_acs_conn const *acs_conn, uint8_t expected_opcode)
@@ -276,11 +198,10 @@ void acs_key_exchange_abort(struct bt_acs_conn *acs_conn)
 #define ACS_PSA_KEY_BITS   ACS_PSA_KEY_BITS_P256
 #endif
 
-#if IS_ENABLED(CONFIG_BT_ACS_KDF_HKDF_SHA384) || \
-    IS_ENABLED(CONFIG_BT_ACS_KDF_HKDF_SHA384_WITH_INFO)
+#if IS_ENABLED(CONFIG_BT_ACS_KDF_HKDF_SHA384) || IS_ENABLED(CONFIG_BT_ACS_KDF_HKDF_SHA384_WITH_INFO)
 #define ACS_PSA_HKDF_ALG PSA_ALG_HKDF(PSA_ALG_SHA_384)
-#elif IS_ENABLED(CONFIG_BT_ACS_KDF_HKDF_SHA512) || \
-      IS_ENABLED(CONFIG_BT_ACS_KDF_HKDF_SHA512_WITH_INFO)
+#elif IS_ENABLED(CONFIG_BT_ACS_KDF_HKDF_SHA512) ||                                                 \
+	IS_ENABLED(CONFIG_BT_ACS_KDF_HKDF_SHA512_WITH_INFO)
 #define ACS_PSA_HKDF_ALG PSA_ALG_HKDF(PSA_ALG_SHA_512)
 #else
 #define ACS_PSA_HKDF_ALG PSA_ALG_HKDF(PSA_ALG_SHA_256)
@@ -420,8 +341,8 @@ static int acs_key_desc_runtime_derive_nonce_state(struct bt_acs_key_desc_runtim
 		key_desc_runtime->client_nonce_set = false;
 
 		label_len = acs_nonce_label_build(key_id, 'e', label, sizeof(label));
-		ret = acs_hkdf(ACS_PSA_HKDF_ALG, NULL, 0U, key_material, key_material_len,
-			       label, label_len, key_desc_runtime->server_nonce_fixed, prefix_size);
+		ret = acs_hkdf(ACS_PSA_HKDF_ALG, NULL, 0U, key_material, key_material_len, label,
+			       label_len, key_desc_runtime->server_nonce_fixed, prefix_size);
 		if (ret != 0) {
 			return ret;
 		}
@@ -686,9 +607,9 @@ int acs_crypto_derive_session_key(struct bt_acs_conn *acs_conn)
 	memcpy(salt, acs_conn->crypto.kex->server_random, ACS_CONFIRM_VALUE_SIZE);
 	memcpy(salt + ACS_CONFIRM_VALUE_SIZE, client_random_be, ACS_CONFIRM_VALUE_SIZE);
 
-	ret = acs_hkdf(ACS_PSA_HKDF_ALG, salt, sizeof(salt),
-		       acs_conn->crypto.kex->shared_secret, acs_conn->crypto.kex->key_mat_len, info,
-		       sizeof(info) - 1, exchange_key->key, CONFIG_BT_ACS_SESSION_KEY_SIZE);
+	ret = acs_hkdf(ACS_PSA_HKDF_ALG, salt, sizeof(salt), acs_conn->crypto.kex->shared_secret,
+		       acs_conn->crypto.kex->key_mat_len, info, sizeof(info) - 1, exchange_key->key,
+		       CONFIG_BT_ACS_SESSION_KEY_SIZE);
 
 	if (ret != 0) {
 		LOG_ERR("HKDF session key derivation failed: %d", ret);

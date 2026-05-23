@@ -20,7 +20,7 @@
  *   - reply staging and submission (acs_prepare_reply_buf, acs_tx_submit,
  *     acs_cp_send_reply, acs_cp_rsp_status)
  *   - the CP opcode dispatcher (acs_cp_dispatch) and its plain-CP indication
- *     completion callback (acs_cp_completion_cb)
+ *     completion callback (acs_cp_ind_cb)
  *
  * Crypto-side helpers live in acs_crypto.h; transport entry points live in
  * acs_runtime.h.
@@ -38,7 +38,6 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-
 
 /**
  * @brief Allocate a protected resource request from the per-connection pool.
@@ -78,22 +77,10 @@ struct bt_conn *acs_procedure_conn(const struct acs_procedure *req);
 /** @brief Return the protected resource ATT handle from @p req. */
 uint16_t acs_procedure_resource_handle(const struct acs_procedure *req);
 
-
-/** @brief Return true if a multi-step reply sequence is active on @p proc. */
-bool acs_seq_active(struct acs_procedure *proc);
-
-/**
- * @brief Start a multi-step reply sequence on @p proc.
- *
- * @param proc Active execution proc.
- * @param desc  Sequence descriptor (step table + metadata).
- */
-void acs_seq_begin(struct acs_procedure *proc, const struct acs_seq_desc *desc);
-
 /** @brief Mark the active reply sequence as complete and release state. */
 void acs_seq_clear(struct acs_procedure *proc);
 
-/** @brief Abort the active reply sequence, invoking on_abort if set. */
+/** @brief Abort the active reply sequence, invoking cleanup if needed. */
 void acs_seq_abort(struct acs_procedure *proc);
 
 /**
@@ -127,7 +114,7 @@ struct net_buf *acs_prepare_reply_buf(struct acs_procedure *proc, bool encrypted
  *
  * Decides the transport family from @p reply->channel:
  *   - @ref ACS_REPLY_CP  — plain segmented CP indication on @c acs_conn->cp_tx,
- *     completion via @ref acs_cp_completion_cb. @p proc must be the plain-CP
+ *     completion via @ref acs_cp_ind_cb. @p proc must be the plain-CP
  *     singleton.
  *   - @ref ACS_REPLY_DOI — encrypts in place, queues on @c indicate_fifo and
  *     drains it; completion via @c data_tx_completion_cb. @p proc must
@@ -172,8 +159,6 @@ int acs_cp_send_reply(struct acs_procedure *proc);
  */
 int acs_cp_rsp_status(struct acs_procedure *proc, uint8_t req_opcode, uint8_t code);
 
-/* ---- CP opcode dispatch ------------------------------------------------- */
-
 /**
  * @brief Dispatch a reassembled CP payload to the opcode handler.
  *
@@ -192,8 +177,7 @@ int acs_cp_dispatch(struct acs_frame *frame, struct bt_acs_conn *acs_conn,
  * Exposed so the data-out channel layer can pass it as the completion handler
  * for plain-CP segmented indications.
  */
-void acs_cp_completion_cb(struct bt_conn *conn, const struct bt_gatt_attr *attr, int err,
-			  void *user_data);
+void acs_cp_ind_cb(struct bt_conn *conn, const struct bt_gatt_attr *attr, int err, void *user_data);
 
 #ifdef __cplusplus
 }

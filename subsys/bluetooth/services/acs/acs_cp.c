@@ -24,8 +24,7 @@ LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
 /* Definition below; non-static so the data-out channel layer can pass it
  * as the seg-TX completion callback for plain-CP indications.
  */
-void acs_cp_completion_cb(struct bt_conn *conn, const struct bt_gatt_attr *attr, int err,
-			  void *user_data);
+void acs_cp_ind_cb(struct bt_conn *conn, const struct bt_gatt_attr *attr, int err, void *user_data);
 
 static uint16_t acs_cp_min_operand_size(uint8_t opcode)
 {
@@ -150,8 +149,7 @@ int acs_cp_rsp_status(struct acs_procedure *proc, uint8_t req_opcode, uint8_t co
  * @param err       0 on confirm, negative errno if the indication failed.
  * @param user_data Unused.
  */
-void acs_cp_completion_cb(struct bt_conn *conn, const struct bt_gatt_attr *attr, int err,
-			  void *user_data)
+void acs_cp_ind_cb(struct bt_conn *conn, const struct bt_gatt_attr *attr, int err, void *user_data)
 {
 	struct net_buf *rsp_buf = user_data;
 	struct bt_acs_conn *acs_conn = acs_conn_lookup(conn);
@@ -201,7 +199,7 @@ void acs_cp_completion_cb(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 
 	acs_seq_on_confirm(&acs_conn->plain_cp_proc);
 
-	if (acs_conn->plain_cp_proc.reply_seq.desc == NULL) {
+	if (acs_conn->plain_cp_proc.seq_state == ACS_CP_SEQ_IDLE) {
 		atomic_set(&acs_conn->plain_cp_proc.plain_cp.locked, 0);
 	}
 }
@@ -336,5 +334,97 @@ int acs_cp_dispatch(struct acs_frame *frame, struct bt_acs_conn *acs_conn,
 	default:
 		LOG_WRN("Unsupported opcode: 0x%02x", opcode);
 		return acs_cp_rsp_status(proc, opcode, BT_ACS_CP_RESPONSE_OPCODE_NOT_SUPPORTED);
+	}
+}
+
+void acs_seq_clear(struct acs_procedure *proc)
+{
+	bool was_active;
+
+	if (!proc) {
+		return;
+	}
+
+	was_active = proc->seq_state != ACS_CP_SEQ_IDLE;
+	proc->seq_state = ACS_CP_SEQ_IDLE;
+
+	if (was_active && proc->kind == ACS_PROC_KIND_PROTECTED_REQ) {
+		acs_procedure_release_owner(proc);
+	}
+}
+
+void acs_seq_abort(struct acs_procedure *proc)
+{
+	if (!proc || proc->seq_state == ACS_CP_SEQ_IDLE) {
+		return;
+	}
+
+	switch (proc->seq_state) {
+	case ACS_CP_SEQ_KEX_SUCCESS_RSP:
+	case ACS_CP_SEQ_KEX_SUCCESS_STATUS:
+	case ACS_CP_SEQ_KEX_FAIL_RSP:
+	case ACS_CP_SEQ_KEX_FAIL_CLEANUP:
+		if (proc->acs_conn && acs_kex_in_progress(proc->acs_conn)) {
+			acs_key_exchange_abort(proc->acs_conn);
+		}
+		break;
+	default:
+		break;
+	}
+
+	acs_seq_clear(proc);
+}
+
+static int acs_seq_dispatch_step(struct acs_procedure *proc)
+{
+	switch (proc->seq_state) {
+#if IS_ENABLED(CONFIG_BT_ACS_ANY_KEY_EXCHANGE)
+	case ACS_CP_SEQ_KEX_SUCCESS_RSP:
+		proc->seq_state = ACS_CP_SEQ_KEX_SUCCESS_STATUS;
+		return acs_key_exchange_step_response(proc, 0x00);
+	case ACS_CP_SEQ_KEX_SUCCESS_STATUS:
+		return acs_key_exchange_step_success_status(proc);
+	case ACS_CP_SEQ_KEX_FAIL_RSP:
+		proc->seq_state = ACS_CP_SEQ_KEX_FAIL_CLEANUP;
+		return acs_key_exchange_step_response(proc, 0x01);
+	case ACS_CP_SEQ_KEX_FAIL_CLEANUP:
+		acs_key_exchange_abort(proc->acs_conn);
+		acs_seq_clear(proc);
+		return 0;
+#endif
+#if IS_ENABLED(CONFIG_BT_ACS_DESCRIPTORS)
+	case ACS_CP_SEQ_ALL_ACTIVE_ISC:
+		proc->seq_state = ACS_CP_SEQ_ALL_ACTIVE_KEY;
+		return acs_all_active_step_isc(proc);
+	case ACS_CP_SEQ_ALL_ACTIVE_KEY:
+		proc->seq_state = ACS_CP_SEQ_ALL_ACTIVE_RC;
+		return acs_all_active_step_key(proc);
+	case ACS_CP_SEQ_ALL_ACTIVE_RC:
+		return acs_all_active_step_rc(proc);
+#endif
+#if IS_ENABLED(CONFIG_BT_ACS_INVALIDATE_ESTABLISHED_SECURITY)
+	case ACS_CP_SEQ_INVALIDATE_SELF:
+		acs_seq_clear(proc);
+		bt_acs_invalidate_security(proc->acs_conn->conn);
+		return 0;
+#endif
+	default:
+		acs_seq_clear(proc);
+		return 0;
+	}
+}
+
+void acs_seq_on_confirm(struct acs_procedure *proc)
+{
+	int err;
+
+	if (!proc || !proc->acs_conn || proc->seq_state == ACS_CP_SEQ_IDLE) {
+		return;
+	}
+
+	err = acs_seq_dispatch_step(proc);
+	if (err) {
+		LOG_WRN("Reply sequence step %u failed: %d", proc->seq_state, err);
+		acs_seq_abort(proc);
 	}
 }

@@ -232,7 +232,7 @@ static void data_tx_doi_drain_work(struct k_work *work)
 	struct bt_conn *conn = acs_conn->conn;
 
 	if (req) {
-		if (!conn || !req->reply_seq.desc) {
+		if (!conn || req->seq_state == ACS_CP_SEQ_IDLE) {
 			/* Sequence was aborted or connection lost — the ALLOC ref was
 			 * deferred from acs_runtime_dispatch_protected_cp_frame(), release it here.
 			 */
@@ -274,7 +274,7 @@ static void data_tx_completion_cb(struct bt_conn *conn, const struct bt_gatt_att
 {
 	struct acs_procedure *req = user_data;
 	struct bt_acs_conn *acs_conn = req ? req->acs_conn : NULL;
-	bool continue_reply_seq = req && req->reply_seq.desc != NULL;
+	bool continue_reply_seq = req && req->seq_state != ACS_CP_SEQ_IDLE;
 
 	ARG_UNUSED(attr);
 
@@ -403,7 +403,7 @@ static int acs_tx_submit_plain_cp(struct acs_procedure *proc)
 	 * it.  The seg-TX engine borrows the buffer but does not own it.
 	 */
 	err = acs_seg_tx_send(&acs_conn->cp_tx, acs_conn->conn, acs_conn->attr_cp, rsp_buf,
-			      acs_cp_completion_cb, rsp_buf);
+			      acs_cp_ind_cb, rsp_buf);
 	if (err) {
 		atomic_set(&acs_conn->plain_cp_proc.plain_cp.locked, 0);
 		acs_buf_free(rsp_buf);
