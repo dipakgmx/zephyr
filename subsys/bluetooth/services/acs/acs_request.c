@@ -15,6 +15,7 @@
 #include <zephyr/bluetooth/services/acs.h>
 
 #include "acs_internal.h"
+#include "acs_rhandle.h"
 
 #include <zephyr/logging/log.h>
 LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
@@ -25,29 +26,6 @@ K_MEM_SLAB_DEFINE_STATIC(acs_req_ctx_slab, sizeof(struct acs_procedure), ACS_REQ
 			 __alignof__(struct acs_procedure));
 
 static void acs_req_work_handler(struct k_work *work);
-
-/**
- * Context for locating a characteristic declaration and value attribute by
- * their ATT handles via bt_gatt_foreach_attr().
- */
-struct acs_attr_ctx {
-	uint16_t value_handle;
-	const struct bt_gatt_attr *decl;  /**< declaration attribute (value_handle - 1) */
-	const struct bt_gatt_attr *value; /**< value attribute (value_handle) */
-};
-
-static uint8_t acs_find_char_attrs_cb(const struct bt_gatt_attr *attr, uint16_t handle,
-				      void *user_data)
-{
-	struct acs_attr_ctx *ctx = user_data;
-
-	if (handle == ctx->value_handle - 1U) {
-		ctx->decl = attr;
-	} else if (handle == ctx->value_handle) {
-		ctx->value = attr;
-	}
-	return BT_GATT_ITER_CONTINUE;
-}
 
 void acs_procedure_ref(struct acs_procedure *req, enum acs_procedure_ref_who who)
 {
@@ -61,26 +39,6 @@ void acs_procedure_ref(struct acs_procedure *req, enum acs_procedure_ref_who who
 	atomic_inc(&req->lifetime.ref_count);
 }
 
-/**
- * @brief Return a request context to the correct slab once all references are gone.
- */
-static void acs_req_free(struct acs_procedure *req)
-{
-	/* Release the request-input buffer; always owned by the request once
-	 * the protected dispatcher transferred it from acs_conn->data_rx.buf.
-	 */
-	if (req->buffers.request_buf) {
-		acs_buf_free(req->buffers.request_buf);
-	}
-
-	/* Release response staging buffer */
-	if (req->buffers.response_buf) {
-		acs_buf_free(req->buffers.response_buf);
-	}
-
-	k_mem_slab_free(&acs_req_ctx_slab, req);
-}
-
 static void acs_procedure_destroy(struct acs_procedure *req)
 {
 	if (req->registration.pending_slot) {
@@ -88,7 +46,15 @@ static void acs_procedure_destroy(struct acs_procedure *req)
 		req->registration.pending_slot = NULL;
 	}
 
-	acs_req_free(req);
+	if (req->buffers.request_buf) {
+		acs_buf_free(req->buffers.request_buf);
+	}
+
+	if (req->buffers.response_buf) {
+		acs_buf_free(req->buffers.response_buf);
+	}
+
+	k_mem_slab_free(&acs_req_ctx_slab, req);
 }
 
 void acs_procedure_unref(struct acs_procedure *req, enum acs_procedure_ref_who who)
@@ -207,7 +173,7 @@ static int acs_auto_respond(struct acs_procedure *req)
 	uint8_t props = 0;
 	struct bt_conn *conn = acs_procedure_conn(req);
 	uint16_t resource_handle = acs_procedure_resource_handle(req);
-	struct acs_attr_ctx ctx = {
+	struct acs_char_attr_ctx ctx = {
 		.value_handle = resource_handle,
 		.decl = NULL,
 		.value = NULL,

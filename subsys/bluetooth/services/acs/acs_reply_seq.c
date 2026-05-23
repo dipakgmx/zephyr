@@ -11,29 +11,14 @@
 #include <zephyr/logging/log.h>
 LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
 
-/**
- * @brief Resolve the reply-sequence state on a procedure.
- *
- * Both plain-CP and protected procedures share the same @c reply_seq home on
- * the unified @c acs_procedure object — single source of truth.
- */
-static struct acs_reply_seq_state *acs_seq_state(struct acs_procedure *proc)
-{
-	return proc ? &proc->reply_seq : NULL;
-}
-
 bool acs_seq_active(struct acs_procedure *proc)
 {
-	struct acs_reply_seq_state const *seq = acs_seq_state(proc);
-
-	return seq && seq->desc != NULL;
+	return proc && proc->reply_seq.desc != NULL;
 }
 
 void acs_seq_begin(struct acs_procedure *proc, const struct acs_seq_desc *desc)
 {
-	struct acs_reply_seq_state *seq = acs_seq_state(proc);
-
-	__ASSERT_NO_MSG(seq != NULL);
+	__ASSERT_NO_MSG(proc != NULL);
 
 	/* The ALLOC ref keeps the request alive for the full duration of the
 	 * reply sequence. acs_runtime_dispatch_protected_cp_frame() defers
@@ -41,21 +26,20 @@ void acs_seq_begin(struct acs_procedure *proc, const struct acs_seq_desc *desc)
 	 * and acs_seq_clear() calls release_owner() when the sequence completes
 	 * or aborts.
 	 */
-	seq->desc = desc;
-	seq->step = 0;
+	proc->reply_seq.desc = desc;
+	proc->reply_seq.step = 0;
 }
 
 void acs_seq_clear(struct acs_procedure *proc)
 {
-	struct acs_reply_seq_state *seq = acs_seq_state(proc);
 	bool was_active;
 
-	if (!seq) {
+	if (!proc) {
 		return;
 	}
 
-	was_active = seq->desc != NULL;
-	memset(seq, 0, sizeof(*seq));
+	was_active = proc->reply_seq.desc != NULL;
+	memset(&proc->reply_seq, 0, sizeof(proc->reply_seq));
 
 	/* The sequence owned the ALLOC ref for its duration (deferred from
 	 * acs_runtime_dispatch_protected_cp_frame). Release it now that the
@@ -69,10 +53,8 @@ void acs_seq_clear(struct acs_procedure *proc)
 
 void acs_seq_abort(struct acs_procedure *proc)
 {
-	struct acs_reply_seq_state const *seq = acs_seq_state(proc);
-
-	if (seq && seq->desc && seq->desc->on_abort) {
-		seq->desc->on_abort(proc);
+	if (proc && proc->reply_seq.desc && proc->reply_seq.desc->on_abort) {
+		proc->reply_seq.desc->on_abort(proc);
 	}
 
 	acs_seq_clear(proc);
@@ -95,8 +77,8 @@ void acs_seq_on_confirm(struct acs_procedure *proc)
 		return;
 	}
 
-	seq = acs_seq_state(proc);
-	if (!seq || !seq->desc || seq->step >= seq->desc->step_count) {
+	seq = &proc->reply_seq;
+	if (!seq->desc || seq->step >= seq->desc->step_count) {
 		acs_seq_clear(proc);
 		return;
 	}

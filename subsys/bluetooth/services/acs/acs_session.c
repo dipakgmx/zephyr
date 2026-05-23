@@ -18,6 +18,14 @@
 #include "common/bt_str.h"
 #include "acs_internal.h"
 
+#if defined(CONFIG_BT_SETTINGS)
+#include <zephyr/psa/key_ids.h>
+#include <psa/crypto.h>
+
+#include "host/settings.h"
+#include "acs_key_desc.h"
+#endif /* CONFIG_BT_SETTINGS */
+
 LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
 
 /*
@@ -204,12 +212,6 @@ void acs_session_cache_clear_all_except(const bt_addr_le_t *keep_addr)
 }
 
 #if defined(CONFIG_BT_SETTINGS)
-
-#include <zephyr/psa/key_ids.h>
-#include <psa/crypto.h>
-
-#include "host/settings.h"
-#include "acs_key_desc.h"
 
 struct acs_persistent_meta {
 	uint16_t parent_key_id;

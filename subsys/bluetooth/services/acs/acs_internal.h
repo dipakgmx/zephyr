@@ -65,7 +65,6 @@ struct net_buf *acs_buf_alloc(k_timeout_t timeout);
  */
 void acs_buf_free(struct net_buf *buf);
 
-/* ---- GATT attribute accessors + CCC checks ------------------------------ */
 
 const struct bt_gatt_attr *acs_attr_status(void);
 const struct bt_gatt_attr *acs_attr_cp(void);
@@ -96,7 +95,6 @@ void acs_doi_queue_init(struct bt_acs_conn *acs_conn);
 void acs_doi_queue_submit(struct bt_acs_conn *acs_conn);
 #endif
 
-/* ---- Service init + callbacks ------------------------------------------ */
 
 /** @brief Return true if the ACS service has been initialised. */
 bool acs_is_initialized(void);
@@ -107,7 +105,6 @@ const struct bt_acs_cb *acs_cb_get(void);
 /** @brief Return the dedicated ACS workqueue. */
 struct k_work_q *acs_get_wq(void);
 
-/* ---- Connection state lookup -------------------------------------------- */
 
 /**
  * @brief Return per-connection ACS state at pool @p index.

@@ -72,4 +72,12 @@ uint16_t acs_rhandle_find_char_handle(const struct bt_uuid *char_uuid);
  */
 uint16_t acs_rhandle_find_cccd_for_char(uint16_t char_value_handle);
 
+struct acs_char_attr_ctx {
+	uint16_t value_handle;
+	const struct bt_gatt_attr *decl;
+	const struct bt_gatt_attr *value;
+};
+
+uint8_t acs_find_char_attrs_cb(const struct bt_gatt_attr *attr, uint16_t handle, void *user_data);
+
 #endif /* BT_GATT_ACS_RHANDLE_H_ */

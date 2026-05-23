@@ -15,6 +15,18 @@
 #include <zephyr/logging/log.h>
 LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
 
+uint8_t acs_find_char_attrs_cb(const struct bt_gatt_attr *attr, uint16_t handle, void *user_data)
+{
+	struct acs_char_attr_ctx *ctx = user_data;
+
+	if (handle == ctx->value_handle - 1U) {
+		ctx->decl = attr;
+	} else if (handle == ctx->value_handle) {
+		ctx->value = attr;
+	}
+	return BT_GATT_ITER_CONTINUE;
+}
+
 static uint8_t uuid_wire_size(const struct bt_uuid *uuid)
 {
 	return uuid->type == BT_UUID_TYPE_16 ? 2u : 16u;

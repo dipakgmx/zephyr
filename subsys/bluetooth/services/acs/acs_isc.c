@@ -66,18 +66,6 @@ const struct bt_acs_isc_record *acs_isc_lookup(uint16_t isc_id)
 	return NULL;
 }
 
-static bool requires_key_id(const uint8_t *controls, uint8_t num)
-{
-	for (int i = 0; i < num; i++) {
-		if (controls[i] == ACS_CTRL_AUTH || controls[i] == ACS_CTRL_ENC ||
-		    controls[i] == ACS_CTRL_AUTH_ENC || controls[i] == ACS_CTRL_AUTH_ENC_AD ||
-		    controls[i] == ACS_CTRL_MAC) {
-			return true;
-		}
-	}
-	return false;
-}
-
 int acs_isc_build_response(struct net_buf_simple *operand, struct net_buf_simple *buf)
 {
 	uint16_t filter_id;
@@ -124,7 +112,17 @@ int acs_isc_build_response(struct net_buf_simple *operand, struct net_buf_simple
 			return -EINVAL;
 		}
 
-		bool needs_key = requires_key_id(rec->controls, rec->num_controls);
+		bool needs_key = false;
+
+		for (uint8_t k = 0; k < rec->num_controls; k++) {
+			if (rec->controls[k] == ACS_CTRL_AUTH || rec->controls[k] == ACS_CTRL_ENC ||
+			    rec->controls[k] == ACS_CTRL_AUTH_ENC ||
+			    rec->controls[k] == ACS_CTRL_AUTH_ENC_AD ||
+			    rec->controls[k] == ACS_CTRL_MAC) {
+				needs_key = true;
+				break;
+			}
+		}
 
 		LOG_DBG("ISC record: isc_id=0x%04x num_controls=%u needs_key=%d "
 			"key_id=0x%04x",

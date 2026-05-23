@@ -39,7 +39,6 @@
 extern "C" {
 #endif
 
-/* ---- Procedure lifecycle ------------------------------------------------- */
 
 /**
  * @brief Allocate a protected resource request from the per-connection pool.
@@ -79,7 +78,6 @@ struct bt_conn *acs_procedure_conn(const struct acs_procedure *req);
 /** @brief Return the protected resource ATT handle from @p req. */
 uint16_t acs_procedure_resource_handle(const struct acs_procedure *req);
 
-/* ---- Reply sequence (multi-step replies) -------------------------------- */
 
 /** @brief Return true if a multi-step reply sequence is active on @p proc. */
 bool acs_seq_active(struct acs_procedure *proc);

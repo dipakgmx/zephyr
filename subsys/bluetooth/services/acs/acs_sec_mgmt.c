@@ -47,17 +47,6 @@ static inline bool is_active_key_id(uint16_t key_id)
 	       ((ACS_ACTIVE_KEY_ID_MASK & BIT(key_id)) != 0U);
 }
 
-static bool current_key_is_valid(struct bt_acs_conn *acs_conn, uint16_t key_id)
-{
-	struct bt_acs_runtime_key_state *current_key;
-
-	if (acs_crypto_current_key_lookup(acs_conn, key_id, &current_key) != 0) {
-		return false;
-	}
-
-	return current_key->psa_key_id != 0U;
-}
-
 static int invalidate_self_step(struct acs_procedure *proc)
 {
 	struct bt_acs_conn *acs_conn = proc->acs_conn;
@@ -238,7 +227,10 @@ int acs_sec_mgmt_invalidate_key(struct acs_procedure *proc, struct net_buf_simpl
 		}
 #endif
 	} else if (is_active_key_id(key_id)) {
-		if (!current_key_is_valid(proc->acs_conn, key_id)) {
+		struct bt_acs_runtime_key_state *current_key;
+
+		if (acs_crypto_current_key_lookup(proc->acs_conn, key_id, &current_key) != 0 ||
+		    current_key->psa_key_id == 0U) {
 			response_code = BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE;
 		} else {
 			ret = bt_acs_invalidate_security(proc->acs_conn->conn);

@@ -50,13 +50,6 @@ static const char *acs_direction_str(enum bt_acs_direction direction)
 	}
 }
 
-/* Check if a handle is protected in the active restriction map for the given direction. */
-static bool acs_handle_is_protected(uint16_t restriction_map_id, uint16_t att_handle,
-				    enum bt_acs_direction direction)
-{
-	return acs_rmap_char_is_protected(restriction_map_id, att_handle, direction);
-}
-
 #endif /* CONFIG_BT_ACS_FEAT_AUTHORIZATION */
 
 bool bt_acs_policy_is_permitted(struct bt_conn *conn, uint16_t att_handle,
@@ -79,7 +72,7 @@ bool bt_acs_policy_is_permitted(struct bt_conn *conn, uint16_t att_handle,
 	}
 
 #if IS_ENABLED(CONFIG_BT_ACS_FEAT_AUTHORIZATION)
-	if (acs_handle_is_protected(acs_conn->restriction_map_id, att_handle, direction)) {
+	if (acs_rmap_char_is_protected(acs_conn->restriction_map_id, att_handle, direction)) {
 		char uuid_str[BT_UUID_STR_LEN];
 		const struct bt_uuid *attr_uuid = NULL;
 

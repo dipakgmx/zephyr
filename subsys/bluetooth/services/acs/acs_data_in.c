@@ -15,34 +15,13 @@
 
 #include "acs_internal.h"
 #include "acs_isc.h"
+#include "acs_rhandle.h"
 
 #include <zephyr/logging/log.h>
 LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
 
 /* Minimum plaintext size after decryption: Protected_Resource_Handle (2 bytes) */
 #define ACS_SECURE_DATA_PLAIN_MIN_SIZE 2
-
-/**
- * Context for locating a characteristic declaration and value attribute by
- * their ATT handles via bt_gatt_foreach_attr().
- */
-struct acs_data_rx_attr_ctx {
-	uint16_t value_handle;
-	const struct bt_gatt_attr *decl;  /**< declaration attribute (value_handle - 1) */
-	const struct bt_gatt_attr *value; /**< value attribute (value_handle) */
-};
-
-static uint64_t acs_get_le_var_counter(const uint8_t *src, size_t len)
-{
-	uint64_t counter = 0U;
-
-	__ASSERT_NO_MSG(src != NULL);
-	__ASSERT_NO_MSG(len <= sizeof(counter));
-
-	sys_get_le(&counter, src, len);
-
-	return counter;
-}
 
 static bool
 acs_nonce_var_matches_runtime_prefix(const uint8_t *nonce_var,
@@ -63,23 +42,10 @@ acs_nonce_var_matches_runtime_prefix(const uint8_t *nonce_var,
 	return memcmp(&nonce_var[counter_size], expected_prefix, prefix_size) == 0;
 }
 
-static uint8_t acs_data_rx_find_char_attrs_cb(const struct bt_gatt_attr *attr, uint16_t handle,
-					      void *user_data)
-{
-	struct acs_data_rx_attr_ctx *ctx = user_data;
-
-	if (handle == ctx->value_handle - 1U) {
-		ctx->decl = attr;
-	} else if (handle == ctx->value_handle) {
-		ctx->value = attr;
-	}
-	return BT_GATT_ITER_CONTINUE;
-}
-
 int acs_require_data_out_subscription(struct bt_conn *conn, uint16_t resource_handle,
 				      uint16_t data_length)
 {
-	struct acs_data_rx_attr_ctx ctx = {
+	struct acs_char_attr_ctx ctx = {
 		.value_handle = resource_handle,
 		.decl = NULL,
 		.value = NULL,
@@ -90,8 +56,7 @@ int acs_require_data_out_subscription(struct bt_conn *conn, uint16_t resource_ha
 		return acs_don_ccc_check(conn);
 	}
 
-	bt_gatt_foreach_attr(resource_handle - 1U, resource_handle, acs_data_rx_find_char_attrs_cb,
-			     &ctx);
+	bt_gatt_foreach_attr(resource_handle - 1U, resource_handle, acs_find_char_attrs_cb, &ctx);
 	if (!ctx.value) {
 		return -ENOENT;
 	}
@@ -164,8 +129,7 @@ static int acs_data_in_validate(struct bt_acs_conn *acs_conn, struct net_buf_sim
 	}
 
 	nonce_var = net_buf_simple_pull_mem(buf, nonce_var_size);
-	*received_counter =
-		acs_get_le_var_counter(nonce_var, acs_key_desc_nonce_counter_size(key_desc));
+	sys_get_le(received_counter, nonce_var, acs_key_desc_nonce_counter_size(key_desc));
 
 	if (!acs_nonce_var_matches_runtime_prefix(nonce_var, *record_state)) {
 		LOG_WRN("received nonce variable prefix does not match runtime state");
