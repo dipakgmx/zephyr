@@ -40,12 +40,14 @@ int acs_crypto_import_current_key(struct bt_acs_runtime_key_state *current_key)
 		&attrs, PSA_ALG_AEAD_WITH_SHORTENED_TAG(PSA_ALG_CCM, CONFIG_BT_ACS_CCM_MAC_SIZE));
 #elif IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_GMAC)
 	psa_set_key_usage_flags(&attrs, PSA_KEY_USAGE_ENCRYPT | PSA_KEY_USAGE_DECRYPT);
-	psa_set_key_algorithm(&attrs,
-			      PSA_ALG_AEAD_WITH_SHORTENED_TAG(PSA_ALG_GCM, ACS_GCM_MAC_SIZE));
+	psa_set_key_algorithm(&attrs, PSA_ALG_AEAD_WITH_SHORTENED_TAG(
+					      PSA_ALG_GCM, PSA_AEAD_TAG_LENGTH(PSA_KEY_TYPE_AES,
+									       128, PSA_ALG_GCM)));
 #else
 	psa_set_key_usage_flags(&attrs, PSA_KEY_USAGE_ENCRYPT | PSA_KEY_USAGE_DECRYPT);
-	psa_set_key_algorithm(&attrs,
-			      PSA_ALG_AEAD_WITH_SHORTENED_TAG(PSA_ALG_GCM, ACS_GCM_MAC_SIZE));
+	psa_set_key_algorithm(&attrs, PSA_ALG_AEAD_WITH_SHORTENED_TAG(
+					      PSA_ALG_GCM, PSA_AEAD_TAG_LENGTH(PSA_KEY_TYPE_AES,
+									       128, PSA_ALG_GCM)));
 #endif
 
 	psa_set_key_lifetime(&attrs, PSA_KEY_LIFETIME_VOLATILE);

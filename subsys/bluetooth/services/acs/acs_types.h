@@ -322,11 +322,11 @@ struct bt_acs_kex_ctx {
 	struct acs_ecdh_pubkey client_pubkey; /**< Client public key */
 	psa_key_id_t ecdh_key_id; /**< PSA key identifier for the server ephemeral private key */
 	struct acs_cp_start_key_exchange_req start_kex; /**< Cached START_KEY_EXCHANGE operand */
-	uint8_t auth_value[ACS_HMAC_SHA256_SIZE];       /**< AuthValue (OOB number / static key) */
-	uint8_t server_random[ACS_HMAC_SHA256_SIZE];    /**< Server random nonce */
-	uint8_t client_random[ACS_HMAC_SHA256_SIZE];    /**< Client random nonce */
-	uint8_t server_confirm[ACS_HMAC_SHA256_SIZE];   /**< Server confirmation code */
-	uint8_t client_confirm[ACS_HMAC_SHA256_SIZE];   /**< Client confirmation code */
+	uint8_t auth_value[ACS_CONFIRM_VALUE_SIZE];     /**< AuthValue (OOB number / static key) */
+	uint8_t server_random[ACS_CONFIRM_VALUE_SIZE];  /**< Server random nonce */
+	uint8_t client_random[ACS_CONFIRM_VALUE_SIZE];  /**< Client random nonce */
+	uint8_t server_confirm[ACS_CONFIRM_VALUE_SIZE]; /**< Server confirmation code */
+	uint8_t client_confirm[ACS_CONFIRM_VALUE_SIZE]; /**< Client confirmation code */
 };
 
 /**

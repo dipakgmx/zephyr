@@ -295,7 +295,7 @@ static psa_algorithm_t acs_get_psa_hkdf_alg(void)
 }
 
 static int acs_hmac_sha256(const uint8_t *key, size_t key_len, const uint8_t *msg, size_t msg_len,
-			   uint8_t out[ACS_HMAC_SHA256_SIZE])
+			   uint8_t out[PSA_HASH_LENGTH(PSA_ALG_SHA_256)])
 {
 	psa_key_attributes_t attrs = PSA_KEY_ATTRIBUTES_INIT;
 	psa_status_t status;
@@ -315,7 +315,7 @@ static int acs_hmac_sha256(const uint8_t *key, size_t key_len, const uint8_t *ms
 	}
 
 	status = psa_mac_compute(hmac_key, PSA_ALG_HMAC(PSA_ALG_SHA_256), msg, msg_len, out,
-				 ACS_HMAC_SHA256_SIZE, &out_len);
+				 PSA_HASH_LENGTH(PSA_ALG_SHA_256), &out_len);
 	destroy_status = psa_destroy_key(hmac_key);
 	if ((status != PSA_SUCCESS) || (destroy_status != PSA_SUCCESS)) {
 		LOG_ERR("Failed to compute HMAC-SHA-256: status=%d, destroy=%d, msg_len=%zu",
@@ -479,17 +479,17 @@ static int acs_ecdh_confirm_code_compute(const uint8_t *server_x_le, const uint8
 					 const uint8_t *client_x_le, const uint8_t *client_y_le,
 					 size_t coord_size, const uint8_t *ecdh_key,
 					 size_t ecdh_key_len,
-					 const uint8_t auth_value[ACS_HMAC_SHA256_SIZE],
-					 const uint8_t random[ACS_HMAC_SHA256_SIZE],
-					 uint8_t confirm_out[ACS_HMAC_SHA256_SIZE])
+					 const uint8_t auth_value[ACS_CONFIRM_VALUE_SIZE],
+					 const uint8_t random[ACS_CONFIRM_VALUE_SIZE],
+					 uint8_t confirm_out[ACS_CONFIRM_VALUE_SIZE])
 {
 	int ret;
-	const uint8_t zero_key[ACS_HMAC_SHA256_SIZE] = {0};
-	uint8_t salt[ACS_HMAC_SHA256_SIZE];
+	const uint8_t zero_key[PSA_HASH_LENGTH(PSA_ALG_SHA_256)] = {0};
+	uint8_t salt[PSA_HASH_LENGTH(PSA_ALG_SHA_256)];
 	uint8_t pubkey_concat[CONFIG_BT_ACS_ECDH_COORD_SIZE * 4];
 	size_t pubkey_concat_len = 0;
-	uint8_t confirmation_key[ACS_HMAC_SHA256_SIZE];
-	uint8_t ecdh_auth[CONFIG_BT_ACS_ECDH_COORD_SIZE + ACS_HMAC_SHA256_SIZE];
+	uint8_t confirmation_key[PSA_HASH_LENGTH(PSA_ALG_SHA_256)];
+	uint8_t ecdh_auth[CONFIG_BT_ACS_ECDH_COORD_SIZE + ACS_CONFIRM_VALUE_SIZE];
 
 	/* Step 1: Salt = HMAC(Zero, PKsx_BE||PKsy_BE||PKcx_BE||PKcy_BE) */
 	sys_memcpy_swap(&pubkey_concat[pubkey_concat_len], server_x_le, coord_size);
@@ -516,9 +516,9 @@ static int acs_ecdh_confirm_code_compute(const uint8_t *server_x_le, const uint8
 
 	/* Step 2: ConfirmationKey = HMAC(Salt, ECDHKey || AuthValue) */
 	memcpy(&ecdh_auth[0], ecdh_key, ecdh_key_len);
-	memcpy(&ecdh_auth[ecdh_key_len], auth_value, ACS_HMAC_SHA256_SIZE);
+	memcpy(&ecdh_auth[ecdh_key_len], auth_value, ACS_CONFIRM_VALUE_SIZE);
 
-	ret = acs_hmac_sha256(salt, sizeof(salt), ecdh_auth, ecdh_key_len + ACS_HMAC_SHA256_SIZE,
+	ret = acs_hmac_sha256(salt, sizeof(salt), ecdh_auth, ecdh_key_len + ACS_CONFIRM_VALUE_SIZE,
 			      confirmation_key);
 	if (ret != 0) {
 		LOG_ERR("HMAC-SHA-256 failed in deriving confirmation key: %d", ret);
@@ -527,7 +527,7 @@ static int acs_ecdh_confirm_code_compute(const uint8_t *server_x_le, const uint8
 
 	/* Step 3: ConfirmationCode = HMAC(ConfirmationKey, RandomNumber) */
 	ret = acs_hmac_sha256(confirmation_key, sizeof(confirmation_key), random,
-			      ACS_HMAC_SHA256_SIZE, confirm_out);
+			      ACS_CONFIRM_VALUE_SIZE, confirm_out);
 	if (ret != 0) {
 		LOG_ERR("HMAC-SHA-256 failed in deriving confirmation code: %d", ret);
 		return ret;
@@ -678,8 +678,8 @@ int acs_crypto_derive_session_key(struct bt_acs_conn *acs_conn)
 	static const uint8_t info[] = "ACS";
 	uint16_t key_id = sys_le16_to_cpu(acs_conn->crypto.kex->start_kex.key_id);
 	struct bt_acs_runtime_key_state *exchange_key;
-	uint8_t salt[2 * ACS_HMAC_SHA256_SIZE];
-	uint8_t client_random_be[ACS_HMAC_SHA256_SIZE];
+	uint8_t salt[2 * ACS_CONFIRM_VALUE_SIZE];
+	uint8_t client_random_be[ACS_CONFIRM_VALUE_SIZE];
 	int ret;
 
 	ret = acs_crypto_current_key_lookup(acs_conn, key_id, &exchange_key);
@@ -690,9 +690,9 @@ int acs_crypto_derive_session_key(struct bt_acs_conn *acs_conn)
 
 	/* salt = ServerRandom_BE || ClientRandom_BE */
 	sys_memcpy_swap(client_random_be, acs_conn->crypto.kex->client_random,
-			ACS_HMAC_SHA256_SIZE);
-	memcpy(salt, acs_conn->crypto.kex->server_random, ACS_HMAC_SHA256_SIZE);
-	memcpy(salt + ACS_HMAC_SHA256_SIZE, client_random_be, ACS_HMAC_SHA256_SIZE);
+			ACS_CONFIRM_VALUE_SIZE);
+	memcpy(salt, acs_conn->crypto.kex->server_random, ACS_CONFIRM_VALUE_SIZE);
+	memcpy(salt + ACS_CONFIRM_VALUE_SIZE, client_random_be, ACS_CONFIRM_VALUE_SIZE);
 
 	ret = acs_hkdf(acs_get_psa_hkdf_alg(), salt, sizeof(salt),
 		       acs_conn->crypto.kex->shared_secret, acs_conn->crypto.kex->key_mat_len, info,
@@ -954,7 +954,7 @@ int acs_key_exchange_ecdh_confirm_code(struct bt_acs_conn *acs_conn, struct net_
 	const uint8_t *key_mat;
 	uint16_t key_mat_len;
 	int err;
-	uint8_t server_confirm_le[ACS_HMAC_SHA256_SIZE];
+	uint8_t server_confirm_le[ACS_CONFIRM_VALUE_SIZE];
 
 	err = check_expected_opcode(acs_conn, BT_ACS_CP_OPCODE_ECDH_CONFIRM_CODE);
 
@@ -995,7 +995,7 @@ int acs_key_exchange_ecdh_confirm_code(struct bt_acs_conn *acs_conn, struct net_
 	}
 
 	/* Response: Key_ID(2 LE) + ACServerConfirmationCode(32, LSO first) */
-	if (net_buf_simple_tailroom(rsp_buf) < sizeof(uint16_t) + ACS_HMAC_SHA256_SIZE) {
+	if (net_buf_simple_tailroom(rsp_buf) < sizeof(uint16_t) + ACS_CONFIRM_VALUE_SIZE) {
 		return -ENOMEM;
 	}
 
@@ -1003,8 +1003,8 @@ int acs_key_exchange_ecdh_confirm_code(struct bt_acs_conn *acs_conn, struct net_
 
 	/* Confirmation code is BE; reverse to LE for wire */
 	sys_memcpy_swap(server_confirm_le, acs_conn->crypto.kex->server_confirm,
-			ACS_HMAC_SHA256_SIZE);
-	net_buf_simple_add_mem(rsp_buf, server_confirm_le, ACS_HMAC_SHA256_SIZE);
+			ACS_CONFIRM_VALUE_SIZE);
+	net_buf_simple_add_mem(rsp_buf, server_confirm_le, ACS_CONFIRM_VALUE_SIZE);
 	acs_conn->crypto.kex->next_expected_opcode = BT_ACS_CP_OPCODE_ECDH_CONFIRM_RAND;
 	LOG_INF("Server Confirmation Code Sent");
 	return 0;
@@ -1014,9 +1014,9 @@ int acs_key_exchange_ecdh_confirm_rand(struct bt_acs_conn *acs_conn, struct net_
 {
 	const uint8_t *key_mat;
 	uint16_t key_mat_len;
-	uint8_t computed[ACS_HMAC_SHA256_SIZE];
-	uint8_t client_random_be[ACS_HMAC_SHA256_SIZE];
-	uint8_t client_confirm_be[ACS_HMAC_SHA256_SIZE];
+	uint8_t computed[ACS_CONFIRM_VALUE_SIZE];
+	uint8_t client_random_be[ACS_CONFIRM_VALUE_SIZE];
+	uint8_t client_confirm_be[ACS_CONFIRM_VALUE_SIZE];
 	uint8_t server_random_le[sizeof(acs_conn->crypto.kex->server_random)];
 	uint8_t diff = 0;
 	int err = check_expected_opcode(acs_conn, BT_ACS_CP_OPCODE_ECDH_CONFIRM_RAND);
@@ -1030,7 +1030,7 @@ int acs_key_exchange_ecdh_confirm_rand(struct bt_acs_conn *acs_conn, struct net_
 
 	/* client_random is wire LE; reverse to BE for HMAC */
 	sys_memcpy_swap(client_random_be, acs_conn->crypto.kex->client_random,
-			ACS_HMAC_SHA256_SIZE);
+			ACS_CONFIRM_VALUE_SIZE);
 
 	err = acs_ecdh_confirm_code_compute(acs_conn->crypto.kex->server_pubkey.x,
 #if CONFIG_BT_ACS_ECDH_HAS_Y
@@ -1055,9 +1055,9 @@ int acs_key_exchange_ecdh_confirm_rand(struct bt_acs_conn *acs_conn, struct net_
 
 	/* client_confirm is wire LE; reverse to BE before constant-time compare */
 	sys_memcpy_swap(client_confirm_be, acs_conn->crypto.kex->client_confirm,
-			ACS_HMAC_SHA256_SIZE);
+			ACS_CONFIRM_VALUE_SIZE);
 
-	for (int i = 0; i < ACS_HMAC_SHA256_SIZE; i++) {
+	for (int i = 0; i < ACS_CONFIRM_VALUE_SIZE; i++) {
 		diff |= client_confirm_be[i] ^ computed[i];
 	}
 

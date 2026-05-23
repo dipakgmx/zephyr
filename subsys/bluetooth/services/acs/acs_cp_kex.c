@@ -188,7 +188,7 @@ int acs_cp_kex_start(struct acs_procedure *proc, struct net_buf_simple *buf)
 	int err;
 	uint32_t oob_num;
 	uint16_t oob_len;
-	uint8_t oob_buf[ACS_HMAC_SHA256_SIZE];
+	uint8_t oob_buf[ACS_CONFIRM_VALUE_SIZE];
 	int oob_err;
 
 	/* Pull all operand data before any response buffer init. */
@@ -348,9 +348,9 @@ int acs_cp_kex_start(struct acs_procedure *proc, struct net_buf_simple *buf)
 #else
 		oob_num = (oob_num % ACS_OUTPUT_NUMERIC_BUCKET_COUNT) + 1;
 #endif
-		sys_put_be32(
-			oob_num,
-			&acs_conn->crypto.kex->auth_value[ACS_HMAC_SHA256_SIZE - sizeof(oob_num)]);
+		sys_put_be32(oob_num,
+			     &acs_conn->crypto.kex
+				      ->auth_value[ACS_CONFIRM_VALUE_SIZE - sizeof(oob_num)]);
 		if (cb && cb->output_oob_number) {
 			cb->output_oob_number(proc->acs_conn->conn, action, oob_num);
 		}
@@ -364,7 +364,7 @@ int acs_cp_kex_start(struct acs_procedure *proc, struct net_buf_simple *buf)
 		if (cb && cb->static_oob_get) {
 			oob_len = 0;
 			oob_err = cb->static_oob_get(proc->acs_conn->conn, oob_buf, &oob_len);
-			if (oob_err || oob_len == 0 || oob_len > ACS_HMAC_SHA256_SIZE) {
+			if (oob_err || oob_len == 0 || oob_len > ACS_CONFIRM_VALUE_SIZE) {
 				LOG_WRN("start_key_exchange: static_oob_get failed: %d", oob_err);
 				acs_key_exchange_abort(acs_conn);
 				return acs_cp_rsp_status(
@@ -372,7 +372,7 @@ int acs_cp_kex_start(struct acs_procedure *proc, struct net_buf_simple *buf)
 					BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 			}
 			/* Right-align big-endian in the 256-bit auth_value. */
-			memcpy(&acs_conn->crypto.kex->auth_value[ACS_HMAC_SHA256_SIZE - oob_len],
+			memcpy(&acs_conn->crypto.kex->auth_value[ACS_CONFIRM_VALUE_SIZE - oob_len],
 			       oob_buf, oob_len);
 		}
 		break;
@@ -524,7 +524,7 @@ int acs_cp_kex_ecdh_confirm_code(struct acs_procedure *proc, struct net_buf_simp
 	key_id = sys_le16_to_cpu(req_data.key_id);
 	ARG_UNUSED(key_id); /* used only for log; kex stays alive */
 
-	memcpy(acs_conn->crypto.kex->client_confirm, req_data.confirm_code, ACS_HMAC_SHA256_SIZE);
+	memcpy(acs_conn->crypto.kex->client_confirm, req_data.confirm_code, ACS_CONFIRM_VALUE_SIZE);
 
 	rsp_buf = acs_prepare_reply_buf(proc, reply_mode.encrypted);
 	if (!rsp_buf) {
@@ -582,14 +582,14 @@ int acs_cp_kex_ecdh_confirm_rand(struct acs_procedure *proc, struct net_buf_simp
 					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE);
 	}
 
-	if (memcmp(req_data.random, acs_conn->crypto.kex->server_random, ACS_HMAC_SHA256_SIZE) ==
+	if (memcmp(req_data.random, acs_conn->crypto.kex->server_random, ACS_CONFIRM_VALUE_SIZE) ==
 	    0) {
 		acs_key_exchange_abort(acs_conn);
 		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_ECDH_CONFIRM_RAND,
 					 BT_ACS_CP_RESPONSE_INVALID_OPERAND);
 	}
 
-	memcpy(acs_conn->crypto.kex->client_random, req_data.random, ACS_HMAC_SHA256_SIZE);
+	memcpy(acs_conn->crypto.kex->client_random, req_data.random, ACS_CONFIRM_VALUE_SIZE);
 
 	rsp_buf = acs_prepare_reply_buf(proc, reply_mode.encrypted);
 	if (!rsp_buf) {

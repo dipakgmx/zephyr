@@ -322,7 +322,7 @@ int bt_acs_set_oob_number(struct bt_conn *conn, const uint8_t *oob, uint16_t len
 {
 	struct bt_acs_conn *acs_conn;
 
-	if (!oob || len == 0 || len > ACS_HMAC_SHA256_SIZE) {
+	if (!oob || len == 0 || len > ACS_CONFIRM_VALUE_SIZE) {
 		return -EINVAL;
 	}
 
@@ -338,7 +338,7 @@ int bt_acs_set_oob_number(struct bt_conn *conn, const uint8_t *oob, uint16_t len
 	}
 
 	memset(acs_conn->crypto.kex->auth_value, 0, sizeof(acs_conn->crypto.kex->auth_value));
-	memcpy(&acs_conn->crypto.kex->auth_value[ACS_HMAC_SHA256_SIZE - len], oob, len);
+	memcpy(&acs_conn->crypto.kex->auth_value[ACS_CONFIRM_VALUE_SIZE - len], oob, len);
 	return 0;
 }
 

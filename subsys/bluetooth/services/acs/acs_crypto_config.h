@@ -7,18 +7,14 @@
 #ifndef BT_GATT_ACS_CRYPTO_CONFIG_H_
 #define BT_GATT_ACS_CRYPTO_CONFIG_H_
 
+#include <psa/crypto_sizes.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/** @brief HMAC-SHA-256 output size in bytes (auth_value, randoms, confirms). */
-#define ACS_HMAC_SHA256_SIZE 32
-
 /** @brief Maximum nonce-variable size supported by the current runtime model. */
 #define ACS_NONCE_VAR_COUNTER_SIZE 8
-
-/** @brief Total CCM nonce length in bytes (13 bytes per CCM spec). */
-#define ACS_NONCE_SIZE 13
 
 /** @brief Default fixed-part size for CCM nonces when no scheme is configured (8 bytes). */
 #define ACS_NONCE_FIXED_SIZE 8
@@ -29,14 +25,15 @@ extern "C" {
 /** @brief Fixed-prefix length in bytes (1–12, set by CONFIG_BT_ACS_CCM_NONCE_FIXED_SIZE). */
 #define ACS_CCM_NONCE_FIXED_SIZE CONFIG_BT_ACS_CCM_NONCE_FIXED_SIZE
 /** @brief Variable (counter) part of the CCM nonce in bytes. */
-#define ACS_CCM_NONCE_VAR_SIZE   (ACS_NONCE_SIZE - ACS_CCM_NONCE_FIXED_SIZE)
+#define ACS_CCM_NONCE_VAR_SIZE                                                                     \
+	(PSA_AEAD_NONCE_LENGTH(PSA_KEY_TYPE_AES, PSA_ALG_CCM) - ACS_CCM_NONCE_FIXED_SIZE)
 #elif defined(CONFIG_BT_ACS_CCM_NONCE_SEQ_EVEN_ODD)
 /** @brief CCM nonce type tag: sequence number even-odd. */
 #define ACS_CCM_NONCE_TYPE       ACS_NONCE_SEQ_EVEN_ODD /**< 0x01 */
 /** @brief EVEN_ODD carries no spec-defined fixed prefix field. */
 #define ACS_CCM_NONCE_FIXED_SIZE 0U
 /** @brief Full CCM nonce variable field size advertised on the wire. */
-#define ACS_CCM_NONCE_VAR_SIZE   ACS_NONCE_SIZE
+#define ACS_CCM_NONCE_VAR_SIZE   PSA_AEAD_NONCE_LENGTH(PSA_KEY_TYPE_AES, PSA_ALG_CCM)
 #endif
 /** @} */
 
@@ -85,17 +82,13 @@ extern "C" {
 /** @brief Total AES-GCM nonce length in bytes (fixed + variable). */
 #define ACS_GCM_NONCE_SIZE (ACS_GCM_NONCE_FIXED_SIZE + ACS_GCM_NONCE_VAR_SIZE) /**< 12 */
 
-/** @brief AES-GCM authentication tag length in bytes (always 128-bit per spec). */
-#define ACS_GCM_MAC_SIZE 16
-
 /** @brief GMAC nonce/IV constants — identical to GCM (GMAC is GCM with zero-length plaintext). */
 #define ACS_GMAC_NONCE_FIXED_SIZE ACS_GCM_NONCE_FIXED_SIZE
 #define ACS_GMAC_NONCE_VAR_SIZE   ACS_GCM_NONCE_VAR_SIZE
 #define ACS_GMAC_NONCE_SIZE       ACS_GCM_NONCE_SIZE
-#define ACS_GMAC_MAC_SIZE         ACS_GCM_MAC_SIZE
 
 #if defined(CONFIG_BT_ACS_DATA_PROTECTION_AES_CCM)
-#define ACS_CCM_NONCE_SIZE_OR_0       ACS_NONCE_SIZE
+#define ACS_CCM_NONCE_SIZE_OR_0       PSA_AEAD_NONCE_LENGTH(PSA_KEY_TYPE_AES, PSA_ALG_CCM)
 #define ACS_CCM_NONCE_VAR_SIZE_OR_0   ACS_CCM_NONCE_VAR_SIZE
 #define ACS_CCM_NONCE_FIXED_SIZE_OR_0 ACS_CCM_NONCE_FIXED_SIZE
 #else

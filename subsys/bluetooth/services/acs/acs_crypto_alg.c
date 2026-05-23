@@ -30,7 +30,9 @@ BUILD_ASSERT(CONFIG_BT_ACS_SESSION_KEY_SIZE == 16, "AES-128 session key fixed at
 #endif
 
 #if IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_GMAC)
-#define ACS_PSA_GMAC_ALG     PSA_ALG_AEAD_WITH_SHORTENED_TAG(PSA_ALG_GCM, ACS_GCM_MAC_SIZE)
+#define ACS_PSA_GMAC_ALG                                                                           \
+	PSA_ALG_AEAD_WITH_SHORTENED_TAG(PSA_ALG_GCM,                                               \
+					PSA_AEAD_TAG_LENGTH(PSA_KEY_TYPE_AES, 128, PSA_ALG_GCM))
 #define ACS_PSA_GMAC_TAG_LEN ACS_GCM_MAC_SIZE
 #endif
 
