@@ -322,23 +322,29 @@ int bt_acs_set_oob_number(struct bt_conn *conn, const uint8_t *oob, uint16_t len
 {
 	struct bt_acs_conn *acs_conn;
 
-	if (!oob || len == 0 || len > ACS_CONFIRM_VALUE_SIZE) {
+	if (!conn || !oob || len == 0 || len > ACS_CONFIRM_VALUE_SIZE) {
 		return -EINVAL;
 	}
 
 	acs_conn = acs_conn_lookup(conn);
-
 	if (!acs_conn) {
-		return -ENOENT;
+		return -ENOTCONN;
 	}
 
 	if (!acs_conn->crypto.kex) {
-		LOG_WRN("set_oob_number: no key exchange in progress");
-		return -ENOENT;
+		LOG_WRN("No key exchange in progress");
+		return -ESRCH;
+	}
+
+	if (acs_conn->crypto.kex->start_kex.confirmation_method !=
+	    BT_ACS_CONFIRM_METHOD_INPUT_OOB) {
+		LOG_WRN("Confirmation method is not Input OOB");
+		return -EPERM;
 	}
 
 	memset(acs_conn->crypto.kex->auth_value, 0, sizeof(acs_conn->crypto.kex->auth_value));
 	memcpy(&acs_conn->crypto.kex->auth_value[ACS_CONFIRM_VALUE_SIZE - len], oob, len);
+
 	return 0;
 }
 

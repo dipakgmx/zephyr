@@ -7,6 +7,7 @@ zephyr_sources_ifdef(
   acs_channel_rx.c
   acs.c
   acs_conn.c
+  acs_session.c
   acs_runtime.c
   acs_reply_seq.c
   acs_cp.c
@@ -40,9 +41,6 @@ zephyr_sources_ifdef(
   acs_crypto_keys.c
   acs_crypto_alg.c
 )
-
-# Session persistence — only when BT_SETTINGS is available.
-zephyr_sources_ifdef(CONFIG_BT_SETTINGS acs_session_store.c)
 
 # GATT authorization callback — only when auto-gating is enabled.
 zephyr_sources_ifdef(CONFIG_BT_ACS_GATT_AUTHORIZATION acs_policy.c)

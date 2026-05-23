@@ -4,6 +4,7 @@ config BT_ACS
 	bool "GATT Authorization Control Service"
 	depends on BT_CONN
 	depends on MBEDTLS_PSA_CRYPTO_C
+	depends on BT_SMP
 	select EXPERIMENTAL
 	help
 	  Enable GATT Authorization Control Service (UUID 0x183D).
@@ -319,7 +320,6 @@ config BT_ACS_SET_SECURITY_CONTROLS_SWITCH
 
 config BT_ACS_INITIATE_PAIRING
 	bool "Initiate Pairing procedure"
-	depends on BT_SMP
 	default n
 	help
 	  Enables opcode 0xDF (Initiate Pairing). When enabled, the AC Client

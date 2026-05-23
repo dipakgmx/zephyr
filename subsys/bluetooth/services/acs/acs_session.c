@@ -14,18 +14,202 @@
 #include <zephyr/bluetooth/gatt.h>
 #include <zephyr/bluetooth/services/acs.h>
 #include <zephyr/logging/log.h>
-#include <zephyr/psa/key_ids.h>
-
-#include <psa/crypto.h>
 
 #include "common/bt_str.h"
-#include "host/settings.h"
 #include "acs_internal.h"
-#include "acs_key_desc.h"
 
 LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
 
+/*
+ * Preserves crypto state (keys, nonces, counters) across BLE disconnect/
+ * reconnect for the same peer.  Indexed by peer address so it survives
+ * conn-index reuse.  Cleared only by explicit invalidation, bond deletion,
+ * or power-off.
+ */
+struct acs_session_cache_entry {
+	bt_addr_le_t addr;
+	struct bt_acs_crypto_session crypto;
+	uint16_t restriction_map_id;
+	uint8_t status_flags;
+};
+
+static struct acs_session_cache_entry session_cache[CONFIG_BT_MAX_PAIRED];
+
+static bool key_material_is_set(const uint8_t *key, size_t len)
+{
+	for (size_t i = 0; i < len; i++) {
+		if (key[i] != 0U) {
+			return true;
+		}
+	}
+	return false;
+}
+
+static struct acs_session_cache_entry *session_cache_find(const bt_addr_le_t *addr)
+{
+	for (size_t i = 0; i < ARRAY_SIZE(session_cache); i++) {
+		if (bt_addr_le_eq(&session_cache[i].addr, addr)) {
+			return &session_cache[i];
+		}
+	}
+	return NULL;
+}
+
+void acs_session_cache_save(const bt_addr_le_t *addr, const struct bt_acs_conn *acs_conn)
+{
+	struct acs_session_cache_entry *entry;
+	bool has_key_material = false;
+
+	for (size_t i = 0; i < ARRAY_SIZE(acs_conn->crypto.current_keys); i++) {
+		if (key_material_is_set(acs_conn->crypto.current_keys[i].key,
+					sizeof(acs_conn->crypto.current_keys[i].key))) {
+			has_key_material = true;
+			break;
+		}
+	}
+
+	if (!has_key_material) {
+		return;
+	}
+
+	entry = session_cache_find(addr);
+	if (!entry) {
+		for (size_t i = 0; i < ARRAY_SIZE(session_cache); i++) {
+			if (bt_addr_le_eq(&session_cache[i].addr, BT_ADDR_LE_ANY)) {
+				bt_addr_le_copy(&session_cache[i].addr, addr);
+				entry = &session_cache[i];
+				break;
+			}
+		}
+	}
+
+	if (!entry) {
+		LOG_WRN("No free session cache slot for peer %s", bt_addr_le_str(addr));
+		return;
+	}
+
+	memcpy(&entry->crypto, &acs_conn->crypto, sizeof(entry->crypto));
+	entry->restriction_map_id = acs_conn->restriction_map_id;
+	entry->status_flags = acs_conn->status_flags;
+
+	entry->crypto.kex = NULL;
+	for (size_t i = 0; i < ARRAY_SIZE(entry->crypto.current_keys); i++) {
+		entry->crypto.current_keys[i].psa_key_id = 0U;
+	}
+	for (size_t i = 0; i < ARRAY_SIZE(entry->crypto.key_desc_runtimes); i++) {
+		entry->crypto.key_desc_runtimes[i].psa_key_id = 0U;
+	}
+
+	LOG_DBG("Saved ACS session to RAM cache for peer %s", bt_addr_le_str(addr));
+}
+
+int acs_session_cache_restore(const bt_addr_le_t *addr, struct bt_acs_conn *acs_conn)
+{
+	struct acs_session_cache_entry *entry = session_cache_find(addr);
+	const struct bt_acs_cb *cb;
+	int err;
+
+	if (!entry) {
+		return -ENOENT;
+	}
+
+	memcpy(&acs_conn->crypto, &entry->crypto, sizeof(acs_conn->crypto));
+	acs_conn->restriction_map_id = entry->restriction_map_id;
+	acs_conn->status_flags = entry->status_flags;
+
+	for (size_t i = 0; i < ARRAY_SIZE(acs_conn->crypto.current_keys); i++) {
+		struct bt_acs_runtime_key_state *ck = &acs_conn->crypto.current_keys[i];
+
+		if (!ck->key_desc || !key_material_is_set(ck->key, sizeof(ck->key))) {
+			continue;
+		}
+
+		err = acs_crypto_import_current_key(ck);
+		if (err) {
+			LOG_ERR("Re-import current key 0x%04x failed: %d", acs_runtime_key_id(ck),
+				err);
+			goto reimport_failed;
+		}
+	}
+
+	for (size_t i = 0; i < ARRAY_SIZE(acs_conn->crypto.key_desc_runtimes); i++) {
+		struct bt_acs_key_desc_runtime *rt = &acs_conn->crypto.key_desc_runtimes[i];
+
+		if (!rt->key_desc || !key_material_is_set(rt->key, sizeof(rt->key))) {
+			continue;
+		}
+
+		err = acs_crypto_import_record_key(rt);
+		if (err) {
+			LOG_ERR("Re-import record key 0x%04x failed: %d",
+				acs_key_desc_runtime_key_id(rt), err);
+			goto reimport_failed;
+		}
+	}
+
+	goto reimport_ok;
+
+reimport_failed:
+	LOG_ERR("Failed to re-import cached keys — resetting crypto");
+	acs_crypto_reset(acs_conn);
+	acs_conn->status_flags = BT_ACS_STATUS_SECURITY_CONTROLS_ENABLED;
+	return err;
+
+reimport_ok:
+	LOG_INF("ACS session restored from RAM cache for peer %s%s", bt_addr_le_str(addr),
+		(acs_conn->status_flags & BT_ACS_STATUS_SECURITY_ESTABLISHED)
+			? " (security established)"
+			: "");
+
+	if (acs_conn->status_flags & BT_ACS_STATUS_SECURITY_ESTABLISHED) {
+		cb = acs_cb_get();
+		if (cb && cb->security_established) {
+			struct bt_acs_runtime_key_state const *parent = NULL;
+
+			for (size_t i = 0; i < ARRAY_SIZE(acs_conn->crypto.current_keys); i++) {
+				struct bt_acs_runtime_key_state const *ck =
+					&acs_conn->crypto.current_keys[i];
+
+				if (ck->psa_key_id != 0U) {
+					parent = ck;
+				}
+			}
+			if (parent) {
+				cb->security_established(acs_conn->conn, parent->key,
+							 CONFIG_BT_ACS_SESSION_KEY_SIZE);
+			}
+		}
+	}
+
+	return 0;
+}
+
+void acs_session_cache_clear_peer(const bt_addr_le_t *addr)
+{
+	struct acs_session_cache_entry *entry = session_cache_find(addr);
+
+	if (entry) {
+		memset(entry, 0, sizeof(*entry));
+	}
+}
+
+void acs_session_cache_clear_all_except(const bt_addr_le_t *keep_addr)
+{
+	for (size_t i = 0; i < ARRAY_SIZE(session_cache); i++) {
+		if (!bt_addr_le_eq(&session_cache[i].addr, BT_ADDR_LE_ANY) &&
+		    !bt_addr_le_eq(&session_cache[i].addr, keep_addr)) {
+			memset(&session_cache[i], 0, sizeof(session_cache[i]));
+		}
+	}
+}
+
 #if defined(CONFIG_BT_SETTINGS)
+
+#include <zephyr/psa/key_ids.h>
+#include <psa/crypto.h>
+
+#include "host/settings.h"
+#include "acs_key_desc.h"
 
 struct acs_persistent_meta {
 	uint16_t parent_key_id;
@@ -88,16 +272,6 @@ static int acs_slot_alloc(const bt_addr_le_t *addr, size_t *slot)
 static void acs_slot_free_idx(size_t idx)
 {
 	memset(&acs_slots[idx], 0, sizeof(acs_slots[idx]));
-}
-
-static void acs_persistent_parent_attrs(psa_key_attributes_t *attrs, psa_key_id_t key_id)
-{
-	psa_set_key_id(attrs, key_id);
-	psa_set_key_lifetime(attrs, PSA_KEY_LIFETIME_PERSISTENT);
-	psa_set_key_type(attrs, PSA_KEY_TYPE_RAW_DATA);
-	psa_set_key_bits(attrs, CONFIG_BT_ACS_SESSION_KEY_SIZE * BITS_PER_BYTE);
-	psa_set_key_usage_flags(attrs, PSA_KEY_USAGE_EXPORT);
-	psa_set_key_algorithm(attrs, PSA_ALG_NONE);
 }
 
 static int acs_persistent_import_key(psa_key_attributes_t *attrs, const void *data, size_t len,
@@ -168,22 +342,6 @@ static void acs_session_erase_slot(size_t slot)
 	acs_destroy_persistent_slot(slot);
 	(void)bt_settings_delete("acs", acs_slots[slot].bt_id, &acs_slots[slot].addr);
 	acs_slot_free_idx(slot);
-}
-
-static bool acs_session_already_stored(size_t slot, uint16_t parent_key_id, uint16_t rmap_id)
-{
-	psa_key_attributes_t attrs = PSA_KEY_ATTRIBUTES_INIT;
-	psa_status_t status;
-
-	if (acs_slots[slot].meta.parent_key_id != parent_key_id ||
-	    acs_slots[slot].meta.restriction_map_id != rmap_id) {
-		return false;
-	}
-
-	status = psa_get_key_attributes(acs_psa_key_id(slot), &attrs);
-	psa_reset_key_attributes(&attrs);
-
-	return status == PSA_SUCCESS;
 }
 
 static struct bt_acs_runtime_key_state *acs_restored_established_key(struct bt_acs_conn *acs_conn)
@@ -281,17 +439,29 @@ void acs_session_store(const struct bt_conn *conn, const struct bt_acs_conn *acs
 		return;
 	}
 
-	if (acs_session_already_stored(slot, acs_runtime_key_id(parent_key),
-				       acs_conn->restriction_map_id)) {
-		LOG_DBG("ACS session already persisted, skipping");
-		return;
+	if (acs_slots[slot].meta.parent_key_id == acs_runtime_key_id(parent_key) &&
+	    acs_slots[slot].meta.restriction_map_id == acs_conn->restriction_map_id) {
+		psa_key_attributes_t chk = PSA_KEY_ATTRIBUTES_INIT;
+		psa_status_t chk_st = psa_get_key_attributes(acs_psa_key_id(slot), &chk);
+
+		psa_reset_key_attributes(&chk);
+		if (chk_st == PSA_SUCCESS) {
+			LOG_DBG("ACS session already persisted, skipping");
+			return;
+		}
 	}
 
 	acs_slots[slot].bt_id = info.id;
 	acs_slots[slot].meta.parent_key_id = acs_runtime_key_id(parent_key);
 	acs_slots[slot].meta.restriction_map_id = acs_conn->restriction_map_id;
 
-	acs_persistent_parent_attrs(&parent_attrs, acs_psa_key_id(slot));
+	psa_set_key_id(&parent_attrs, acs_psa_key_id(slot));
+	psa_set_key_lifetime(&parent_attrs, PSA_KEY_LIFETIME_PERSISTENT);
+	psa_set_key_type(&parent_attrs, PSA_KEY_TYPE_RAW_DATA);
+	psa_set_key_bits(&parent_attrs, CONFIG_BT_ACS_SESSION_KEY_SIZE * BITS_PER_BYTE);
+	psa_set_key_usage_flags(&parent_attrs, PSA_KEY_USAGE_EXPORT);
+	psa_set_key_algorithm(&parent_attrs, PSA_ALG_NONE);
+
 	err = acs_persistent_import_key(&parent_attrs, parent_key->key, sizeof(parent_key->key),
 					"store parent key");
 	if (err) {

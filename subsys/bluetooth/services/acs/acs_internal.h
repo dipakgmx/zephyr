@@ -43,8 +43,6 @@
 extern "C" {
 #endif
 
-/* ---- Buffer pool -------------------------------------------------------- */
-
 /**
  * @brief Allocate a buffer from the shared ACS net_buf pool.
  *
@@ -126,6 +124,12 @@ struct bt_acs_conn *acs_conn_alloc(struct bt_conn *conn);
 
 /** @brief Release all resources held by @p acs_conn. */
 void acs_conn_cleanup(struct bt_acs_conn *acs_conn);
+
+/** @brief Save crypto state to the RAM session cache for @p addr. */
+void acs_session_cache_save(const bt_addr_le_t *addr, const struct bt_acs_conn *acs_conn);
+
+/** @brief Restore crypto state from the RAM session cache for @p addr. */
+int acs_session_cache_restore(const bt_addr_le_t *addr, struct bt_acs_conn *acs_conn);
 
 /** @brief Clear the RAM session cache entry for @p addr. */
 void acs_session_cache_clear_peer(const bt_addr_le_t *addr);

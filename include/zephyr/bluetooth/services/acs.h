@@ -611,9 +611,11 @@ struct bt_acs_cb {
  * @param oob     OOB number bytes (big-endian, 1–32 bytes).
  * @param len     Number of bytes in @p oob.
  *
- * @retval 0 Success.
- * @retval -ENOENT No ACS connection found for @p conn.
- * @retval -EINVAL @p conn or @p oob is NULL, or @p len is greater than 32.
+ * @retval 0        Success.
+ * @retval -EINVAL  @p conn or @p oob is NULL, @p len is 0 or greater than 32.
+ * @retval -ENOTCONN No ACS connection found for @p conn.
+ * @retval -ESRCH   No key exchange in progress on this connection.
+ * @retval -EPERM   Key exchange confirmation method is not Input OOB.
  */
 int bt_acs_set_oob_number(struct bt_conn *conn, const uint8_t *oob, uint16_t len);
 

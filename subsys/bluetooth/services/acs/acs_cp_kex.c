@@ -336,6 +336,12 @@ int acs_cp_kex_start(struct acs_procedure *proc, struct net_buf_simple *buf)
 		}
 	}
 
+	/* Store request data before callbacks so bt_acs_set_oob_number() can
+	 * validate the confirmation method.  If OOB processing fails below the
+	 * kex context is aborted, making the cached value irrelevant.
+	 */
+	acs_conn->crypto.kex->start_kex = req_data;
+
 	/* Clear auth_value before populating it in the switch cases below */
 	memset(acs_conn->crypto.kex->auth_value, 0, sizeof(acs_conn->crypto.kex->auth_value));
 
@@ -380,8 +386,6 @@ int acs_cp_kex_start(struct acs_procedure *proc, struct net_buf_simple *buf)
 		break;
 	}
 
-	/* Store request data only after OOB processing succeeds */
-	acs_conn->crypto.kex->start_kex = req_data;
 	acs_conn->crypto.kex->next_expected_opcode = (key_id == ACS_KEY_ID_KDF)
 							     ? BT_ACS_CP_OPCODE_KEY_EXCHANGE_KDF
 							     : BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH;
