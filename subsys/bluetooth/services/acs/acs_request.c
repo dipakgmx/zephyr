@@ -288,6 +288,23 @@ void acs_procedure_abort_all(struct bt_acs_conn *acs_conn)
 	}
 #endif /* CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION */
 
+#if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_NOTIFICATION)
+	{
+		struct k_work_sync don_sync;
+
+		k_work_cancel_sync(&acs_conn->don_drain_work, &don_sync);
+	}
+
+	atomic_ptr_set(&acs_conn->active_notification, NULL);
+
+	while ((snode = k_fifo_get(&acs_conn->notify_fifo, K_NO_WAIT)) != NULL) {
+		struct acs_procedure *queued = CONTAINER_OF(snode, struct acs_procedure, node);
+
+		acs_procedure_release_tx(queued);
+		queued_count++;
+	}
+#endif /* CONFIG_BT_ACS_PROTECTED_RESOURCE_NOTIFICATION */
+
 	/* Atomically detach each request and drop held references. */
 	for (uint8_t i = 0; i < CONFIG_BT_ACS_MAX_INFLIGHT_REQ_PER_CONN; i++) {
 		req = atomic_ptr_set(&acs_conn->inflight_reqs[i], NULL);

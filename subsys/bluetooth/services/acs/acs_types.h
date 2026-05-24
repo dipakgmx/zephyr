@@ -383,6 +383,9 @@ struct bt_acs_conn {
 								*  (kind=ACS_PROC_KIND_PLAIN_CP; not slab-managed)
 								*/
 	struct acs_seg_tx_ctx cp_tx; /**< Plain CP indication transport context */
+#if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_NOTIFICATION)
+	struct acs_seg_notify_ctx notify_tx; /**< DON notification segmentation context */
+#endif
 #if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION)
 	struct acs_seg_tx_ctx indicate_tx; /**< DOI indication segmentation context */
 #endif
@@ -398,6 +401,11 @@ struct bt_acs_conn {
 	struct k_work doi_drain_work;      /**< DOI drain / continuation worker */
 	atomic_ptr_t active_indication;    /**< Currently in-flight DOI response slot */
 	atomic_ptr_t pending_seq_continue; /**< Reply sequence waiting to continue on workq */
+#endif
+#if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_NOTIFICATION)
+	struct k_fifo notify_fifo;        /**< Pending Data Out Notify response FIFO */
+	struct k_work don_drain_work;     /**< DON drain worker */
+	atomic_ptr_t active_notification; /**< Currently in-flight DON response slot */
 #endif
 };
 

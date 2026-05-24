@@ -177,7 +177,8 @@ int acs_cp_dispatch(struct acs_frame *frame, struct bt_acs_conn *acs_conn,
  * Exposed so the data-out channel layer can pass it as the completion handler
  * for plain-CP segmented indications.
  */
-void acs_cp_ind_cb(struct bt_conn *conn, const struct bt_gatt_attr *attr, int err, void *user_data);
+void acs_cp_completion_cb(struct bt_conn *conn, const struct bt_gatt_attr *attr, int err,
+			  void *user_data);
 
 #ifdef __cplusplus
 }

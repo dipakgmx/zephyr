@@ -23,6 +23,9 @@ static inline uint8_t seg_hdr_build(bool first, bool last, uint8_t counter)
 	       FIELD_PREP(ACS_SEG_COUNTER_MASK, counter);
 }
 
+static void acs_seg_notify_work_handler(struct k_work *work);
+static void acs_seg_notify_complete_cb(struct bt_conn *conn, void *user_data);
+
 int acs_seg_notify(struct bt_conn *conn, const struct bt_gatt_attr *attr, const uint8_t *data,
 		   uint16_t len)
 {
@@ -71,6 +74,202 @@ int acs_seg_notify(struct bt_conn *conn, const struct bt_gatt_attr *attr, const 
 		counter = (counter + 1) % ACS_SEG_COUNTER_MAX;
 	}
 
+	return 0;
+}
+
+static void notify_tx_detach_buf(struct acs_seg_notify_ctx *ctx)
+{
+	ctx->buf = NULL;
+}
+
+static void acs_seg_notify_complete_cb(struct bt_conn *conn, void *user_data)
+{
+	struct acs_seg_notify_ctx *ctx = user_data;
+	uint16_t buf_len;
+
+	if (!ctx || !ctx->tx_in_flight) {
+		return; /* disconnect cleanup already claimed this context */
+	}
+
+	buf_len = ctx->buf ? ctx->buf->len : 0;
+	ctx->tx_in_flight = false;
+
+	if (ctx->tx_offset < buf_len) {
+		LOG_DBG("seg_notify_async: chunk complete, more pending offset=%u total_len=%u",
+			ctx->tx_offset, buf_len);
+		k_work_submit_to_queue(acs_get_wq(), &ctx->tx_work);
+		return;
+	}
+
+	LOG_DBG("seg_notify_async: transfer complete total_len=%u", buf_len);
+
+	acs_seg_tx_completion_cb_t cb = ctx->completion_cb;
+	void *ud = ctx->completion_cb_data;
+	const struct bt_gatt_attr *attr = ctx->tx_attr;
+
+	ctx->completion_cb = NULL;
+	ctx->completion_cb_data = NULL;
+
+	bt_conn_unref(ctx->tx_conn);
+	ctx->tx_conn = NULL;
+	ctx->tx_offset = 0;
+	ctx->tx_counter = 0;
+	ctx->tx_attr = NULL;
+	notify_tx_detach_buf(ctx);
+
+	if (cb) {
+		cb(conn, attr, 0, ud);
+	}
+}
+
+static void acs_seg_notify_work_handler(struct k_work *work)
+{
+	struct acs_seg_notify_ctx *ctx = CONTAINER_OF(work, struct acs_seg_notify_ctx, tx_work);
+	uint16_t seg_payload;
+	uint16_t buf_len;
+	uint16_t remaining;
+	uint16_t chunk;
+	uint16_t mtu;
+	bool is_first;
+	bool is_last;
+	int err;
+
+	acs_seg_tx_completion_cb_t cb;
+	void *ud;
+	const struct bt_gatt_attr *attr;
+	struct bt_conn *conn;
+
+	__ASSERT_NO_MSG(ctx->tx_conn);
+	__ASSERT_NO_MSG(ctx->buf);
+	__ASSERT_NO_MSG(ctx->tx_attr);
+	__ASSERT_NO_MSG(!ctx->tx_in_flight);
+
+	buf_len = ctx->buf->len;
+	remaining = buf_len - ctx->tx_offset;
+
+	__ASSERT_NO_MSG(remaining > 0);
+
+	mtu = bt_gatt_get_mtu(ctx->tx_conn);
+	seg_payload = ACS_SEG_PAYLOAD_SIZE(mtu);
+
+	if (seg_payload == 0) {
+		LOG_ERR("seg_notify_async work: MTU too small (mtu=%u)", mtu);
+		err = -EINVAL;
+		goto cleanup;
+	}
+
+	chunk = MIN(seg_payload, remaining);
+	chunk = MIN(chunk, (uint16_t)(sizeof(ctx->tx_scratch) - ACS_SEG_HDR_SIZE));
+
+	is_first = (ctx->tx_offset == 0);
+	is_last = (ctx->tx_offset + chunk >= buf_len);
+
+	ctx->tx_scratch[0] = seg_hdr_build(is_first, is_last, ctx->tx_counter);
+	memcpy(&ctx->tx_scratch[1], ctx->buf->data + ctx->tx_offset, chunk);
+
+	LOG_DBG("seg_notify_async: send first=%u last=%u counter=%u chunk=%u offset=%u/%u",
+		is_first, is_last, ctx->tx_counter, chunk, ctx->tx_offset, buf_len);
+	LOG_HEXDUMP_DBG(ctx->tx_scratch, chunk + ACS_SEG_HDR_SIZE, "seg_notify_async pdu");
+
+	memset(&ctx->notify_params, 0, sizeof(ctx->notify_params));
+	ctx->notify_params.attr = ctx->tx_attr;
+	ctx->notify_params.func = acs_seg_notify_complete_cb;
+	ctx->notify_params.user_data = ctx;
+	ctx->notify_params.data = ctx->tx_scratch;
+	ctx->notify_params.len = chunk + ACS_SEG_HDR_SIZE;
+
+	ctx->tx_in_flight = true;
+
+	err = bt_gatt_notify_cb(ctx->tx_conn, &ctx->notify_params);
+	if (err) {
+		ctx->tx_in_flight = false;
+		LOG_ERR("seg_notify_async: bt_gatt_notify_cb failed: %d", err);
+		goto cleanup;
+	}
+
+	ctx->tx_offset += chunk;
+	ctx->tx_counter = (ctx->tx_counter + 1) % ACS_SEG_COUNTER_MAX;
+	return;
+
+cleanup:
+	cb = ctx->completion_cb;
+	ud = ctx->completion_cb_data;
+	attr = ctx->tx_attr;
+	conn = ctx->tx_conn;
+
+	ctx->tx_conn = NULL;
+	ctx->tx_offset = 0;
+	ctx->tx_counter = 0;
+	ctx->tx_attr = NULL;
+	ctx->completion_cb = NULL;
+	ctx->completion_cb_data = NULL;
+	notify_tx_detach_buf(ctx);
+	if (cb) {
+		cb(conn, attr, err, ud);
+	}
+	if (conn) {
+		bt_conn_unref(conn);
+	}
+}
+
+void acs_seg_notify_async_init(struct acs_seg_notify_ctx *ctx)
+{
+	__ASSERT_NO_MSG(ctx);
+
+	memset(ctx, 0, sizeof(*ctx));
+	k_work_init(&ctx->tx_work, acs_seg_notify_work_handler);
+}
+
+void acs_seg_notify_async_reset(struct acs_seg_notify_ctx *ctx)
+{
+	struct k_work_sync sync;
+
+	__ASSERT_NO_MSG(ctx != NULL);
+
+	ctx->tx_in_flight = false;
+
+	k_work_cancel_sync(&ctx->tx_work, &sync);
+	if (ctx->tx_conn) {
+		bt_conn_unref(ctx->tx_conn);
+		ctx->tx_conn = NULL;
+	}
+	ctx->tx_offset = 0;
+	ctx->tx_counter = 0;
+	ctx->tx_attr = NULL;
+
+	notify_tx_detach_buf(ctx);
+
+	ctx->completion_cb = NULL;
+	ctx->completion_cb_data = NULL;
+}
+
+int acs_seg_notify_async_send(struct acs_seg_notify_ctx *ctx, struct bt_conn *conn,
+			      const struct bt_gatt_attr *attr, struct net_buf *buf,
+			      acs_seg_tx_completion_cb_t completion_cb, void *user_data)
+{
+	__ASSERT_NO_MSG(ctx != NULL);
+	__ASSERT_NO_MSG(conn != NULL);
+	__ASSERT_NO_MSG(attr != NULL);
+	__ASSERT_NO_MSG(buf != NULL);
+	__ASSERT_NO_MSG(buf->len > 0);
+	__ASSERT_NO_MSG(bt_gatt_is_subscribed(conn, attr, BT_GATT_CCC_NOTIFY));
+
+	if (ctx->tx_in_flight || k_work_is_pending(&ctx->tx_work)) {
+		LOG_WRN("seg_notify_async_send: TX already in progress");
+		return -EBUSY;
+	}
+
+	ctx->buf = buf;
+	ctx->tx_offset = 0;
+	ctx->tx_counter = 0;
+	ctx->tx_attr = attr;
+	ctx->completion_cb = completion_cb;
+	ctx->completion_cb_data = user_data;
+
+	__ASSERT_NO_MSG(ctx->tx_conn == NULL);
+	ctx->tx_conn = bt_conn_ref(conn);
+
+	k_work_submit_to_queue(acs_get_wq(), &ctx->tx_work);
 	return 0;
 }
 

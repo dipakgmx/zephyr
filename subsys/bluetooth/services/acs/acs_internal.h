@@ -94,6 +94,11 @@ void acs_doi_queue_init(struct bt_acs_conn *acs_conn);
 void acs_doi_queue_submit(struct bt_acs_conn *acs_conn);
 #endif
 
+#if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_NOTIFICATION)
+/** @brief Initialise the per-connection DON drain queue state. */
+void acs_don_queue_init(struct bt_acs_conn *acs_conn);
+#endif
+
 /** @brief Return true if the ACS service has been initialised. */
 bool acs_is_initialized(void);
 

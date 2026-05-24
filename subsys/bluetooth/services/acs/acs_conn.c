@@ -108,6 +108,9 @@ struct bt_acs_conn *acs_conn_alloc(struct bt_conn *conn)
 		IS_ENABLED(CONFIG_BT_ACS_FEAT_AUTHORIZATION) ? CONFIG_BT_ACS_ACTIVE_RMAP_ID : 0;
 	/* pending_reqs[] is zero-initialised by memset above (NULL = free slot) */
 	acs_request_queue_init(acs_conn);
+#if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_NOTIFICATION)
+	acs_don_queue_init(acs_conn);
+#endif
 #if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION)
 	acs_doi_queue_init(acs_conn);
 #endif /* CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION */
@@ -119,6 +122,9 @@ struct bt_acs_conn *acs_conn_alloc(struct bt_conn *conn)
 	acs_conn->plain_cp_proc.kind = ACS_PROC_KIND_PLAIN_CP;
 	acs_conn->plain_cp_proc.acs_conn = acs_conn;
 	acs_seg_tx_init(&acs_conn->cp_tx);
+#if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_NOTIFICATION)
+	acs_seg_notify_async_init(&acs_conn->notify_tx);
+#endif
 #if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION)
 	acs_seg_tx_init(&acs_conn->indicate_tx);
 #endif
@@ -152,6 +158,9 @@ void acs_conn_cleanup(struct bt_acs_conn *acs_conn)
 	/* Abort request contexts before freeing the shared I/O slot so queued/in-flight
 	 * ACS Data Out activity cannot outlive the buffers it references.
 	 */
+#if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_NOTIFICATION)
+	acs_seg_notify_async_reset(&acs_conn->notify_tx);
+#endif
 	acs_procedure_abort_all(acs_conn);
 
 	/* Reset the plain-CP procedure singleton. */

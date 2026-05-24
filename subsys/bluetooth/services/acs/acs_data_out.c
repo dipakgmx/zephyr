@@ -153,11 +153,112 @@ static void data_tx_completion_cb(struct bt_conn *conn, const struct bt_gatt_att
 				  void *user_data);
 #if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_NOTIFICATION)
 static int data_tx_send_notify(struct acs_procedure *req);
+static void data_tx_notify_completion_cb(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+					 int err, void *user_data);
+static void data_tx_don_drain_work(struct k_work *work);
 #endif
 #if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION)
 static int data_tx_send_indicate(struct acs_procedure *req);
 static void data_tx_doi_drain_work(struct k_work *work);
 #endif
+
+#if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_NOTIFICATION)
+/**
+ * @brief Drain the next queued notification if the DON channel is idle.
+ *
+ * Called after posting a new notification and after each notification
+ * completes. Only one segmented DON transfer is kept active per connection;
+ * the FIFO serialises the rest. On send failure the failing request is
+ * released and the loop advances to the next queued entry.
+ */
+static void data_tx_drain_don_queue(struct bt_acs_conn *acs_conn)
+{
+	sys_snode_t *snode;
+	struct acs_procedure *req;
+	int err;
+
+	if (!acs_conn || !acs_conn->conn) {
+		return;
+	}
+
+	while (true) {
+		if (atomic_ptr_get(&acs_conn->active_notification) != NULL) {
+			return;
+		}
+
+		snode = k_fifo_get(&acs_conn->notify_fifo, K_NO_WAIT);
+		if (!snode) {
+			return;
+		}
+
+		req = CONTAINER_OF(snode, struct acs_procedure, node);
+
+		if (!atomic_ptr_cas(&acs_conn->active_notification, NULL, req)) {
+			k_fifo_put(&acs_conn->notify_fifo, req);
+			return;
+		}
+
+		err = acs_seg_notify_async_send(&acs_conn->notify_tx, acs_conn->conn,
+						acs_conn->attr_don, req->buffers.response_buf,
+						data_tx_notify_completion_cb, req);
+		if (!err) {
+			return;
+		}
+
+		atomic_ptr_cas(&acs_conn->active_notification, req, NULL);
+		LOG_WRN("DON async send failed: %d (handle 0x%04x)", err,
+			req->route.resource_handle);
+		acs_procedure_release_tx(req);
+	}
+}
+
+static void data_tx_don_drain_work(struct k_work *work)
+{
+	struct bt_acs_conn *acs_conn = CONTAINER_OF(work, struct bt_acs_conn, don_drain_work);
+
+	data_tx_drain_don_queue(acs_conn);
+}
+
+void acs_don_queue_init(struct bt_acs_conn *acs_conn)
+{
+	__ASSERT_NO_MSG(acs_conn != NULL);
+
+	k_fifo_init(&acs_conn->notify_fifo);
+	k_work_init(&acs_conn->don_drain_work, data_tx_don_drain_work);
+}
+
+static void acs_don_queue_submit(struct bt_acs_conn *acs_conn)
+{
+	__ASSERT_NO_MSG(acs_conn != NULL);
+
+	k_work_submit_to_queue(acs_get_wq(), &acs_conn->don_drain_work);
+}
+
+static void data_tx_notify_completion_cb(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+					 int err, void *user_data)
+{
+	struct acs_procedure *req = user_data;
+	struct bt_acs_conn *acs_conn = req ? req->acs_conn : NULL;
+
+	ARG_UNUSED(conn);
+	ARG_UNUSED(attr);
+
+	if (acs_conn) {
+		atomic_ptr_cas(&acs_conn->active_notification, req, NULL);
+	}
+
+	if (err) {
+		LOG_WRN("DON send failed for handle 0x%04x: %d",
+			req ? req->route.resource_handle : 0U, err);
+	}
+
+	acs_procedure_release_tx(req);
+
+	if (acs_conn) {
+		acs_don_queue_submit(acs_conn);
+	}
+}
+#endif /* CONFIG_BT_ACS_PROTECTED_RESOURCE_NOTIFICATION */
 
 /**
  * @brief Drain the next queued indication if the DOI channel is idle.
@@ -309,8 +410,8 @@ static void data_tx_completion_cb(struct bt_conn *conn, const struct bt_gatt_att
 
 /*
  * Internal helpers for acs_tx_submit. Notify and indicate diverge:
- *   - notify   : synchronous one-shot send via acs_seg_notify; releases TX ref
- *                immediately on completion or error.
+ *   - notify   : queued via FIFO and drained by data_tx_drain_don_queue; TX ref
+ *                released asynchronously by data_tx_notify_completion_cb.
  *   - indicate : queued via FIFO and drained by data_tx_drain_doi_queue; TX ref
  *                released asynchronously by data_tx_completion_cb.
  * They are not merged because their concurrency models differ.
@@ -335,17 +436,13 @@ static int data_tx_send_notify(struct acs_procedure *req)
 	if (err) {
 		LOG_WRN("DON encrypt failed for handle 0x%04x: %d", req->route.resource_handle,
 			err);
-		acs_procedure_release_tx(req);
 		return err;
 	}
 
-	err = acs_seg_notify(acs_conn->conn, acs_conn->attr_don, buf->data, buf->len);
-	if (err) {
-		LOG_WRN("DON send failed for handle 0x%04x: %d", req->route.resource_handle, err);
-	}
-
-	acs_procedure_release_tx(req);
-	return err;
+	acs_procedure_ref(req, ACS_PROCEDURE_REF_TX);
+	k_fifo_put(&acs_conn->notify_fifo, req);
+	acs_don_queue_submit(acs_conn);
+	return 0;
 }
 #endif /* CONFIG_BT_ACS_PROTECTED_RESOURCE_NOTIFICATION */
 
@@ -403,7 +500,7 @@ static int acs_tx_submit_plain_cp(struct acs_procedure *proc)
 	 * it.  The seg-TX engine borrows the buffer but does not own it.
 	 */
 	err = acs_seg_tx_send(&acs_conn->cp_tx, acs_conn->conn, acs_conn->attr_cp, rsp_buf,
-			      acs_cp_ind_cb, rsp_buf);
+			      acs_cp_completion_cb, rsp_buf);
 	if (err) {
 		atomic_set(&acs_conn->plain_cp_proc.plain_cp.locked, 0);
 		acs_buf_free(rsp_buf);

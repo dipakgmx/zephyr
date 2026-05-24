@@ -24,7 +24,8 @@ LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
 /* Definition below; non-static so the data-out channel layer can pass it
  * as the seg-TX completion callback for plain-CP indications.
  */
-void acs_cp_ind_cb(struct bt_conn *conn, const struct bt_gatt_attr *attr, int err, void *user_data);
+void acs_cp_completion_cb(struct bt_conn *conn, const struct bt_gatt_attr *attr, int err,
+			  void *user_data);
 
 static uint16_t acs_cp_min_operand_size(uint8_t opcode)
 {
@@ -149,7 +150,8 @@ int acs_cp_rsp_status(struct acs_procedure *proc, uint8_t req_opcode, uint8_t co
  * @param err       0 on confirm, negative errno if the indication failed.
  * @param user_data Unused.
  */
-void acs_cp_ind_cb(struct bt_conn *conn, const struct bt_gatt_attr *attr, int err, void *user_data)
+void acs_cp_completion_cb(struct bt_conn *conn, const struct bt_gatt_attr *attr, int err,
+			  void *user_data)
 {
 	struct net_buf *rsp_buf = user_data;
 	struct bt_acs_conn *acs_conn = acs_conn_lookup(conn);
@@ -344,9 +346,7 @@ void acs_seq_clear(struct acs_procedure *proc)
 {
 	bool was_active;
 
-	if (!proc) {
-		return;
-	}
+	__ASSERT_NO_MSG(proc != NULL);
 
 	was_active = proc->seq_state != ACS_CP_SEQ_IDLE;
 	proc->seq_state = ACS_CP_SEQ_IDLE;
@@ -358,7 +358,8 @@ void acs_seq_clear(struct acs_procedure *proc)
 
 void acs_seq_abort(struct acs_procedure *proc)
 {
-	if (!proc || proc->seq_state == ACS_CP_SEQ_IDLE) {
+	__ASSERT_NO_MSG(proc != NULL);
+	if (proc->seq_state == ACS_CP_SEQ_IDLE) {
 		return;
 	}
 
@@ -421,7 +422,9 @@ void acs_seq_on_confirm(struct acs_procedure *proc)
 {
 	int err;
 
-	if (!proc || !proc->acs_conn || proc->seq_state == ACS_CP_SEQ_IDLE) {
+	__ASSERT_NO_MSG(proc != NULL);
+	__ASSERT_NO_MSG(proc->acs_conn != NULL);
+	if (proc->seq_state == ACS_CP_SEQ_IDLE) {
 		return;
 	}
 
