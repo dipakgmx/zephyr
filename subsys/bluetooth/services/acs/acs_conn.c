@@ -19,7 +19,6 @@
 #include "common/bt_str.h"
 #include "acs_internal.h"
 #include "acs_key_exchange.h"
-#include "zephyr/sys/check.h"
 
 LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
 
@@ -89,9 +88,7 @@ struct bt_acs_conn *acs_conn_lookup(struct bt_conn *conn)
 
 struct bt_acs_conn *acs_conn_alloc(struct bt_conn *conn)
 {
-	if (!conn) {
-		return NULL;
-	}
+	__ASSERT_NO_MSG(conn != NULL);
 
 	struct bt_acs_conn *acs_conn = &acs_conn_state[bt_conn_index(conn)];
 
@@ -135,9 +132,7 @@ struct bt_acs_conn *acs_conn_alloc(struct bt_conn *conn)
 
 void acs_conn_cleanup(struct bt_acs_conn *acs_conn)
 {
-	if (!acs_conn) {
-		return;
-	}
+	__ASSERT_NO_MSG(acs_conn != NULL);
 
 	LOG_DBG("Cleaning up ACS connection state %p", (void *)acs_conn);
 
@@ -257,9 +252,7 @@ int bt_acs_invalidate_security(struct bt_conn *conn)
 	struct bt_acs_conn *acs_conn;
 	bool was_established;
 	const struct bt_acs_cb *cb;
-	CHECKIF(!conn) {
-		return -EINVAL;
-	}
+	__ASSERT(conn != NULL, "conn must not be NULL");
 
 	if (!acs_is_initialized()) {
 		return -EINVAL;
