@@ -471,11 +471,8 @@ struct bt_acs_cb {
 	 * is derived.
 	 *
 	 * @param conn Connection object.
-	 * @param session_key Derived session key.
-	 * @param key_len Length of session key in bytes.
 	 */
-	void (*security_established)(struct bt_conn *conn, const uint8_t *session_key,
-				     uint16_t key_len);
+	void (*security_established)(struct bt_conn *conn);
 
 	/**
 	 * @brief Security has been invalidated for a connection.
