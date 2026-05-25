@@ -71,6 +71,16 @@ static int acs_runtime_classify_frame(const struct acs_frame *frame, uint16_t ma
 #endif
 }
 
+static void acs_procedure_take_request_buf(struct acs_procedure *proc, struct bt_acs_conn *acs_conn,
+					   const struct acs_frame *frame)
+{
+	proc->buffers.request_buf = acs_conn->data_rx.buf;
+	acs_conn->data_rx.buf = NULL;
+	net_buf_pull(proc->buffers.request_buf,
+		     (size_t)(frame->payload - proc->buffers.request_buf->data));
+	proc->buffers.request_buf->len = frame->payload_len;
+}
+
 #if IS_ENABLED(CONFIG_BT_ACS_FEAT_AUTHENTICATION)
 int acs_runtime_dispatch_protected_cp_frame(struct acs_frame *frame, struct bt_acs_conn *acs_conn)
 {
@@ -97,10 +107,7 @@ int acs_runtime_dispatch_protected_cp_frame(struct acs_frame *frame, struct bt_a
 		return -ENOMEM;
 	}
 
-	req_ctx->buffers.request_buf = acs_conn->data_rx.buf;
-	acs_conn->data_rx.buf = NULL;
-	net_buf_pull(req_ctx->buffers.request_buf,
-		     (size_t)(frame->payload - req_ctx->buffers.request_buf->data));
+	acs_procedure_take_request_buf(req_ctx, acs_conn, frame);
 
 	err = acs_cp_dispatch(frame, acs_conn, req_ctx);
 
@@ -123,6 +130,58 @@ int acs_runtime_dispatch_protected_cp_frame(struct acs_frame *frame, struct bt_a
 	}
 	return err;
 }
+
+#if defined(CONFIG_BT_ACS_FEAT_AUTHORIZATION)
+static enum acs_req_access acs_rmap_resolve_request_access(uint16_t map_id, uint16_t handle,
+							   uint16_t isc_id, uint16_t payload_len)
+{
+	const struct bt_acs_rmap_protected *entry;
+	enum acs_rmap_resource_kind kind;
+	bool can_read = false;
+	bool can_write = false;
+
+	if (acs_rmap_find_protected(map_id, handle, &kind, &entry) != 0) {
+		return ACS_REQ_ACCESS_UNKNOWN;
+	}
+
+	for (uint8_t i = 0; i < entry->num_ops; i++) {
+		if (entry->ops[i].isc_id != isc_id) {
+			continue;
+		}
+
+		switch (entry->ops[i].opcode) {
+		case BT_ACS_RMAP_OP_ATT_READ_REQ:
+		case BT_ACS_RMAP_OP_ATT_READ_BLOB_REQ:
+		case BT_ACS_RMAP_OP_ATT_READ_MULT_REQ:
+		case BT_ACS_RMAP_OP_ATT_READ_MULT_VL_REQ:
+			can_read = true;
+			break;
+		case BT_ACS_RMAP_OP_ATT_WRITE_REQ:
+		case BT_ACS_RMAP_OP_ATT_WRITE_CMD:
+		case BT_ACS_RMAP_OP_ATT_SIGNED_WRITE_CMD:
+		case BT_ACS_RMAP_OP_ATT_PREPARE_WRITE_REQ:
+		case BT_ACS_RMAP_OP_ATT_EXECUTE_WRITE_REQ:
+			can_write = true;
+			break;
+		default:
+			break;
+		}
+	}
+
+	if (can_write && !can_read) {
+		return ACS_REQ_ACCESS_WRITE;
+	}
+	if (can_read && !can_write) {
+		return ACS_REQ_ACCESS_READ;
+	}
+	if (can_read && can_write) {
+		/* Same ISC_ID covers both read and write — use payload as tiebreaker. */
+		return (payload_len > 0) ? ACS_REQ_ACCESS_WRITE : ACS_REQ_ACCESS_READ;
+	}
+
+	return ACS_REQ_ACCESS_UNKNOWN;
+}
+#endif /* CONFIG_BT_ACS_FEAT_AUTHORIZATION */
 
 int acs_runtime_dispatch_protected_char_frame(struct acs_frame *frame, struct bt_acs_conn *acs_conn)
 {
@@ -152,10 +211,19 @@ int acs_runtime_dispatch_protected_char_frame(struct acs_frame *frame, struct bt
 		return -ENOMEM;
 	}
 
-	req_ctx->buffers.request_buf = acs_conn->data_rx.buf;
-	acs_conn->data_rx.buf = NULL;
-	net_buf_pull(req_ctx->buffers.request_buf,
-		     (size_t)(frame->payload - req_ctx->buffers.request_buf->data));
+	acs_procedure_take_request_buf(req_ctx, acs_conn, frame);
+
+#if defined(CONFIG_BT_ACS_FEAT_AUTHORIZATION)
+	req_ctx->route.access = acs_rmap_resolve_request_access(acs_conn->restriction_map_id,
+								frame->resource_handle,
+								frame->isc_id, frame->payload_len);
+	if (req_ctx->route.access == ACS_REQ_ACCESS_UNKNOWN) {
+		LOG_ERR("no read/write op in rmap for handle 0x%04x isc 0x%04x",
+			frame->resource_handle, frame->isc_id);
+		acs_procedure_release_owner(req_ctx);
+		return -ENOENT;
+	}
+#endif
 
 	acs_request_queue_submit(acs_conn, req_ctx);
 	return 0;

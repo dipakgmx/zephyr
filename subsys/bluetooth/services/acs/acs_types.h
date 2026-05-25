@@ -328,9 +328,17 @@ struct acs_proc_buffers {
 	struct net_buf *response_buf; /**< Pool buffer for plaintext response staging */
 };
 
+/** Resolved request access kind for a protected characteristic procedure. */
+enum acs_req_access {
+	ACS_REQ_ACCESS_UNKNOWN = 0,
+	ACS_REQ_ACCESS_READ,
+	ACS_REQ_ACCESS_WRITE,
+};
+
 struct acs_proc_route {
-	uint16_t resource_handle; /**< Protected resource handle (0 for plain CP singleton) */
-	uint16_t isc_id;          /**< ISC_ID associated with this request (0 for plain CP) */
+	uint16_t resource_handle;   /**< Protected resource handle (0 for plain CP singleton) */
+	uint16_t isc_id;            /**< ISC_ID associated with this request (0 for plain CP) */
+	enum acs_req_access access; /**< Resolved read/write from rmap + payload heuristic */
 };
 
 struct acs_proc_lifetime {

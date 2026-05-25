@@ -187,10 +187,13 @@ static int acs_auto_respond(struct acs_procedure *req)
 		return -ENOENT;
 	}
 
-	/* Secure write: push the request data through the attribute's write handler */
-	if (len > 0) {
+	if (ctx.decl && ctx.decl->user_data) {
+		props = ((const struct bt_gatt_chrc *)ctx.decl->user_data)->properties;
+	}
+
+	if (req->route.access == ACS_REQ_ACCESS_WRITE) {
 		if (!ctx.value->write) {
-			LOG_WRN("auto_respond: attr 0x%04x has no write handler", resource_handle);
+			LOG_WRN("attr 0x%04x has no write handler", resource_handle);
 			return -ENOTSUP;
 		}
 		ssize_t written = ctx.value->write(conn, ctx.value, data, len, 0, 0);
@@ -201,15 +204,6 @@ static int acs_auto_respond(struct acs_procedure *req)
 		}
 	}
 
-	/* Determine characteristic properties for routing and read-back decisions. */
-	if (ctx.decl && ctx.decl->user_data) {
-		props = ((const struct bt_gatt_chrc *)ctx.decl->user_data)->properties;
-	}
-
-	/* Pick the eventual reply channel up-front so the prep helper can stage
-	 * the response in the right form (channel only differs in metadata; the
-	 * buffer layout is identical for protected DON/DOI).
-	 */
 	{
 		enum acs_reply_channel channel =
 			(props & BT_GATT_CHRC_INDICATE) ? ACS_REPLY_DOI : ACS_REPLY_DON;
@@ -222,9 +216,6 @@ static int acs_auto_respond(struct acs_procedure *req)
 			return -ENOMEM;
 		}
 
-		/* Read back the current attribute value, unless the characteristic is
-		 * write-only.
-		 */
 		if (props & BT_GATT_CHRC_READ) {
 			if (!ctx.value->read) {
 				LOG_WRN("auto_respond: attr 0x%04x has no read handler",
