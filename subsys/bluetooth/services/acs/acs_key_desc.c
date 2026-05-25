@@ -37,15 +37,15 @@ LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
 							       : ACS_KDF_RESERVED)
 
 /*
- * Default key descriptor records — compiled in when the corresponding Kconfig is enabled.
+ * Default key descriptor records - compiled in when the corresponding Kconfig is enabled.
  * Applications may register additional records with BT_ACS_KEY_DESC_DEFINE() in their
  * own source files; the library discovers all records via the bt_acs_key_desc_record iterable
  * section.
  *
  * Algorithm records (CCM, GCM, CMAC, GMAC) carry a parent_key_id field that tells the peer
  * which key was used to derive the algorithm's session material.  When KDF is enabled, the
- * spec (Figure 4.4) requires algorithm records to reference the KDF key — not the ECDH key
- * directly — because the KDF step produces the child key that is actually loaded into the AEAD
+ * spec (Figure 4.4) requires algorithm records to reference the KDF key - not the ECDH key
+ * directly - because the KDF step produces the child key that is actually loaded into the AEAD
  * engine.  Without KDF, the ECDH shared secret itself is the AEAD key, so the parent reference
  * stays at ACS_KEY_ID_ECDH.
  */

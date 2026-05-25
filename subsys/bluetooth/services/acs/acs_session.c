@@ -158,7 +158,7 @@ int acs_session_cache_restore(const bt_addr_le_t *addr, struct bt_acs_conn *acs_
 	goto reimport_ok;
 
 reimport_failed:
-	LOG_ERR("Failed to re-import cached keys — resetting crypto");
+	LOG_ERR("Failed to re-import cached keys - resetting crypto");
 	acs_crypto_reset(acs_conn);
 	acs_conn->status_flags = BT_ACS_STATUS_SECURITY_CONTROLS_ENABLED;
 	return err;

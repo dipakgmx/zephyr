@@ -366,7 +366,7 @@ enum acs_seg_rx_result acs_seg_rx_process(struct acs_seg_rx_ctx *ctx, const uint
 
 	/* Check inter-segment timeout (§3.6.2) */
 	if (sys_timepoint_expired(ctx->rx_deadline)) {
-		LOG_WRN("seg_rx: 30-second inter-segment timeout — aborting reassembly");
+		LOG_WRN("seg_rx: 30-second inter-segment timeout - aborting reassembly");
 		ctx->rx_in_progress = false;
 		net_buf_reset(ctx->buf);
 		return ACS_SEG_RX_ERR_TIMEOUT;
@@ -411,7 +411,7 @@ static void acs_seg_tx_work_handler(struct k_work *work);
  *
  * The seg-TX engine borrows the buffer for the duration of the segmented
  * transfer but does not own it.  Callers are responsible for the buffer's
- * lifetime — the plain-CP path frees it in its completion callback, and the
+ * lifetime - the plain-CP path frees it in its completion callback, and the
  * protected-resource path lets the owning request context manage it.
  */
 static void seg_tx_detach_buf(struct acs_seg_tx_ctx *ctx)

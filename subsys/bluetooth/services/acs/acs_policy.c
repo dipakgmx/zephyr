@@ -93,7 +93,7 @@ bool bt_acs_policy_is_permitted(struct bt_conn *conn, uint16_t att_handle,
 
 #if IS_ENABLED(CONFIG_BT_ACS_FEAT_AUTHORIZATION)
 
-/* CCCD gate table — maps protected CCCD handles to their char's permission entries. */
+/* CCCD gate table - maps protected CCCD handles to their char's permission entries. */
 static struct acs_rmap_cccd_gate acs_protected_cccds[CONFIG_BT_ACS_MAX_PROTECTED_CCCD_GATES];
 static uint8_t acs_protected_cccd_count;
 
@@ -140,7 +140,7 @@ static bool acs_gatt_write_authorize(struct bt_conn *conn, const struct bt_gatt_
 				return true;
 			}
 		}
-		/* CCCD not in the protected set — allow freely */
+		/* CCCD not in the protected set - allow freely */
 		return true;
 	}
 #endif /* CONFIG_BT_ACS_FEAT_AUTHORIZATION */

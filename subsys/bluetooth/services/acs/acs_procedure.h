@@ -113,13 +113,13 @@ struct net_buf *acs_prepare_reply_buf(struct acs_procedure *proc, bool encrypted
  * @brief Single-seam outbound submission for any reply.
  *
  * Decides the transport family from @p reply->channel:
- *   - @ref ACS_REPLY_CP  — plain segmented CP indication on @c acs_conn->cp_tx,
+ *   - @ref ACS_REPLY_CP  - plain segmented CP indication on @c acs_conn->cp_tx,
  *     completion via @ref acs_cp_ind_cb. @p proc must be the plain-CP
  *     singleton.
- *   - @ref ACS_REPLY_DOI — encrypts in place, queues on @c indicate_fifo and
+ *   - @ref ACS_REPLY_DOI - encrypts in place, queues on @c indicate_fifo and
  *     drains it; completion via @c data_tx_completion_cb. @p proc must
  *     be a protected request.
- *   - @ref ACS_REPLY_DON — encrypts in place, sends an unconfirmed segmented
+ *   - @ref ACS_REPLY_DON - encrypts in place, sends an unconfirmed segmented
  *     notification. @p proc must be a protected request.
  *
  * Buffer ownership:

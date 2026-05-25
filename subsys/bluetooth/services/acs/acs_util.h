@@ -8,7 +8,7 @@
  * @file acs_util.h
  * @brief ACS inline utility functions (errno → CP response code mapping).
  *
- * Included transitively via acs_internal.h — not intended for direct inclusion.
+ * Included transitively via acs_internal.h - not intended for direct inclusion.
  */
 
 #ifndef BT_GATT_ACS_UTIL_H_

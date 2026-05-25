@@ -13,17 +13,17 @@
  *
  * Layering (skim top-to-bottom to follow the data flow):
  *
- *   acs_wire_constants.h  — on-the-wire field sizes / opcodes
- *   acs_types.h           — core structs (acs_frame, acs_route, acs_procedure,
+ *   acs_wire_constants.h  - on-the-wire field sizes / opcodes
+ *   acs_types.h           - core structs (acs_frame, acs_route, acs_procedure,
  *                           bt_acs_conn) and enumerations shared across layers
- *   acs_util.h            — small inline helpers
+ *   acs_util.h            - small inline helpers
  *
- *   acs_runtime.h         — GATT-write entrypoints + frame dispatch + Data In
+ *   acs_runtime.h         - GATT-write entrypoints + frame dispatch + Data In
  *                           unwrap. This is where every inbound PDU enters.
- *   acs_procedure.h       — procedure (request) lifecycle, multi-step reply
+ *   acs_procedure.h       - procedure (request) lifecycle, multi-step reply
  *                           sequences, reply staging + send (acs_tx_submit),
  *                           CP opcode dispatch.
- *   acs_crypto.h          — session crypto + key exchange API.
+ *   acs_crypto.h          - session crypto + key exchange API.
  *
  * The remaining declarations below cover service-level concerns that don't
  * belong to any single layer: buffer pool, GATT attribute accessors, CCC

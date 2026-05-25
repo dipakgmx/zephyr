@@ -312,7 +312,7 @@ void acs_rmap_collect_protected_cccds(struct acs_rmap_cccd_gate *gates, size_t c
 		}
 
 		if (gate_count >= capacity) {
-			LOG_WRN("Protected CCCD gate table full (max %zu) — char 0x%04x left "
+			LOG_WRN("Protected CCCD gate table full (max %zu) - char 0x%04x left "
 				"ungated",
 				capacity, reg->entry->resource_handle);
 			continue;
@@ -635,7 +635,7 @@ int acs_cp_handle_activate_restriction_map(struct acs_procedure *proc, struct ne
 	}
 
 	if (map.map_isc_id != 0 && proc->kind == ACS_PROC_KIND_PLAIN_CP) {
-		LOG_WRN("Activate Restriction Map: map 0x%04x is protected (ISC 0x%04x) — "
+		LOG_WRN("Activate Restriction Map: map 0x%04x is protected (ISC 0x%04x) - "
 			"plain CP is not applicable",
 			map_id, map.map_isc_id);
 		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_ACTIVATE_RESTRICTION_MAP,

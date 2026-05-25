@@ -113,7 +113,7 @@ int acs_runtime_dispatch_protected_cp_frame(struct acs_frame *frame, struct bt_a
 
 	/* The CP handler ran synchronously and consumed the input bytes already.
 	 * Drop the decrypted_request buffer now so it returns to the pool while
-	 * we wait for the indication to confirm — acs_req_free will see NULL
+	 * we wait for the indication to confirm - acs_req_free will see NULL
 	 * and skip the free at refcount-zero.
 	 */
 	if (req_ctx->buffers.request_buf) {
@@ -123,7 +123,7 @@ int acs_runtime_dispatch_protected_cp_frame(struct acs_frame *frame, struct bt_a
 
 	/* If a multi-step reply sequence is active, the sequence now owns the
 	 * ALLOC ref and will release it in acs_seq_clear(). Otherwise, drop it
-	 * here — the single response is already queued or completed.
+	 * here - the single response is already queued or completed.
 	 */
 	if (req_ctx->seq_state == ACS_CP_SEQ_IDLE) {
 		acs_procedure_release_owner(req_ctx);
@@ -175,7 +175,7 @@ static enum acs_req_access acs_rmap_resolve_request_access(uint16_t map_id, uint
 		return ACS_REQ_ACCESS_READ;
 	}
 	if (can_read && can_write) {
-		/* Same ISC_ID covers both read and write — use payload as tiebreaker. */
+		/* Same ISC_ID covers both read and write - use payload as tiebreaker. */
 		return (payload_len > 0) ? ACS_REQ_ACCESS_WRITE : ACS_REQ_ACCESS_READ;
 	}
 

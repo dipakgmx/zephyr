@@ -344,7 +344,7 @@ static void acs_req_work_handler(struct k_work *work)
 
 		/* The handler / auto_respond consumed the input bytes already.
 		 * Drop decrypted_request now so it returns to the pool while we wait
-		 * for the indication / notification to confirm — acs_req_free will see
+		 * for the indication / notification to confirm - acs_req_free will see
 		 * NULL and skip the free at refcount-zero.
 		 */
 		if (req->buffers.request_buf) {

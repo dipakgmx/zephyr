@@ -82,7 +82,7 @@ extern "C" {
 /** @brief Total AES-GCM nonce length in bytes (fixed + variable). */
 #define ACS_GCM_NONCE_SIZE (ACS_GCM_NONCE_FIXED_SIZE + ACS_GCM_NONCE_VAR_SIZE) /**< 12 */
 
-/** @brief GMAC nonce/IV constants — identical to GCM (GMAC is GCM with zero-length plaintext). */
+/** @brief GMAC nonce/IV constants - identical to GCM (GMAC is GCM with zero-length plaintext). */
 #define ACS_GMAC_NONCE_FIXED_SIZE ACS_GCM_NONCE_FIXED_SIZE
 #define ACS_GMAC_NONCE_VAR_SIZE   ACS_GCM_NONCE_VAR_SIZE
 #define ACS_GMAC_NONCE_SIZE       ACS_GCM_NONCE_SIZE
@@ -154,7 +154,7 @@ extern "C" {
  * @brief Headroom reserved in protected response buffers for in-place encryption.
  *
  * ISC_ID (2 bytes) + Nonce_Var (variable-part nonce bytes).
- * The auth tag is appended after ciphertext — needs tailroom,
+ * The auth tag is appended after ciphertext - needs tailroom,
  * already accounted for in ACS_BUF_SIZE.
  */
 #define ACS_CRYPTO_HEADROOM (2U + ACS_MAX_NONCE_VAR_SIZE)

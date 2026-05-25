@@ -10,8 +10,8 @@
 /*
  * The runtime layer hosts the GATT-write entry points for the ACS service:
  *
- *   acs_cp_write       — ACS Control Point characteristic write handler
- *   acs_data_in_write  — ACS Data In characteristic write handler
+ *   acs_cp_write       - ACS Control Point characteristic write handler
+ *   acs_data_in_write  - ACS Data In characteristic write handler
  *
  * Both drive the same pipeline: input checks → channel-RX feed → frame
  * construction → unwrap (Data In only) → classify → procedure build/start →

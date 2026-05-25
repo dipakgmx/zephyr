@@ -30,9 +30,9 @@ struct acs_rmap_get_descriptor_req {
 /**
  * @brief Wire header for every restriction map record (Table 4.19 / §4.1.1.2).
  *
- *   type_id    — record type (0x00–0x03)
- *   type_value — Restriction_Map_ID, ISC_ID, or Resource_Handle (LE)
- *   data_size  — byte count of the Data field; 0 if absent
+ *   type_id    - record type (0x00–0x03)
+ *   type_value - Restriction_Map_ID, ISC_ID, or Resource_Handle (LE)
+ *   data_size  - byte count of the Data field; 0 if absent
  */
 struct acs_rmap_rec_hdr {
 	uint8_t type_id;

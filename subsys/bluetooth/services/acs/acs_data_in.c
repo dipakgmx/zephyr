@@ -149,7 +149,7 @@ static int acs_data_in_validate(struct bt_acs_conn *acs_conn, struct net_buf_sim
 }
 
 /*
- * Byte-order dance — done in three steps because PSA AEAD demands MSO input/output
+ * Byte-order dance - done in three steps because PSA AEAD demands MSO input/output
  * but the wire format is LSO. We avoid an intermediate buffer by swapping in place:
  *
  *   1. swap(buf, buf->len)          : wire LSO    → PSA MSO   (input to PSA)

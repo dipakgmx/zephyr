@@ -30,7 +30,7 @@ struct bt_acs_feature_rsp {
 } __packed;
 
 /**
- * @defgroup acs_feature_bits ACS Feature Response — Features field bit definitions
+ * @defgroup acs_feature_bits ACS Feature Response - Features field bit definitions
  * @brief Bit definitions for the Features field of struct bt_acs_feature_rsp (Table 4.60).
  *
  * Each bit represents a specific optional or conditional feature supported by the AC Server.
@@ -98,7 +98,7 @@ struct bt_acs_feature_rsp {
 /** @} */
 
 /**
- * @defgroup acs_protection_methods_bits ACS Feature Response — Protection_Methods field bit
+ * @defgroup acs_protection_methods_bits ACS Feature Response - Protection_Methods field bit
  * definitions
  * @brief Bit definitions for the Protection_Methods field of struct bt_acs_feature_rsp
  * (Table 4.61).
@@ -128,7 +128,7 @@ struct bt_acs_feature_rsp {
 /** @} */
 
 /**
- * @defgroup acs_oob_key_exchange_capabilities_bits ACS Feature Response —
+ * @defgroup acs_oob_key_exchange_capabilities_bits ACS Feature Response -
  * OOB_Key_Exchange_Capabilities field bit definitions
  * @brief Bit definitions for the OOB_Key_Exchange_Capabilities field of struct bt_acs_feature_rsp
  * (Table 4.62).
@@ -170,7 +170,7 @@ struct bt_acs_feature_rsp {
 /** @} */
 
 /**
- * @defgroup acs_confirmation_input_oob_capabilities_bits ACS Feature Response —
+ * @defgroup acs_confirmation_input_oob_capabilities_bits ACS Feature Response -
  * Confirmation_Input_OOB_Number_Capabilities field bit definitions
  * @brief Bit definitions for the Confirmation_Input_OOB_Number_Capabilities field of struct
  * bt_acs_feature_rsp (Table 4.63).
@@ -189,7 +189,7 @@ struct bt_acs_feature_rsp {
 /** @} */
 
 /**
- * @defgroup acs_confirmation_output_oob_capabilities_bits ACS Feature Response —
+ * @defgroup acs_confirmation_output_oob_capabilities_bits ACS Feature Response -
  * Confirmation_Output_OOB_Number_Capabilities field bit definitions
  * @brief Bit definitions for the Confirmation_Output_OOB_Number_Capabilities field of struct
  * bt_acs_feature_rsp (Table 4.64).
@@ -263,7 +263,7 @@ struct acs_cp_ecdh_confirm_rand_req {
 						   octets, LSO…MSO) */
 } __packed;
 
-/** SET_CLIENT_NONCE_FIXED operand — Key_ID followed by variable-length nonce bytes.
+/** SET_CLIENT_NONCE_FIXED operand - Key_ID followed by variable-length nonce bytes.
  *
  * The AC_Client_Nonce_Fixed_Value length is descriptor-defined, not globally fixed:
  * the handler resolves the operand size from the referenced Key Descriptor record.
@@ -281,14 +281,14 @@ BUILD_ASSERT(sizeof(struct acs_cp_ecdh_confirm_rand_req) == 2 + ACS_CONFIRM_VALU
  * Identifies how the exchanged key is confirmed during an ECDH key exchange.
  */
 enum bt_acs_confirmation_method {
-	/** No Confirmation OOB Method Used — AuthValue = 0x00...00, not authenticated */
+	/** No Confirmation OOB Method Used - AuthValue = 0x00...00, not authenticated */
 	BT_ACS_CONFIRM_METHOD_NONE = 0x00,
-	/** Confirmation Output OOB Number Action Used — server generates and outputs a number */
+	/** Confirmation Output OOB Number Action Used - server generates and outputs a number */
 	BT_ACS_CONFIRM_METHOD_OUTPUT_OOB = 0x01,
-	/** Confirmation Input OOB Number Action Used — client generates a number, user enters into
+	/** Confirmation Input OOB Number Action Used - client generates a number, user enters into
 	 * server */
 	BT_ACS_CONFIRM_METHOD_INPUT_OOB = 0x02,
-	/** Confirmation Static OOB Number Used — pre-shared static value */
+	/** Confirmation Static OOB Number Used - pre-shared static value */
 	BT_ACS_CONFIRM_METHOD_STATIC_OOB = 0x03,
 };
 
@@ -299,9 +299,9 @@ enum bt_acs_confirmation_method {
  * All other values (0x00, 0x02, 0x04–0xFE) are RFU; 0xFF is Prohibited.
  */
 enum bt_acs_confirmation_action_output {
-	/** Beep — user confirms by hearing a beep from the server */
+	/** Beep - user confirms by hearing a beep from the server */
 	BT_ACS_CONFIRM_ACTION_OUTPUT_BEEP = 0x01,
-	/** Output Numeric — server outputs a numeric value for user confirmation */
+	/** Output Numeric - server outputs a numeric value for user confirmation */
 	BT_ACS_CONFIRM_ACTION_OUTPUT_NUMERIC = 0x03,
 };
 
@@ -312,9 +312,9 @@ enum bt_acs_confirmation_action_output {
  * All other values (0x01, 0x03–0xFE) are RFU; 0xFF is Prohibited.
  */
 enum bt_acs_confirmation_action_input {
-	/** Push — user confirms by pushing a control on the server */
+	/** Push - user confirms by pushing a control on the server */
 	BT_ACS_CONFIRM_ACTION_INPUT_PUSH = 0x00,
-	/** Input Numeric — user enters a numeric value into the server */
+	/** Input Numeric - user enters a numeric value into the server */
 	BT_ACS_CONFIRM_ACTION_INPUT_NUMERIC = 0x02,
 };
 

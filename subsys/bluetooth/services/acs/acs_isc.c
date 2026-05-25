@@ -22,7 +22,7 @@ BUILD_ASSERT(!(IS_ENABLED(CONFIG_BT_ACS_FEAT_CONFIDENTIALITY) &&
 	     "CONFIG_BT_ACS_FEAT_CONFIDENTIALITY requires AES-GCM or AES-CCM data protection");
 
 /*
- * Default ISC records — compiled in when the corresponding algorithm Kconfig is enabled.
+ * Default ISC records - compiled in when the corresponding algorithm Kconfig is enabled.
  * Applications may register additional ISC records with BT_ACS_ISC_DEFINE() in their
  * own source files; the library discovers all records via the bt_acs_isc_record iterable section.
  */
@@ -52,7 +52,7 @@ BT_ACS_ISC_DEFINE(acs_isc_auth_ecdh, .isc_id = ACS_ISC_ID_AUTH, .num_controls = 
 		  .controls = {ACS_CTRL_NONCE, ACS_CTRL_MAC}, .key_id = ACS_KEY_ID_ECDH);
 #endif
 
-/* Unencrypted fallback — always present */
+/* Unencrypted fallback - always present */
 BT_ACS_ISC_DEFINE(acs_isc_unenc, .isc_id = ACS_ISC_ID_UNENC, .num_controls = 1,
 		  .controls = {ACS_CTRL_UNENC}, .key_id = 0x0000);
 

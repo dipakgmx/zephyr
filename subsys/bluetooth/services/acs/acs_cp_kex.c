@@ -125,7 +125,7 @@ int acs_cp_kex_exchange_kdf(struct acs_procedure *proc, struct net_buf_simple *b
 		}
 
 		/* Nonce counters are reset inside bt_acs_crypto_derive_kdf_child_key()
-		 * with the correct SEQ_EVEN_ODD logic — no separate reset needed here.
+		 * with the correct SEQ_EVEN_ODD logic - no separate reset needed here.
 		 *
 		 * SECURITY_ESTABLISHED flag and the security_established callback are
 		 * deferred to kex_step_status, which runs after the KEY_EXCHANGE_RESPONSE
@@ -242,7 +242,7 @@ int acs_cp_kex_start(struct acs_procedure *proc, struct net_buf_simple *buf)
 	case BT_ACS_CONFIRM_METHOD_STATIC_OOB:
 		/* Spec §4.4.4.18.3 (after Table 4.52): Static OOB action MUST be 0xFF.
 		 * The method itself is only supported when the server advertises at least
-		 * one bit in Confirmation_Static_OOB_Number_Capabilities — otherwise the
+		 * one bit in Confirmation_Static_OOB_Number_Capabilities - otherwise the
 		 * client has no way to know the static number and the exchange would fail. */
 		if (action != BT_ACS_CONFIRM_ACTION_NOT_APPLICABLE) {
 			method_action_valid = false;
@@ -303,7 +303,7 @@ int acs_cp_kex_start(struct acs_procedure *proc, struct net_buf_simple *buf)
 						 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 		}
 		if (kdf_key->psa_key_id != 0U) {
-			LOG_WRN("KDF child key already active — invalidate before re-exchange");
+			LOG_WRN("KDF child key already active - invalidate before re-exchange");
 			return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_START_KEY_EXCHANGE,
 						 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE);
 		}

@@ -46,7 +46,7 @@ enum acs_source_channel {
 };
 
 /**
- * @brief Normalized inbound request — handoff object from transport decode into runtime dispatch.
+ * @brief Normalized inbound request - handoff object from transport decode into runtime dispatch.
  *
  * Lifecycle:
  * - Built by the GATT entry layer once acs_channel_rx_feed() reports COMPLETE.
@@ -73,7 +73,7 @@ struct acs_frame {
 /**
  * @brief Build a plain-CP frame from a reassembled segmentation buffer.
  *
- * The frame carries @p rx_buf in @c backing_buf — the runtime layer is
+ * The frame carries @p rx_buf in @c backing_buf - the runtime layer is
  * responsible for releasing the buffer (or transferring ownership) on every
  * terminal path. The Data In equivalent is built post-decrypt inside the
  * unwrap helper and intentionally has @c backing_buf == NULL because the
@@ -96,7 +96,7 @@ static inline struct acs_frame acs_frame_from_cp_rx(struct bt_conn *conn, struct
 /**
  * @brief Result kind from @ref acs_classify_frame.
  *
- * The classifier answers "what kind of work is this?" — it does not allocate
+ * The classifier answers "what kind of work is this?" - it does not allocate
  * state and does not dispatch.
  */
 enum acs_route_kind {
@@ -123,9 +123,9 @@ struct acs_route {
  * @brief Outbound transport channel for an @ref acs_reply.
  *
  * Distinguishes the three send paths a reply can take:
- *  - @ref ACS_REPLY_CP   — plain ACS Control Point indication (segmented).
- *  - @ref ACS_REPLY_DON  — Data Out Notify (encrypted notification).
- *  - @ref ACS_REPLY_DOI  — Data Out Indicate (encrypted, segmented, confirmed).
+ *  - @ref ACS_REPLY_CP   - plain ACS Control Point indication (segmented).
+ *  - @ref ACS_REPLY_DON  - Data Out Notify (encrypted notification).
+ *  - @ref ACS_REPLY_DOI  - Data Out Indicate (encrypted, segmented, confirmed).
  */
 enum acs_reply_channel {
 	ACS_REPLY_CP = 0,
@@ -373,7 +373,7 @@ struct acs_procedure {
  */
 struct bt_acs_conn {
 	struct bt_conn *conn; /**< Connection pointer */
-	/* Cached GATT attrs — populated once in acs_conn_alloc */
+	/* Cached GATT attrs - populated once in acs_conn_alloc */
 	const struct bt_gatt_attr *attr_cp;
 	const struct bt_gatt_attr *attr_status;
 #if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_NOTIFICATION)

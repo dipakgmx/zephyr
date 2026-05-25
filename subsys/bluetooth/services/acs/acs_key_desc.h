@@ -27,7 +27,7 @@ struct bt_acs_conn;
 /** AES with nonce: ParentID(2) + MsgType(1) + MAC(1) + NonceType(1) + VarSize(1) + FixSize(1) */
 #define ACS_KEY_DESC_AES_ALG_MANDATORY_SIZE 7
 
-/** AES-CMAC: ParentID(2) + MsgType(1) + MAC(1) — nonce fields excluded per Table 4.45 C.1 */
+/** AES-CMAC: ParentID(2) + MsgType(1) + MAC(1) - nonce fields excluded per Table 4.45 C.1 */
 #define ACS_KEY_DESC_AES_CMAC_DATA_SIZE 4
 
 /** OOB Data: OOB_Method(1) + ServerFmt(1) + ClientFmt(1) + Curve(1) + KDF(1) (Table 4.37) */
@@ -40,9 +40,9 @@ struct bt_acs_conn;
  * @brief Common TLV header carried by every key descriptor record (Table 4.36).
  *
  * Fields
- *   type_id    — record type (enum acs_key_record_type)
- *   type_value — this record's Key_ID, little-endian
- *   data_size  — byte length of the Data field that follows
+ *   type_id    - record type (enum acs_key_record_type)
+ *   type_value - this record's Key_ID, little-endian
+ *   data_size  - byte length of the Data field that follows
  */
 struct acs_key_rec_hdr {
 	uint8_t type_id;
@@ -51,13 +51,13 @@ struct acs_key_rec_hdr {
 } __packed;
 
 /**
- * @brief ECDH Key Exchange record — full wire layout (Table 4.39).
+ * @brief ECDH Key Exchange record - full wire layout (Table 4.39).
  *
  * Data fields
- *   server_pk_fmt — AC_Server_Public_Key_Format (Table 4.40)
- *   client_pk_fmt — AC_Client_Public_Key_Format (Table 4.41)
- *   curve         — Elliptic_Curve              (Table 4.42)
- *   kdf           — Key_Derivation_Function     (Table 4.43)
+ *   server_pk_fmt - AC_Server_Public_Key_Format (Table 4.40)
+ *   client_pk_fmt - AC_Client_Public_Key_Format (Table 4.41)
+ *   curve         - Elliptic_Curve              (Table 4.42)
+ *   kdf           - Key_Derivation_Function     (Table 4.43)
  */
 struct acs_key_rec_ecdh {
 	struct acs_key_rec_hdr hdr;
@@ -68,19 +68,19 @@ struct acs_key_rec_ecdh {
 } __packed;
 
 /**
- * @brief AES algorithm record — fixed header portion (Table 4.45).
+ * @brief AES algorithm record - fixed header portion (Table 4.45).
  *
  * Applies to AES-128-CCM, AES-128-GCM, and other AES modes.
  * The variable-length AC_Server_Nonce_Fixed bytes (nonce_fixed_size of them)
  * follow immediately on the wire and must be appended separately.
  *
  * Data fields
- *   parent_key_id    — Key_ID of the key-exchange record (LE) (§4.4.4.15.1.4.4.1)
- *   msg_type         — Message_Type      (Table 4.46)
- *   mac_size         — MAC_Size
- *   nonce_type       — Nonce_Type        (Table 4.47)
- *   nonce_var_size   — Nonce_Variable_Size
- *   nonce_fixed_size — Nonce_Fixed_Size
+ *   parent_key_id    - Key_ID of the key-exchange record (LE) (§4.4.4.15.1.4.4.1)
+ *   msg_type         - Message_Type      (Table 4.46)
+ *   mac_size         - MAC_Size
+ *   nonce_type       - Nonce_Type        (Table 4.47)
+ *   nonce_var_size   - Nonce_Variable_Size
+ *   nonce_fixed_size - Nonce_Fixed_Size
  */
 struct acs_key_rec_aes_alg_hdr {
 	struct acs_key_rec_hdr hdr;
@@ -94,14 +94,14 @@ struct acs_key_rec_aes_alg_hdr {
 } __packed;
 
 /**
- * @brief OOB Key Exchange record — full wire layout (Table 4.37).
+ * @brief OOB Key Exchange record - full wire layout (Table 4.37).
  *
  * Data fields
- *   oob_method    — OOB_Method                  (Table 4.38)
- *   server_pk_fmt — AC_Server_Public_Key_Format  (Table 4.40)
- *   client_pk_fmt — AC_Client_Public_Key_Format  (Table 4.41)
- *   curve         — Elliptic_Curve               (Table 4.42)
- *   kdf           — Key_Derivation_Function      (Table 4.43)
+ *   oob_method    - OOB_Method                  (Table 4.38)
+ *   server_pk_fmt - AC_Server_Public_Key_Format  (Table 4.40)
+ *   client_pk_fmt - AC_Client_Public_Key_Format  (Table 4.41)
+ *   curve         - Elliptic_Curve               (Table 4.42)
+ *   kdf           - Key_Derivation_Function      (Table 4.43)
  */
 struct acs_key_rec_oob {
 	struct acs_key_rec_hdr hdr;
@@ -113,11 +113,11 @@ struct acs_key_rec_oob {
 } __packed;
 
 /**
- * @brief KDF Key Exchange record — full wire layout.
+ * @brief KDF Key Exchange record - full wire layout.
  *
  * Data fields
- *   parent_key_id — Key_ID of the parent key-exchange record (LE)
- *   kdf_algorithm — Key_Derivation_Function (Table 4.43)
+ *   parent_key_id - Key_ID of the parent key-exchange record (LE)
+ *   kdf_algorithm - Key_Derivation_Function (Table 4.43)
  */
 struct acs_key_rec_kdf {
 	struct acs_key_rec_hdr hdr;

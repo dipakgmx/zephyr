@@ -150,7 +150,7 @@ void acs_conn_cleanup(struct bt_acs_conn *acs_conn)
 
 	acs_crypto_destroy_connection_keys(acs_conn);
 	acs_crypto_destroy_connection_record_keys(acs_conn);
-	/* Preserve nonce fixed parts across disconnect — they are set once per
+	/* Preserve nonce fixed parts across disconnect - they are set once per
 	 * device pair and reused on reconnect (§3.6.4: "does not change for
 	 * the life of the key").  Session key and counters are wiped.
 	 */
@@ -192,7 +192,7 @@ static void acs_bt_connected(struct bt_conn *conn, uint8_t err)
 	}
 
 	if (!acs_is_initialized()) {
-		LOG_WRN("Connection established but ACS not initialized — no ACS state allocated");
+		LOG_WRN("Connection established but ACS not initialized - no ACS state allocated");
 		return;
 	}
 

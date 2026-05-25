@@ -183,7 +183,7 @@ void acs_key_exchange_abort(struct bt_acs_conn *acs_conn)
 /* Uncompressed point prefix for NIST curves ([0x04][X_BE][Y_BE]) */
 #define ACS_ECDH_UNCOMPRESSED_POINT 0x04U
 
-/* Compile-time curve selection — all Kconfig-determined, no runtime branch needed */
+/* Compile-time curve selection - all Kconfig-determined, no runtime branch needed */
 #if IS_ENABLED(CONFIG_BT_ACS_ECDH_CURVE_CURVE25519)
 #define ACS_PSA_ECC_FAMILY PSA_ECC_FAMILY_MONTGOMERY
 #define ACS_PSA_KEY_BITS   ACS_PSA_KEY_BITS_C25519
@@ -994,7 +994,7 @@ int acs_key_exchange_ecdh_confirm_rand(struct bt_acs_conn *acs_conn, struct net_
 			       sizeof(acs_conn->crypto.kex->server_random));
 
 	acs_conn->crypto.kex->next_expected_opcode = 0U;
-	LOG_INF("Client Confirmed — Server Random Sent");
+	LOG_INF("Client Confirmed - Server Random Sent");
 	return 0;
 }
 

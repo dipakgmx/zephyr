@@ -9,7 +9,7 @@
  * @brief ACS wire-layout sizing macros, pool constants, and ATT error codes.
  *
  * Pure preprocessor constants with no struct dependencies.
- * Included transitively via acs_internal.h — not intended for direct inclusion.
+ * Included transitively via acs_internal.h - not intended for direct inclusion.
  */
 
 #ifndef BT_GATT_ACS_WIRE_CONSTANTS_H_

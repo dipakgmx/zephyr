@@ -120,7 +120,7 @@ int acs_cp_rsp_status(struct acs_procedure *proc, uint8_t req_opcode, uint8_t co
 
 	err = acs_tx_submit(proc, &reply);
 	if (err) {
-		/* Status replies are still replies — same failure contract as
+		/* Status replies are still replies - same failure contract as
 		 * acs_cp_send_reply: tear down any active sequence so we don't
 		 * leak deferred ALLOC refs or leave stale step state behind.
 		 * The plain-CP busy-gate release for submit failure is handled
@@ -156,7 +156,7 @@ void acs_cp_completion_cb(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 	struct net_buf *rsp_buf = user_data;
 	struct bt_acs_conn *acs_conn = acs_conn_lookup(conn);
 
-	/* The seg-TX engine does not own the buffer — free it here. */
+	/* The seg-TX engine does not own the buffer - free it here. */
 	acs_buf_free(rsp_buf);
 
 	__ASSERT_NO_MSG(acs_conn != NULL);
@@ -192,8 +192,8 @@ void acs_cp_completion_cb(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 		/* Drain pending protected-resource requests. */
 		acs_procedure_abort_all(acs_conn);
 
-		LOG_DBG("Deferred abort committed — sending ABORT SUCCESS");
-		/* Lock stays held — ABORT now owns it; released on confirm. */
+		LOG_DBG("Deferred abort committed - sending ABORT SUCCESS");
+		/* Lock stays held - ABORT now owns it; released on confirm. */
 		if (acs_cp_rsp_status(&acs_conn->plain_cp_proc, BT_ACS_CP_OPCODE_ABORT,
 				      BT_ACS_CP_RESPONSE_SUCCESS)) {
 			LOG_ERR("Deferred ABORT response send failed");

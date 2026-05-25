@@ -56,7 +56,7 @@ static void data_tx_put_nonce_var(uint8_t *dst,
  * @brief Encrypt the response buffer in-place for wire transmission.
  *
  * The buffer was allocated through @ref acs_prepare_reply_buf with
- * ACS_CRYPTO_HEADROOM reserved (protected paths only — plain CP never
+ * ACS_CRYPTO_HEADROOM reserved (protected paths only - plain CP never
  * encrypts) and the inner resource_handle prefix already pushed.
  * Layout on entry:
  *
@@ -298,7 +298,7 @@ static void data_tx_drain_doi_queue(struct bt_acs_conn *acs_conn)
 
 		/* The seg-TX engine borrows the buffer for segmented transfer
 		 * but does not own it.  req->buffers.response_buf stays alive for the
-		 * lifetime of the request — multi-step sequences reuse it.
+		 * lifetime of the request - multi-step sequences reuse it.
 		 */
 		err = acs_seg_tx_send(&acs_conn->indicate_tx, acs_conn->conn, acs_conn->attr_doi,
 				      req->buffers.response_buf, data_tx_completion_cb, req);
@@ -334,7 +334,7 @@ static void data_tx_doi_drain_work(struct k_work *work)
 
 	if (req) {
 		if (!conn || req->seq_state == ACS_CP_SEQ_IDLE) {
-			/* Sequence was aborted or connection lost — the ALLOC ref was
+			/* Sequence was aborted or connection lost - the ALLOC ref was
 			 * deferred from acs_runtime_dispatch_protected_cp_frame(), release it here.
 			 */
 			acs_procedure_release_owner(req);
@@ -514,7 +514,7 @@ int acs_tx_submit(struct acs_procedure *proc, const struct acs_reply *reply)
 		return -EINVAL;
 	}
 
-	/* Contract assertions — keep callers honest about every reply field, so
+	/* Contract assertions - keep callers honest about every reply field, so
 	 * future call sites cannot drift channel/proc ownership out of sync
 	 * without immediately tripping a debug build.
 	 */

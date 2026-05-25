@@ -54,7 +54,7 @@ int acs_sec_mgmt_invalidate_all(struct acs_procedure *proc)
 	int count = 0;
 
 	if (!acs_conn || !acs_session_established(acs_conn)) {
-		LOG_WRN("Invalidate All: rejected — sender has no established ACS security");
+		LOG_WRN("Invalidate All: rejected - sender has no established ACS security");
 		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_INVALIDATE_ALL_ESTABLISHED_SECURITY,
 					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE);
 	}
@@ -245,10 +245,10 @@ int acs_sec_mgmt_invalidate_key(struct acs_procedure *proc, struct net_buf_simpl
  *   - Error / Unsuccessful: leave the in-progress procedure running unchanged.
  *
  * The implementation therefore follows a three-phase pattern:
- *   1. Probe   — read-only scan of what would need to be torn down.
- *   2. Decide  — if nothing to abort, or if a response is already mid-flight
+ *   1. Probe   - read-only scan of what would need to be torn down.
+ *   2. Decide  - if nothing to abort, or if a response is already mid-flight
  *                (cannot be unsent), return UNSUCCESSFUL without mutating state.
- *   3. Commit  — only after both checks pass, tear down sequences, KEX, and
+ *   3. Commit  - only after both checks pass, tear down sequences, KEX, and
  *                data-op state, then send the ABORT SUCCESS response.
  *
  * ABORT bypasses the plain_cp_proc.plain_cp.locked gate in acs_cp_write() (ABORT must be
@@ -292,13 +292,13 @@ int acs_sec_mgmt_abort(struct acs_procedure *proc)
 	 * confirms.  Set a deferred flag so the confirm callback tears down the
 	 * procedure and sends ABORT SUCCESS when the channel is free.
 	 *
-	 * We must not try to send a response here — the TX channel is occupied
+	 * We must not try to send a response here - the TX channel is occupied
 	 * and the send would fail with -EBUSY.
 	 */
 	can_commit = !acs_conn->cp_tx.tx_in_flight;
 
 	if (!can_commit) {
-		LOG_DBG("Abort deferred — indication in flight, will commit on confirm");
+		LOG_DBG("Abort deferred - indication in flight, will commit on confirm");
 		acs_conn->plain_cp_proc.plain_cp.abort_pending = true;
 		return 0;
 	}
@@ -314,12 +314,12 @@ int acs_sec_mgmt_abort(struct acs_procedure *proc)
 			acs_buf_free(acs_conn->plain_cp_proc.buffers.response_buf);
 			acs_conn->plain_cp_proc.buffers.response_buf = NULL;
 		}
-		/* lock stays held — ABORT now owns it for its own response */
+		/* lock stays held - ABORT now owns it for its own response */
 	} else {
 		atomic_set(&acs_conn->plain_cp_proc.plain_cp.locked, 1);
 	}
 
-	/* Tear down KEX state (local only — always safe once probed). */
+	/* Tear down KEX state (local only - always safe once probed). */
 	if (kex_in_progress) {
 		acs_key_exchange_abort(acs_conn);
 	}
@@ -329,7 +329,7 @@ int acs_sec_mgmt_abort(struct acs_procedure *proc)
 		acs_procedure_abort_all(acs_conn);
 	}
 
-	/* Send success response — lock released on confirm as usual. */
+	/* Send success response - lock released on confirm as usual. */
 	return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_ABORT, BT_ACS_CP_RESPONSE_SUCCESS);
 }
 
