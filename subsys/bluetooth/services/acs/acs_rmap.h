@@ -124,6 +124,21 @@ bool acs_rmap_char_is_protected(uint16_t map_id, uint16_t att_handle,
 				enum bt_acs_direction direction);
 
 /**
+ * @brief Check whether a Control Point opcode requires ACS security.
+ *
+ * Looks up the CP entry for @p cp_handle in the given restriction map and
+ * checks whether @p opcode maps to a non-zero ISC ID.
+ *
+ * @param map_id     Restriction map ID to search in.
+ * @param cp_handle  Resource handle of the Control Point.
+ * @param opcode     CP procedure opcode to test.
+ *
+ * @retval true   The opcode on this CP is protected by ACS security.
+ * @retval false  The CP or opcode is not present in the map, or unprotected.
+ */
+bool acs_rmap_cp_opcode_is_protected(uint16_t map_id, uint16_t cp_handle, uint8_t opcode);
+
+/**
  * @brief Collect protected CCCD gates derived from registered protected chars.
  *
  * Walks all registered protected characteristic entries, derives CCCD gates

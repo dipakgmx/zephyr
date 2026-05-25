@@ -238,6 +238,25 @@ bool acs_rmap_char_is_protected(uint16_t map_id, uint16_t att_handle,
 	return false;
 }
 
+bool acs_rmap_cp_opcode_is_protected(uint16_t map_id, uint16_t cp_handle, uint8_t opcode)
+{
+	const struct bt_acs_rmap_protected *entry;
+	enum acs_rmap_resource_kind kind;
+
+	if (acs_rmap_find_protected(map_id, cp_handle, &kind, &entry) != 0 ||
+	    kind != ACS_RMAP_RESOURCE_CP) {
+		return false;
+	}
+
+	for (uint8_t j = 0; j < entry->num_ops; j++) {
+		if (entry->ops[j].opcode == (uint16_t)opcode) {
+			return entry->ops[j].isc_id != BT_ACS_ISC_ID_NONE;
+		}
+	}
+
+	return false;
+}
+
 void acs_rmap_collect_protected_cccds(struct acs_rmap_cccd_gate *gates, size_t capacity,
 				      size_t *count)
 {

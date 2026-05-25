@@ -272,7 +272,6 @@ ssize_t acs_cp_write(struct bt_conn *conn, const struct bt_gatt_attr *attr, cons
 	struct bt_acs_conn *acs_conn;
 	enum acs_seg_rx_result seg_rx_result;
 
-	ARG_UNUSED(attr);
 	ARG_UNUSED(flags);
 
 	if (offset != 0) {
@@ -322,6 +321,18 @@ ssize_t acs_cp_write(struct bt_conn *conn, const struct bt_gatt_attr *attr, cons
 		 * plain_cp_proc lock and the handler owns the lock semantics itself.
 		 */
 		is_abort = (frame.payload_len > 0 && frame.payload[0] == BT_ACS_CP_OPCODE_ABORT);
+#endif
+
+#if IS_ENABLED(CONFIG_BT_ACS_FEAT_AUTHORIZATION)
+		if (!is_abort && frame.payload_len > 0 && acs_conn->restriction_map_id != 0 &&
+		    acs_rmap_cp_opcode_is_protected(acs_conn->restriction_map_id,
+						    bt_gatt_attr_get_handle(attr),
+						    frame.payload[0])) {
+			acs_seg_rx_reset(&acs_conn->cp_rx);
+			LOG_WRN("CP opcode 0x%02x requires protected access via Data-In",
+				frame.payload[0]);
+			return BT_GATT_ERR(BT_ATT_ERR_AUTHORIZATION);
+		}
 #endif
 		if (!is_abort && !atomic_cas(&acs_conn->plain_cp_proc.plain_cp.locked, 0, 1)) {
 			acs_seg_rx_reset(&acs_conn->cp_rx);
