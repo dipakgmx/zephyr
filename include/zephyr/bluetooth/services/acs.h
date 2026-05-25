@@ -124,7 +124,6 @@ enum bt_acs_cp_opcode {
 	BT_ACS_CP_OPCODE_MANUFACTURER_SPECIFIC = 0xE0,
 };
 
-
 /** @brief ACS data direction for enforcement checks */
 enum bt_acs_direction {
 	BT_ACS_DIRECTION_READ,
@@ -146,46 +145,49 @@ enum bt_acs_direction {
  */
 
 /* --- Attribute discovery --- */
-#define BT_ACS_RMAP_OP_ATT_FIND_INFO_REQ        0x0004u /**< Find Information Request */
-#define BT_ACS_RMAP_OP_ATT_FIND_INFO_RSP        0x0005u /**< Find Information Response */
-#define BT_ACS_RMAP_OP_ATT_FIND_TYPE_REQ        0x0006u /**< Find By Type Value Request */
-#define BT_ACS_RMAP_OP_ATT_FIND_TYPE_RSP        0x0007u /**< Find By Type Value Response */
-#define BT_ACS_RMAP_OP_ATT_READ_TYPE_REQ        0x0008u /**< Read By Type Request */
-#define BT_ACS_RMAP_OP_ATT_READ_TYPE_RSP        0x0009u /**< Read By Type Response */
-#define BT_ACS_RMAP_OP_ATT_READ_GROUP_REQ       0x0010u /**< Read By Group Type Request */
-#define BT_ACS_RMAP_OP_ATT_READ_GROUP_RSP       0x0011u /**< Read By Group Type Response */
+#define BT_ACS_RMAP_OP_ATT_FIND_INFO_REQ  0x0004u /**< Find Information Request */
+#define BT_ACS_RMAP_OP_ATT_FIND_INFO_RSP  0x0005u /**< Find Information Response */
+#define BT_ACS_RMAP_OP_ATT_FIND_TYPE_REQ  0x0006u /**< Find By Type Value Request */
+#define BT_ACS_RMAP_OP_ATT_FIND_TYPE_RSP  0x0007u /**< Find By Type Value Response */
+#define BT_ACS_RMAP_OP_ATT_READ_TYPE_REQ  0x0008u /**< Read By Type Request */
+#define BT_ACS_RMAP_OP_ATT_READ_TYPE_RSP  0x0009u /**< Read By Type Response */
+#define BT_ACS_RMAP_OP_ATT_READ_GROUP_REQ 0x0010u /**< Read By Group Type Request */
+#define BT_ACS_RMAP_OP_ATT_READ_GROUP_RSP 0x0011u /**< Read By Group Type Response */
 
 /* --- Read operations --- */
-#define BT_ACS_RMAP_OP_ATT_READ_REQ             0x000Au /**< Read Request */
-#define BT_ACS_RMAP_OP_ATT_READ_RSP             0x000Bu /**< Read Response */
-#define BT_ACS_RMAP_OP_ATT_READ_BLOB_REQ        0x000Cu /**< Read Blob Request (long reads) */
-#define BT_ACS_RMAP_OP_ATT_READ_BLOB_RSP        0x000Du /**< Read Blob Response */
-#define BT_ACS_RMAP_OP_ATT_READ_MULT_REQ        0x000Eu /**< Read Multiple Request */
-#define BT_ACS_RMAP_OP_ATT_READ_MULT_RSP        0x000Fu /**< Read Multiple Response */
-#define BT_ACS_RMAP_OP_ATT_READ_MULT_VL_REQ     0x0020u /**< Read Multiple Variable Length Request */
-#define BT_ACS_RMAP_OP_ATT_READ_MULT_VL_RSP     0x0021u /**< Read Multiple Variable Length Response */
+#define BT_ACS_RMAP_OP_ATT_READ_REQ         0x000Au /**< Read Request */
+#define BT_ACS_RMAP_OP_ATT_READ_RSP         0x000Bu /**< Read Response */
+#define BT_ACS_RMAP_OP_ATT_READ_BLOB_REQ    0x000Cu /**< Read Blob Request (long reads) */
+#define BT_ACS_RMAP_OP_ATT_READ_BLOB_RSP    0x000Du /**< Read Blob Response */
+#define BT_ACS_RMAP_OP_ATT_READ_MULT_REQ    0x000Eu /**< Read Multiple Request */
+#define BT_ACS_RMAP_OP_ATT_READ_MULT_RSP    0x000Fu /**< Read Multiple Response */
+#define BT_ACS_RMAP_OP_ATT_READ_MULT_VL_REQ 0x0020u /**< Read Multiple Variable Length Request */
+#define BT_ACS_RMAP_OP_ATT_READ_MULT_VL_RSP 0x0021u /**< Read Multiple Variable Length Response */
 
 /* --- Write operations --- */
-#define BT_ACS_RMAP_OP_ATT_WRITE_REQ            0x0012u /**< Write Request */
-#define BT_ACS_RMAP_OP_ATT_WRITE_RSP            0x0013u /**< Write Response */
-#define BT_ACS_RMAP_OP_ATT_WRITE_CMD            0x0052u /**< Write Command (no response) */
-#define BT_ACS_RMAP_OP_ATT_SIGNED_WRITE_CMD     0x00D2u /**< Signed Write Command */
-#define BT_ACS_RMAP_OP_ATT_PREPARE_WRITE_REQ    0x0016u /**< Prepare Write Request (reliable/long write) */
-#define BT_ACS_RMAP_OP_ATT_PREPARE_WRITE_RSP    0x0017u /**< Prepare Write Response */
-#define BT_ACS_RMAP_OP_ATT_EXECUTE_WRITE_REQ    0x0018u /**< Execute Write Request */
-#define BT_ACS_RMAP_OP_ATT_EXECUTE_WRITE_RSP    0x0019u /**< Execute Write Response */
+#define BT_ACS_RMAP_OP_ATT_WRITE_REQ        0x0012u /**< Write Request */
+#define BT_ACS_RMAP_OP_ATT_WRITE_RSP        0x0013u /**< Write Response */
+#define BT_ACS_RMAP_OP_ATT_WRITE_CMD        0x0052u /**< Write Command (no response) */
+#define BT_ACS_RMAP_OP_ATT_SIGNED_WRITE_CMD 0x00D2u /**< Signed Write Command */
+#define BT_ACS_RMAP_OP_ATT_PREPARE_WRITE_REQ                                                       \
+	0x0016u /**< Prepare Write Request (reliable/long write) */
+#define BT_ACS_RMAP_OP_ATT_PREPARE_WRITE_RSP 0x0017u /**< Prepare Write Response */
+#define BT_ACS_RMAP_OP_ATT_EXECUTE_WRITE_REQ 0x0018u /**< Execute Write Request */
+#define BT_ACS_RMAP_OP_ATT_EXECUTE_WRITE_RSP 0x0019u /**< Execute Write Response */
 
 /* --- Notification / Indication --- */
-#define BT_ACS_RMAP_OP_ATT_NOTIFY               0x001Bu /**< Handle Value Notification */
-#define BT_ACS_RMAP_OP_ATT_INDICATE             0x001Du /**< Handle Value Indication */
-#define BT_ACS_RMAP_OP_ATT_CONFIRM              0x001Eu /**< Handle Value Confirmation */
-#define BT_ACS_RMAP_OP_ATT_NOTIFY_MULT          0x0023u /**< Multiple Handle Value Notification */
+#define BT_ACS_RMAP_OP_ATT_NOTIFY      0x001Bu /**< Handle Value Notification */
+#define BT_ACS_RMAP_OP_ATT_INDICATE    0x001Du /**< Handle Value Indication */
+#define BT_ACS_RMAP_OP_ATT_CONFIRM     0x001Eu /**< Handle Value Confirmation */
+#define BT_ACS_RMAP_OP_ATT_NOTIFY_MULT 0x0023u /**< Multiple Handle Value Notification */
 
 /** @} */
 
 /* Convenience aliases matching the most common usage in restriction map entries */
-#define BT_ACS_RMAP_OP_ATT_READ   BT_ACS_RMAP_OP_ATT_READ_REQ   /**< @see BT_ACS_RMAP_OP_ATT_READ_REQ */
-#define BT_ACS_RMAP_OP_ATT_WRITE  BT_ACS_RMAP_OP_ATT_WRITE_REQ  /**< @see BT_ACS_RMAP_OP_ATT_WRITE_REQ */
+#define BT_ACS_RMAP_OP_ATT_READ BT_ACS_RMAP_OP_ATT_READ_REQ /**< @see BT_ACS_RMAP_OP_ATT_READ_REQ  \
+							     */
+#define BT_ACS_RMAP_OP_ATT_WRITE                                                                   \
+	BT_ACS_RMAP_OP_ATT_WRITE_REQ /**< @see BT_ACS_RMAP_OP_ATT_WRITE_REQ */
 
 /** @brief Opcode-to-ISC_ID mapping entry within a Protected record (Table 4.20). */
 struct bt_acs_rmap_op_isc {
@@ -202,8 +204,7 @@ struct bt_acs_rmap_op_isc {
  * @param _opcode  ATT opcode (use a BT_ACS_RMAP_OP_ATT_* macro)
  * @param _isc_id  Information Security Configuration ID (0x0001–0xFFFE)
  */
-#define BT_ACS_RMAP_OP_ENTRY(_opcode, _isc_id) \
-	{ .opcode = (_opcode), .isc_id = (_isc_id) }
+#define BT_ACS_RMAP_OP_ENTRY(_opcode, _isc_id) {.opcode = (_opcode), .isc_id = (_isc_id)}
 
 /** @brief Protected Characteristic (Type_ID 0x02) or Control Point (Type_ID 0x03) record. */
 struct bt_acs_rmap_protected {
@@ -253,11 +254,12 @@ struct bt_acs_restriction_map {
  * @endcode
  */
 #if defined(CONFIG_BT_ACS_FEAT_AUTHORIZATION)
-#define BT_ACS_RESTRICTION_MAP_DEFINE(_name, ...) \
+#define BT_ACS_RESTRICTION_MAP_DEFINE(_name, ...)                                                  \
 	STRUCT_SECTION_ITERABLE(bt_acs_restriction_map, _name) = {__VA_ARGS__}
 #else
-#define BT_ACS_RESTRICTION_MAP_DEFINE(_name, ...) \
-	BUILD_ASSERT(0, "BT_ACS_RESTRICTION_MAP_DEFINE requires CONFIG_BT_ACS_FEAT_AUTHORIZATION=y")
+#define BT_ACS_RESTRICTION_MAP_DEFINE(_name, ...)                                                  \
+	BUILD_ASSERT(0, "BT_ACS_RESTRICTION_MAP_DEFINE requires "                                  \
+			"CONFIG_BT_ACS_FEAT_AUTHORIZATION=y")
 #endif
 
 /**
@@ -275,8 +277,6 @@ struct bt_acs_rmap_char_reg {
 	struct bt_acs_rmap_protected *entry;
 	/** Restriction map ID this entry belongs to */
 	uint16_t map_id;
-	/** True for Control Point entries (Type_ID 0x03), false for characteristics (0x02). */
-	bool is_cp;
 };
 
 /**
@@ -316,15 +316,15 @@ struct bt_acs_rmap_char_reg {
 		.ops = _name##_ops,                                                                \
 		.num_ops = ARRAY_SIZE(_name##_ops),                                                \
 	};                                                                                         \
-	STRUCT_SECTION_ITERABLE(bt_acs_rmap_char_reg, _name##_reg) = {                            \
+	STRUCT_SECTION_ITERABLE(bt_acs_rmap_char_reg, _name##_reg) = {                             \
 		.char_uuid = (_char_uuid),                                                         \
 		.entry = &_name,                                                                   \
 		.map_id = (_map_id),                                                               \
-		.is_cp = false,                                                                    \
 	}
 #else
-#define BT_ACS_RMAP_PROTECT_CHAR_IN_MAP(_name, _map_id, _char_uuid, ...) \
-	BUILD_ASSERT(0, "BT_ACS_RMAP_PROTECT_CHAR_IN_MAP requires CONFIG_BT_ACS_FEAT_AUTHORIZATION=y")
+#define BT_ACS_RMAP_PROTECT_CHAR_IN_MAP(_name, _map_id, _char_uuid, ...)                           \
+	BUILD_ASSERT(                                                                              \
+		0, "BT_ACS_RMAP_PROTECT_CHAR_IN_MAP requires CONFIG_BT_ACS_FEAT_AUTHORIZATION=y")
 #endif
 
 /**
@@ -350,22 +350,23 @@ struct bt_acs_rmap_char_reg {
  * @endcode
  */
 #if defined(CONFIG_BT_ACS_FEAT_AUTHORIZATION)
-#define BT_ACS_RMAP_PROTECT_CP_IN_MAP(_name, _map_id, _char_uuid, ...)                            \
+#define BT_ACS_RMAP_PROTECT_CP_IN_MAP(_name, _map_id, _char_uuid, ...)                             \
 	static const struct bt_acs_rmap_op_isc _name##_ops[] = {__VA_ARGS__};                      \
 	struct bt_acs_rmap_protected _name = {                                                     \
 		.resource_handle = 0x0000,                                                         \
 		.ops = _name##_ops,                                                                \
 		.num_ops = ARRAY_SIZE(_name##_ops),                                                \
 	};                                                                                         \
-	STRUCT_SECTION_ITERABLE(bt_acs_rmap_char_reg, _name##_reg) = {                            \
+	STRUCT_SECTION_ITERABLE_ALTERNATE(bt_acs_rmap_cp_reg, bt_acs_rmap_char_reg,                \
+					  _name##_reg) = {                                         \
 		.char_uuid = (_char_uuid),                                                         \
 		.entry = &_name,                                                                   \
 		.map_id = (_map_id),                                                               \
-		.is_cp = true,                                                                     \
 	}
 #else
-#define BT_ACS_RMAP_PROTECT_CP_IN_MAP(_name, _map_id, _char_uuid, ...) \
-	BUILD_ASSERT(0, "BT_ACS_RMAP_PROTECT_CP_IN_MAP requires CONFIG_BT_ACS_FEAT_AUTHORIZATION=y")
+#define BT_ACS_RMAP_PROTECT_CP_IN_MAP(_name, _map_id, _char_uuid, ...)                             \
+	BUILD_ASSERT(0, "BT_ACS_RMAP_PROTECT_CP_IN_MAP requires "                                  \
+			"CONFIG_BT_ACS_FEAT_AUTHORIZATION=y")
 #endif
 
 /**
@@ -378,17 +379,17 @@ struct bt_acs_rmap_char_reg {
  * @{
  */
 /** No ISC required; resource is unprotected (Default_ISC = 0, §4.4.3.2). */
-#define BT_ACS_ISC_ID_NONE     0x0000
+#define BT_ACS_ISC_ID_NONE      0x0000
 /** High security: Nonce + Authenticated Encryption, optionally with explicit MAC for AES-CCM. */
-#define BT_ACS_ISC_ID_HIGH_SEC 0x0001
+#define BT_ACS_ISC_ID_HIGH_SEC  0x0001
 /** Authentication only: Nonce + MAC (requires ECDH key exchange). */
-#define BT_ACS_ISC_ID_AUTH     0x0002
+#define BT_ACS_ISC_ID_AUTH      0x0002
 /** Unencrypted fallback: no cryptographic protection (always present). */
-#define BT_ACS_ISC_ID_UNENC       0x0003
+#define BT_ACS_ISC_ID_UNENC     0x0003
 /** Integrity + authentication, no confidentiality (GMAC). */
-#define BT_ACS_ISC_ID_INTEGRITY   0x0004
+#define BT_ACS_ISC_ID_INTEGRITY 0x0004
 /** MAC-only authentication, no nonce, no confidentiality (CMAC). */
-#define BT_ACS_ISC_ID_MAC_ONLY    0x0005
+#define BT_ACS_ISC_ID_MAC_ONLY  0x0005
 
 /**
  * @brief Default ISC ID: best-available protection based on compiled algorithms.
@@ -420,32 +421,32 @@ struct bt_acs_rmap_char_reg {
  */
 
 /** @brief Read-only characteristic, auto-registered to a map. */
-#define BT_ACS_PROTECT_CHAR_R_IN_MAP(_name, _map_id, _char_uuid, _isc_id)                         \
-	BT_ACS_RMAP_PROTECT_CHAR_IN_MAP(_name, _map_id, _char_uuid,                               \
-		BT_ACS_RMAP_OP_ENTRY(BT_ACS_RMAP_OP_ATT_READ, _isc_id))
+#define BT_ACS_PROTECT_CHAR_R_IN_MAP(_name, _map_id, _char_uuid, _isc_id)                          \
+	BT_ACS_RMAP_PROTECT_CHAR_IN_MAP(_name, _map_id, _char_uuid,                                \
+					BT_ACS_RMAP_OP_ENTRY(BT_ACS_RMAP_OP_ATT_READ, _isc_id))
 
 /** @brief Write-only characteristic, auto-registered to a map. */
-#define BT_ACS_PROTECT_CHAR_W_IN_MAP(_name, _map_id, _char_uuid, _isc_id)                         \
-	BT_ACS_RMAP_PROTECT_CHAR_IN_MAP(_name, _map_id, _char_uuid,                               \
-		BT_ACS_RMAP_OP_ENTRY(BT_ACS_RMAP_OP_ATT_WRITE, _isc_id))
+#define BT_ACS_PROTECT_CHAR_W_IN_MAP(_name, _map_id, _char_uuid, _isc_id)                          \
+	BT_ACS_RMAP_PROTECT_CHAR_IN_MAP(_name, _map_id, _char_uuid,                                \
+					BT_ACS_RMAP_OP_ENTRY(BT_ACS_RMAP_OP_ATT_WRITE, _isc_id))
 
 /** @brief Notify-only characteristic, auto-registered to a map. */
-#define BT_ACS_PROTECT_CHAR_N_IN_MAP(_name, _map_id, _char_uuid, _isc_id)                         \
-	BT_ACS_RMAP_PROTECT_CHAR_IN_MAP(_name, _map_id, _char_uuid,                               \
-		BT_ACS_RMAP_OP_ENTRY(BT_ACS_RMAP_OP_ATT_NOTIFY, _isc_id))
+#define BT_ACS_PROTECT_CHAR_N_IN_MAP(_name, _map_id, _char_uuid, _isc_id)                          \
+	BT_ACS_RMAP_PROTECT_CHAR_IN_MAP(_name, _map_id, _char_uuid,                                \
+					BT_ACS_RMAP_OP_ENTRY(BT_ACS_RMAP_OP_ATT_NOTIFY, _isc_id))
 
 /** @brief Read + write characteristic, auto-registered to a map. */
-#define BT_ACS_PROTECT_CHAR_RW_IN_MAP(_name, _map_id, _char_uuid, _isc_id)                        \
-	BT_ACS_RMAP_PROTECT_CHAR_IN_MAP(_name, _map_id, _char_uuid,                               \
-		BT_ACS_RMAP_OP_ENTRY(BT_ACS_RMAP_OP_ATT_READ, _isc_id),                          \
-		BT_ACS_RMAP_OP_ENTRY(BT_ACS_RMAP_OP_ATT_WRITE, _isc_id))
+#define BT_ACS_PROTECT_CHAR_RW_IN_MAP(_name, _map_id, _char_uuid, _isc_id)                         \
+	BT_ACS_RMAP_PROTECT_CHAR_IN_MAP(_name, _map_id, _char_uuid,                                \
+					BT_ACS_RMAP_OP_ENTRY(BT_ACS_RMAP_OP_ATT_READ, _isc_id),    \
+					BT_ACS_RMAP_OP_ENTRY(BT_ACS_RMAP_OP_ATT_WRITE, _isc_id))
 
 /** @brief Read + write + notify characteristic, auto-registered to a map. */
-#define BT_ACS_PROTECT_CHAR_RWN_IN_MAP(_name, _map_id, _char_uuid, _isc_id)                       \
-	BT_ACS_RMAP_PROTECT_CHAR_IN_MAP(_name, _map_id, _char_uuid,                               \
-		BT_ACS_RMAP_OP_ENTRY(BT_ACS_RMAP_OP_ATT_READ, _isc_id),                          \
-		BT_ACS_RMAP_OP_ENTRY(BT_ACS_RMAP_OP_ATT_WRITE, _isc_id),                         \
-		BT_ACS_RMAP_OP_ENTRY(BT_ACS_RMAP_OP_ATT_NOTIFY, _isc_id))
+#define BT_ACS_PROTECT_CHAR_RWN_IN_MAP(_name, _map_id, _char_uuid, _isc_id)                        \
+	BT_ACS_RMAP_PROTECT_CHAR_IN_MAP(_name, _map_id, _char_uuid,                                \
+					BT_ACS_RMAP_OP_ENTRY(BT_ACS_RMAP_OP_ATT_READ, _isc_id),    \
+					BT_ACS_RMAP_OP_ENTRY(BT_ACS_RMAP_OP_ATT_WRITE, _isc_id),   \
+					BT_ACS_RMAP_OP_ENTRY(BT_ACS_RMAP_OP_ATT_NOTIFY, _isc_id))
 /** @} */
 
 /**
@@ -460,7 +461,6 @@ struct bt_acs_rmap_char_reg {
 #define BT_ACS_GATT_PERM_READ  BT_GATT_PERM_READ_AUTHEN
 #define BT_ACS_GATT_PERM_WRITE BT_GATT_PERM_WRITE_AUTHEN
 /** @} */
-
 
 /** @brief ACS application callbacks */
 struct bt_acs_cb {
@@ -591,9 +591,8 @@ struct bt_acs_cb {
 	 * @return 0 on success, -ENOENT if this key_id has no URI
 	 *         (server will respond with Parameter Out Of Range).
 	 */
-	int (*key_uri_get)(struct bt_conn *conn, uint16_t key_id,
-			   uint8_t *uri_buf, uint16_t uri_max_len,
-			   uint16_t *uri_len);
+	int (*key_uri_get)(struct bt_conn *conn, uint16_t key_id, uint8_t *uri_buf,
+			   uint16_t uri_max_len, uint16_t *uri_len);
 #endif /* CONFIG_BT_ACS_KEY_URI */
 };
 
@@ -642,8 +641,6 @@ int bt_acs_set_oob_number(struct bt_conn *conn, const uint8_t *oob, uint16_t len
  *         GATT handle.
  */
 int bt_acs_init(const struct bt_acs_cb *cb);
-
-
 
 /**
  * @brief Invalidate the established ACS security session for a connection.
@@ -696,7 +693,7 @@ int bt_acs_set_restriction_map(struct bt_conn *conn, uint16_t map_id);
  * @return true if operation is permitted, false otherwise.
  */
 bool bt_acs_policy_is_permitted(struct bt_conn *conn, uint16_t att_handle,
-				   enum bt_acs_direction direction);
+				enum bt_acs_direction direction);
 
 #ifdef __cplusplus
 }
