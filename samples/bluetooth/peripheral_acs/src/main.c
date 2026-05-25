@@ -95,13 +95,12 @@ BT_ACS_RESTRICTION_MAP_DEFINE(secured_map, .map_id = CONFIG_BT_ACS_ACTIVE_RMAP_I
 
 /* ACS callbacks */
 
-static void acs_security_established(struct bt_conn *conn, const uint8_t *session_key,
-				     uint16_t key_len)
+static void acs_security_established(struct bt_conn *conn)
 {
 	char addr[BT_ADDR_LE_STR_LEN];
 
 	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
-	printk("ACS security established with %s (key len %u)\n", addr, key_len);
+	printk("ACS security established with %s\n", addr);
 }
 
 static void acs_security_invalidated(struct bt_conn *conn)
