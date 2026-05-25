@@ -168,7 +168,7 @@ int acs_cp_rsp_status(struct acs_procedure *proc, uint8_t req_opcode, uint8_t co
  * @param acs_conn  Per-connection ACS state.
  * @param prot_req  NULL for plain CP, non-NULL for protected Data In path.
  */
-int acs_cp_dispatch(struct acs_frame *frame, struct bt_acs_conn *acs_conn,
+int acs_cp_dispatch(const struct acs_frame *frame, struct bt_acs_conn *acs_conn,
 		    struct acs_procedure *prot_req);
 
 /**

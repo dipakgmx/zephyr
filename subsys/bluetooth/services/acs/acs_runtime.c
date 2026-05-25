@@ -53,7 +53,7 @@ static int acs_runtime_classify_frame(const struct acs_frame *frame, uint16_t ma
 			route->kind = ACS_ROUTE_PROTECTED_CHAR;
 			break;
 		default:
-			LOG_WRN("data-in handle 0x%04x not in restriction map %u",
+			LOG_WRN("handle 0x%04x not in restriction map %u",
 				frame->resource_handle, map_id);
 			return -ENOENT;
 		}
@@ -82,7 +82,8 @@ static void acs_procedure_take_request_buf(struct acs_procedure *proc, struct bt
 }
 
 #if IS_ENABLED(CONFIG_BT_ACS_FEAT_AUTHENTICATION)
-int acs_runtime_dispatch_protected_cp_frame(struct acs_frame *frame, struct bt_acs_conn *acs_conn)
+int acs_runtime_dispatch_protected_cp_frame(const struct acs_frame *frame,
+					    struct bt_acs_conn *acs_conn)
 {
 	struct acs_procedure *req_ctx;
 	int err;
@@ -183,7 +184,8 @@ static enum acs_req_access acs_rmap_resolve_request_access(uint16_t map_id, uint
 }
 #endif /* CONFIG_BT_ACS_FEAT_AUTHORIZATION */
 
-int acs_runtime_dispatch_protected_char_frame(struct acs_frame *frame, struct bt_acs_conn *acs_conn)
+int acs_runtime_dispatch_protected_char_frame(const struct acs_frame *frame,
+					      struct bt_acs_conn *acs_conn)
 {
 	struct acs_procedure *req_ctx;
 	int err;
@@ -230,7 +232,7 @@ int acs_runtime_dispatch_protected_char_frame(struct acs_frame *frame, struct bt
 }
 #endif /* CONFIG_BT_ACS_FEAT_AUTHENTICATION */
 
-int acs_runtime_dispatch_frame(struct acs_frame *frame, struct bt_acs_conn *acs_conn)
+int acs_runtime_dispatch_frame(const struct acs_frame *frame, struct bt_acs_conn *acs_conn)
 {
 	struct acs_route route = {0};
 	uint16_t map_id;
@@ -239,16 +241,14 @@ int acs_runtime_dispatch_frame(struct acs_frame *frame, struct bt_acs_conn *acs_
 	__ASSERT_NO_MSG(frame != NULL);
 	__ASSERT_NO_MSG(acs_conn != NULL);
 
-	map_id = (frame->source_channel == ACS_SRC_CP) ? 0U : acs_conn->restriction_map_id;
+	/* Plain CP writes are always unencrypted - no restriction map lookup needed. */
+	map_id = (frame->source_channel == ACS_SRC_CP) ? BT_ACS_RMAP_ID_NONE
+						       : acs_conn->restriction_map_id;
 
 	err = acs_runtime_classify_frame(frame, map_id, &route);
-	if (err == -ENOENT) {
+	if (err != 0) {
 		LOG_WRN("handle 0x%04x not in restriction map", frame->resource_handle);
 		return ACS_DATA_ERR_RESOURCE_NOT_PROTECTED;
-	}
-	if (err) {
-		LOG_ERR("frame classification failed: %d", err);
-		return err;
 	}
 
 	switch (route.kind) {
@@ -279,7 +279,8 @@ ssize_t acs_cp_write(struct bt_conn *conn, const struct bt_gatt_attr *attr, cons
 		return BT_GATT_ERR(BT_ATT_ERR_INVALID_OFFSET);
 	}
 
-	if (len < 2) {
+	/* Segmentation_Header + Payload min size */
+	if (len < ACS_SEG_HDR_SIZE + 1) {
 		LOG_WRN("CP write PDU too short (%u bytes)", len);
 		return BT_GATT_ERR(BT_ATT_ERR_INVALID_ATTRIBUTE_LEN);
 	}
@@ -289,16 +290,12 @@ ssize_t acs_cp_write(struct bt_conn *conn, const struct bt_gatt_attr *attr, cons
 		return BT_GATT_ERR(BT_ATT_ERR_UNLIKELY);
 	}
 
-	/* Spec-mandated: reject CP write if CP indications not enabled (ATT CCC_IMPROPER_CONF). */
+	/* See §4.4.5 General error handling procedures */
 	ret = acs_cp_ccc_check(conn);
 
 	if (ret == -EINVAL) {
 		LOG_WRN("CP indications not enabled by client");
 		return BT_GATT_ERR(BT_ATT_ERR_CCC_IMPROPER_CONF);
-	}
-	if (ret) {
-		LOG_ERR("CP CCC check failed: %d", ret);
-		return BT_GATT_ERR(BT_ATT_ERR_UNLIKELY);
 	}
 
 	acs_conn = acs_conn_lookup(conn);

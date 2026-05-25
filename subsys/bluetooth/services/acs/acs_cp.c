@@ -210,7 +210,7 @@ void acs_cp_completion_cb(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 }
 
 /* Dispatch reassembled CP payload: frame->payload[0]=opcode, [1..]=operand. */
-int acs_cp_dispatch(struct acs_frame *frame, struct bt_acs_conn *acs_conn,
+int acs_cp_dispatch(const struct acs_frame *frame, struct bt_acs_conn *acs_conn,
 		    struct acs_procedure *prot_req)
 {
 	struct acs_procedure *proc;
@@ -225,7 +225,8 @@ int acs_cp_dispatch(struct acs_frame *frame, struct bt_acs_conn *acs_conn,
 
 	net_buf_simple_init_with_data(&payload_simple, (void *)frame->payload, frame->payload_len);
 
-	proc = prot_req ? prot_req : &acs_conn->plain_cp_proc;
+	/* Protected path passes its own context; plain CP uses the one embedded in acs_conn. */
+	proc = (prot_req != NULL) ? prot_req : &acs_conn->plain_cp_proc;
 
 	opcode = net_buf_simple_pull_u8(payload);
 	LOG_DBG("CP dispatch: opcode 0x%02x, operand len %u", opcode, payload->len);

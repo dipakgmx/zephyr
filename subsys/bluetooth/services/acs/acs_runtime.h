@@ -66,16 +66,17 @@ ssize_t acs_data_in_write(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 int acs_data_in_unwrap_and_route(struct bt_acs_conn *acs_conn, struct net_buf_simple *buf);
 
 /**
- * @brief Common normalized-frame dispatch entry point.
+ * @brief Dispatch a reassembled ACS frame to the appropriate handler.
  *
- * Single seam between the GATT-write entrypoints and the per-route execution
- * helpers. Classifies @p frame against @p acs_conn's active restriction map
- * (or trivially as @ref ACS_ROUTE_ACS_CP for CP-source frames) and forwards
- * to the matching @c acs_runtime_dispatch_*_frame helper.
+ * Classifies @p frame by route (CP, protected characteristic, or protected service CP) and calls
+ * the matching dispatch helper.
  *
- * @return 0 on success, negative errno or @ref ACS_DATA_ERR_* on failure.
+ * @param frame    Reassembled frame to dispatch.
+ * @param acs_conn Connection state for the originating connection.
+ *
+ * @return 0 on success, negative errno on failure.
  */
-int acs_runtime_dispatch_frame(struct acs_frame *frame, struct bt_acs_conn *acs_conn);
+int acs_runtime_dispatch_frame(const struct acs_frame *frame, struct bt_acs_conn *acs_conn);
 
 /**
  * @brief Dispatch a Data-In frame that targets a protected service CP.
@@ -85,7 +86,8 @@ int acs_runtime_dispatch_frame(struct acs_frame *frame, struct bt_acs_conn *acs_
  * @ref acs_cp_dispatch. Drops the proc reference here unless a
  * multi-step reply sequence took it over.
  */
-int acs_runtime_dispatch_protected_cp_frame(struct acs_frame *frame, struct bt_acs_conn *acs_conn);
+int acs_runtime_dispatch_protected_cp_frame(const struct acs_frame *frame,
+					    struct bt_acs_conn *acs_conn);
 
 /**
  * @brief Dispatch a Data-In frame that targets a protected characteristic.
@@ -94,7 +96,7 @@ int acs_runtime_dispatch_protected_cp_frame(struct acs_frame *frame, struct bt_a
  * transfers ownership of @c acs_conn->data_rx.buf into the context, then
  * queues the work item that runs the application/auto-respond handler.
  */
-int acs_runtime_dispatch_protected_char_frame(struct acs_frame *frame,
+int acs_runtime_dispatch_protected_char_frame(const struct acs_frame *frame,
 					      struct bt_acs_conn *acs_conn);
 
 /**

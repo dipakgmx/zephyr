@@ -16,6 +16,9 @@
 #define ACS_RMAP_TYPE_PROTECTED_CHAR 0x02 /**< Protected Characteristic record */
 #define ACS_RMAP_TYPE_PROTECTED_CP   0x03 /**< Protected Control Point record */
 
+/** Resource accessed via their own service (§3.5.3) */
+#define BT_ACS_RMAP_ID_NONE 0x0000U /**< Resource accessed via their own service */
+
 /** Special handle_filter value: report the full map (all resource handles). */
 #define ACS_RMAP_FILTER_ALL 0xFFFF
 
