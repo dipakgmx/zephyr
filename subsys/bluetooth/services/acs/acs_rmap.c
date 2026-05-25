@@ -93,7 +93,7 @@ static void acs_rmap_foreach_char(const struct bt_acs_restriction_map *map, acs_
 	__ASSERT_NO_MSG(map);
 
 	STRUCT_SECTION_FOREACH(bt_acs_rmap_char_reg, reg) {
-		if (reg->map_id == map->map_id && reg->entry != NULL && !reg->is_cp) {
+		if (reg->map_id == map->map_id && reg->entry != NULL) {
 			if (!cb(reg->entry, user_data)) {
 				return;
 			}
@@ -115,8 +115,8 @@ static void acs_rmap_foreach_cp(const struct bt_acs_restriction_map *map, acs_rm
 	__ASSERT_NO_MSG(cb);
 	__ASSERT_NO_MSG(map);
 
-	STRUCT_SECTION_FOREACH(bt_acs_rmap_char_reg, reg) {
-		if (reg->map_id == map->map_id && reg->entry != NULL && reg->is_cp) {
+	STRUCT_SECTION_FOREACH_ALTERNATE(bt_acs_rmap_cp_reg, bt_acs_rmap_char_reg, reg) {
+		if (reg->map_id == map->map_id && reg->entry != NULL) {
 			if (!cb(reg->entry, user_data)) {
 				return;
 			}
@@ -205,14 +205,21 @@ int acs_rmap_find_protected(uint16_t map_id, uint16_t resource_handle,
 	__ASSERT_NO_MSG(entry != NULL);
 
 	STRUCT_SECTION_FOREACH(bt_acs_rmap_char_reg, reg) {
-		if (reg->map_id != map_id || reg->entry == NULL ||
-		    reg->entry->resource_handle != resource_handle) {
-			continue;
+		if (reg->map_id == map_id && reg->entry != NULL &&
+		    reg->entry->resource_handle == resource_handle) {
+			*kind = ACS_RMAP_RESOURCE_CHAR;
+			*entry = reg->entry;
+			return 0;
 		}
+	}
 
-		*kind = reg->is_cp ? ACS_RMAP_RESOURCE_CP : ACS_RMAP_RESOURCE_CHAR;
-		*entry = reg->entry;
-		return 0;
+	STRUCT_SECTION_FOREACH_ALTERNATE(bt_acs_rmap_cp_reg, bt_acs_rmap_char_reg, reg) {
+		if (reg->map_id == map_id && reg->entry != NULL &&
+		    reg->entry->resource_handle == resource_handle) {
+			*kind = ACS_RMAP_RESOURCE_CP;
+			*entry = reg->entry;
+			return 0;
+		}
 	}
 
 	return -ENOENT;
@@ -270,7 +277,7 @@ void acs_rmap_collect_protected_cccds(struct acs_rmap_cccd_gate *gates, size_t c
 		bool protect_indicate = false;
 		uint16_t cccd;
 
-		if (reg->is_cp || reg->entry == NULL || reg->entry->resource_handle == 0) {
+		if (reg->entry == NULL || reg->entry->resource_handle == 0) {
 			continue;
 		}
 
@@ -445,6 +452,11 @@ static const struct bt_uuid *rmap_lookup_uuid(const struct bt_acs_rmap_protected
 			return reg->char_uuid;
 		}
 	}
+	STRUCT_SECTION_FOREACH_ALTERNATE(bt_acs_rmap_cp_reg, bt_acs_rmap_char_reg, reg) {
+		if (reg->entry == p) {
+			return reg->char_uuid;
+		}
+	}
 	return NULL;
 }
 
@@ -495,8 +507,20 @@ int acs_rmap_resolve_handles(void)
 		}
 	}
 
+	STRUCT_SECTION_FOREACH_ALTERNATE(bt_acs_rmap_cp_reg, bt_acs_rmap_char_reg, reg) {
+		uint16_t handle = acs_rhandle_find_char_handle(reg->char_uuid);
+
+		if (handle == 0) {
+			bt_uuid_to_str(reg->char_uuid, uuid_str, sizeof(uuid_str));
+			LOG_WRN("rmap: could not resolve handle for CP uuid=%s", uuid_str);
+			failed++;
+		} else {
+			reg->entry->resource_handle = handle;
+		}
+	}
+
 	if (failed > 0) {
-		LOG_ERR("rmap: %d characteristic(s) could not be resolved", failed);
+		LOG_ERR("rmap: %d resource(s) could not be resolved", failed);
 		return -ENOENT;
 	}
 
