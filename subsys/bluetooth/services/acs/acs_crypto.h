@@ -103,9 +103,36 @@ int acs_crypto_derive_session_key(struct bt_acs_conn *acs_conn);
 /**
  * @brief Import a current key into the PSA keystore.
  *
+ * @param current_key    Runtime key slot to populate with a PSA key handle.
+ * @param key_material   Raw key bytes to import.
+ * @param key_len        Length of @p key_material.
  * @return 0 on success, negative errno on failure.
  */
-int acs_crypto_import_current_key(struct bt_acs_runtime_key_state *current_key);
+int acs_crypto_import_current_key(struct bt_acs_runtime_key_state *current_key,
+				  const uint8_t *key_material, size_t key_len);
+
+/**
+ * @brief Export raw key bytes from a current key's PSA slot to a caller buffer.
+ *
+ * The caller must zeroize the output buffer after use.
+ *
+ * @param current_key  Runtime key slot with a live PSA key.
+ * @param buf          Output buffer for raw key bytes.
+ * @param buf_len      Size of @p buf.
+ * @param out_len      Receives the number of bytes written.
+ * @return 0 on success, negative errno on failure.
+ */
+int acs_crypto_export_current_key(const struct bt_acs_runtime_key_state *current_key, uint8_t *buf,
+				  size_t buf_len, size_t *out_len);
+
+/**
+ * @brief Release connection key handles without destroying the underlying PSA keys.
+ *
+ * Zeros the psa_key_id fields in the connection's current_keys so the
+ * connection no longer references the PSA slots, but the volatile PSA keys
+ * remain alive (owned by the session cache).
+ */
+void acs_crypto_release_connection_keys(struct bt_acs_conn *acs_conn);
 
 /** @brief Destroy one current key from the PSA keystore. */
 void acs_crypto_destroy_current_key(struct bt_acs_runtime_key_state *current_key);
@@ -116,8 +143,15 @@ void acs_crypto_warn_destroy_key_failure(psa_status_t status, psa_key_id_t key_i
 /** @brief Destroy every imported current key on @p acs_conn. */
 void acs_crypto_destroy_connection_keys(struct bt_acs_conn *acs_conn);
 
-/** @brief Import one key-descriptor runtime key into the PSA keystore. */
-int acs_crypto_import_record_key(struct bt_acs_key_desc_runtime *key_desc_runtime);
+/**
+ * @brief Import one key-descriptor runtime key into the PSA keystore.
+ *
+ * @param key_desc_runtime  Algorithm record runtime to import for.
+ * @param key_material      Raw key bytes (from the parent exchange key).
+ * @param key_len           Length of @p key_material.
+ */
+int acs_crypto_import_record_key(struct bt_acs_key_desc_runtime *key_desc_runtime,
+				 const uint8_t *key_material, size_t key_len);
 
 /** @brief Destroy one key-descriptor runtime key from the PSA keystore. */
 void acs_crypto_destroy_record_key(struct bt_acs_key_desc_runtime *key_desc_runtime);
@@ -125,12 +159,24 @@ void acs_crypto_destroy_record_key(struct bt_acs_key_desc_runtime *key_desc_runt
 /** @brief Destroy every imported key-descriptor runtime key on @p acs_conn. */
 void acs_crypto_destroy_connection_record_keys(struct bt_acs_conn *acs_conn);
 
-/** @brief Refresh key-descriptor runtime key material from the current exchange-key slots. */
+/** @brief Refresh key-descriptor runtime PSA keys from the current exchange-key slots. */
 int acs_crypto_rebind_key_desc_runtimes(struct bt_acs_conn *acs_conn);
 
-/** @brief Reset nonce counters for key-descriptor runtimes that derive from @p current_key_id. */
-void acs_crypto_reset_key_desc_runtime_counters(struct bt_acs_conn *acs_conn,
-						uint16_t current_key_id);
+/**
+ * @brief Import an exchange key, rebind algorithm records, and derive nonce state.
+ *
+ * Single entry point that replaces the three-call pattern of import + rebind +
+ * nonce-derive.  Any existing PSA key on @p exchange_key is destroyed first.
+ *
+ * @param acs_conn      Per-connection ACS state.
+ * @param exchange_key  Runtime key slot to populate.
+ * @param key_material  Raw key bytes (caller-owned, typically on the stack).
+ * @param key_len       Length of @p key_material.
+ * @return 0 on success, negative errno on failure.
+ */
+int acs_crypto_activate_key(struct bt_acs_conn *acs_conn,
+			    struct bt_acs_runtime_key_state *exchange_key,
+			    const uint8_t *key_material, size_t key_len);
 
 /** @brief Reset per-connection crypto runtime state and rebind static slots. */
 void acs_crypto_reset(struct bt_acs_conn *acs_conn);

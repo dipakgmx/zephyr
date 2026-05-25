@@ -7,6 +7,7 @@
 #include <errno.h>
 #include <string.h>
 
+#include <mbedtls/platform_util.h>
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/random/random.h>
 #include <zephyr/bluetooth/conn.h>
@@ -428,7 +429,7 @@ int acs_cp_kex_exchange_ecdh(struct acs_procedure *proc, struct net_buf_simple *
 			return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH,
 						 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 		}
-		err = cb->oob_key_get(proc->acs_conn->conn, acs_conn->crypto.kex->shared_secret,
+		err = cb->oob_key_get(proc->acs_conn->conn, acs_conn->crypto.kex->key_material,
 				      &acs_conn->crypto.kex->key_mat_len);
 		if (err || acs_conn->crypto.kex->key_mat_len == 0) {
 			LOG_ERR("OOB key_get failed: %d", err);
@@ -617,50 +618,32 @@ int acs_cp_kex_ecdh_confirm_rand(struct acs_procedure *proc, struct net_buf_simp
 					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 	}
 
-	/* If KDF was applied, the ECDH exchange key is already in the union
-	 * buffer; publish it as the current ECDH key. This is still the parent
-	 * key for the ACS descriptor chain. A separate standalone
-	 * START_KEY_EXCHANGE(KEY_ID=KDF) / KEY_EXCHANGE_KDF pair may still
-	 * derive the child algorithm key afterward when the descriptor graph
-	 * requires it.
-	 *
-	 * Otherwise derive the ECDH/OOB session key directly from the raw
-	 * shared secret. */
 	if (acs_conn->crypto.kex->kdf_applied) {
-		struct bt_acs_runtime_key_state *ecdh_key;
+		struct bt_acs_runtime_key_state *exchange_key;
 
-		if (acs_crypto_current_key_lookup(acs_conn, ACS_KEY_ID_ECDH, &ecdh_key) != 0) {
+		if (acs_crypto_current_key_lookup(acs_conn, ACS_KEY_ID_ECDH, &exchange_key) != 0) {
 			LOG_ERR("Missing ECDH runtime key state");
 			proc->seq_state = ACS_CP_SEQ_KEX_FAIL_RSP;
 			return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_ECDH_CONFIRM_RAND,
 						 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 		}
 
-		memcpy(ecdh_key->key, acs_conn->crypto.kex->ecdh_key,
-		       CONFIG_BT_ACS_SESSION_KEY_SIZE);
-		err = acs_crypto_import_current_key(ecdh_key);
-		if (err == 0) {
-			err = acs_crypto_rebind_key_desc_runtimes(acs_conn);
-			if (err == 0) {
-				acs_crypto_reset_key_desc_runtime_counters(acs_conn,
-									   ACS_KEY_ID_ECDH);
-			}
-		}
-		if (err) {
-			LOG_ERR("Failed to import ECDH current key: %d", err);
-			proc->seq_state = ACS_CP_SEQ_KEX_FAIL_RSP;
-			return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_ECDH_CONFIRM_RAND,
-						 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
-		}
+		err = acs_crypto_activate_key(acs_conn, exchange_key,
+					      acs_conn->crypto.kex->key_material,
+					      CONFIG_BT_ACS_SESSION_KEY_SIZE);
 	} else {
 		err = acs_crypto_derive_session_key(acs_conn);
-		if (err) {
-			LOG_ERR("Failed to derive session key: %d", err);
-			proc->seq_state = ACS_CP_SEQ_KEX_FAIL_RSP;
-			return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_ECDH_CONFIRM_RAND,
-						 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
-		}
 	}
+
+	if (err) {
+		LOG_ERR("Failed to establish session key: %d", err);
+		proc->seq_state = ACS_CP_SEQ_KEX_FAIL_RSP;
+		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_ECDH_CONFIRM_RAND,
+					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
+	}
+
+	mbedtls_platform_zeroize(acs_conn->crypto.kex->key_material,
+				 sizeof(acs_conn->crypto.kex->key_material));
 
 	proc->seq_state = ACS_CP_SEQ_KEX_SUCCESS_RSP;
 

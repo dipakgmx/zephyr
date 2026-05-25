@@ -205,8 +205,6 @@ struct bt_acs_runtime_key_state {
 	const struct bt_acs_key_desc_record *key_desc;
 	/** Imported PSA key handle. 0 means this current key is not installed/usable. */
 	psa_key_id_t psa_key_id;
-	/** Key material retained in RAM for restore/invalidate/derive flows. */
-	uint8_t key[CONFIG_BT_ACS_SESSION_KEY_SIZE];
 };
 
 static inline uint16_t acs_runtime_key_id(const struct bt_acs_runtime_key_state *key_state)
@@ -224,8 +222,6 @@ struct bt_acs_key_desc_runtime {
 	uint16_t current_key_id;
 	/** Imported PSA key handle for the algorithm record. */
 	psa_key_id_t psa_key_id;
-	/** Key material copied from the current parent/child exchange key. */
-	uint8_t key[CONFIG_BT_ACS_SESSION_KEY_SIZE];
 	/** AC Server nonce fixed value for this Key_ID (runtime order for nonce build). */
 	uint8_t server_nonce_fixed[ACS_MAX_NONCE_FIXED_SIZE];
 	/** AC Client nonce fixed value for this Key_ID (runtime order for nonce build). */
@@ -293,19 +289,13 @@ struct bt_acs_kex_ctx {
 	bool in_use; /**< Pool-allocation flag */
 	/** Next legal inbound KEX opcode, or 0 when no further inbound step is accepted. */
 	uint8_t next_expected_opcode;
-	/**
-	 * Key material buffer - holds either the raw ECDH shared secret
-	 * (before KDF) or the HKDF-derived ECDH key (after KDF).  Without
-	 * KDF, shared_secret is used directly for confirmation; with KDF,
-	 * ecdh_key replaces it.  The two are mutually exclusive at any
-	 * given point in the key exchange state machine.
+	/** Key material buffer — raw ECDH shared secret initially, overwritten
+	 *  in-place by HKDF when the KDF step runs.  key_mat_len tracks the
+	 *  valid length after each write.
 	 */
-	union {
-		uint8_t shared_secret[CONFIG_BT_ACS_SHARED_SECRET_MAX_SIZE];
-		uint8_t ecdh_key[CONFIG_BT_ACS_SHARED_SECRET_MAX_SIZE];
-	};
-	uint16_t key_mat_len; /**< Length of the active key material (shared_secret or ecdh_key) */
-	bool kdf_applied;     /**< True after KDF overwrites shared_secret with ecdh_key */
+	uint8_t key_material[CONFIG_BT_ACS_SHARED_SECRET_MAX_SIZE];
+	uint16_t key_mat_len; /**< Valid length of key_material */
+	bool kdf_applied;     /**< True once the in-exchange KDF step has run */
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_ECDH) || IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
 	struct bt_acs_kdf_params kdf; /**< KDF parameters (Table 4.76) */
 #endif

@@ -95,12 +95,9 @@ int acs_key_exchange_step_success_status(struct acs_procedure *proc)
 	acs_conn->status_flags |= BT_ACS_STATUS_SECURITY_ESTABLISHED;
 	{
 		const struct bt_acs_cb *cb = acs_cb_get();
-		struct bt_acs_runtime_key_state *established_key =
-			acs_key_exchange_established_key(acs_conn);
 
-		if (cb && cb->security_established && established_key) {
-			cb->security_established(proc->acs_conn->conn, established_key->key,
-						 CONFIG_BT_ACS_SESSION_KEY_SIZE);
+		if (cb && cb->security_established) {
+			cb->security_established(proc->acs_conn->conn);
 		}
 	}
 
@@ -159,11 +156,9 @@ void acs_key_exchange_abort(struct bt_acs_conn *acs_conn)
 
 		if (acs_crypto_current_key_lookup(acs_conn, ACS_KEY_ID_KDF, &kdf_key) == 0) {
 			acs_crypto_destroy_current_key(kdf_key);
-			mbedtls_platform_zeroize(kdf_key->key, sizeof(kdf_key->key));
 		}
 
 		acs_crypto_rebind_key_desc_runtimes(acs_conn);
-		acs_crypto_reset_key_desc_runtime_counters(acs_conn, ACS_KEY_ID_KDF);
 		acs_key_exchange_free_ctx(acs_conn);
 		return;
 	}
@@ -326,12 +321,21 @@ static int acs_key_desc_runtime_derive_nonce_state(struct bt_acs_key_desc_runtim
 	}
 
 	switch (key_desc->aes.nonce_type) {
-	case ACS_NONCE_SEQ_DIFF_FIXED:
-		/* SEQ_DIFF_FIXED uses the fixed nonce values already exchanged with the peer.
-		 * A fresh key resets the counters, but it must not overwrite the negotiated
-		 * server/client fixed parts or decrypt will fail.
-		 */
+	case ACS_NONCE_SEQ_DIFF_FIXED: {
+		bool nonce_unset = true;
+
+		for (uint8_t i = 0U; i < prefix_size; i++) {
+			if (key_desc_runtime->server_nonce_fixed[i] != 0U) {
+				nonce_unset = false;
+				break;
+			}
+		}
+		if (nonce_unset) {
+			sys_rand_get(key_desc_runtime->server_nonce_fixed, prefix_size);
+			sys_mem_swap(key_desc_runtime->server_nonce_fixed, prefix_size);
+		}
 		return 0;
+	}
 
 	case ACS_NONCE_SEQ_EVEN_ODD:
 		memset(key_desc_runtime->server_nonce_fixed, 0,
@@ -382,6 +386,28 @@ static int acs_derive_nonce_state_for_current_key(struct bt_acs_conn *acs_conn,
 	}
 
 	return 0;
+}
+
+int acs_crypto_activate_key(struct bt_acs_conn *acs_conn,
+			    struct bt_acs_runtime_key_state *exchange_key,
+			    const uint8_t *key_material, size_t key_len)
+{
+	uint16_t key_id = acs_runtime_key_id(exchange_key);
+	int err;
+
+	acs_crypto_destroy_current_key(exchange_key);
+
+	err = acs_crypto_import_current_key(exchange_key, key_material, key_len);
+	if (err) {
+		return err;
+	}
+
+	err = acs_crypto_rebind_key_desc_runtimes(acs_conn);
+	if (err) {
+		return err;
+	}
+
+	return acs_derive_nonce_state_for_current_key(acs_conn, key_id, key_material, key_len);
 }
 
 /* §4.4.3.17.1.2: Salt=HMAC(Zero,PKs||PKc), ConfKey=HMAC(Salt,ECDHKey||Auth),
@@ -565,8 +591,8 @@ static int bt_acs_crypto_compute_shared_secret(struct bt_acs_conn *acs_conn)
 #endif
 
 	status = psa_raw_key_agreement(PSA_ALG_ECDH, acs_conn->crypto.kex->ecdh_key_id, psa_pubkey,
-				       psa_pubkey_len, acs_conn->crypto.kex->shared_secret,
-				       sizeof(acs_conn->crypto.kex->shared_secret), &olen);
+				       psa_pubkey_len, acs_conn->crypto.kex->key_material,
+				       sizeof(acs_conn->crypto.kex->key_material), &olen);
 
 	acs_crypto_warn_destroy_key_failure(psa_destroy_key(acs_conn->crypto.kex->ecdh_key_id),
 					    acs_conn->crypto.kex->ecdh_key_id,
@@ -593,6 +619,7 @@ int acs_crypto_derive_session_key(struct bt_acs_conn *acs_conn)
 	struct bt_acs_runtime_key_state *exchange_key;
 	uint8_t salt[2 * ACS_CONFIRM_VALUE_SIZE];
 	uint8_t client_random_be[ACS_CONFIRM_VALUE_SIZE];
+	uint8_t session_key[CONFIG_BT_ACS_SESSION_KEY_SIZE];
 	int ret;
 
 	ret = acs_crypto_current_key_lookup(acs_conn, key_id, &exchange_key);
@@ -607,8 +634,8 @@ int acs_crypto_derive_session_key(struct bt_acs_conn *acs_conn)
 	memcpy(salt, acs_conn->crypto.kex->server_random, ACS_CONFIRM_VALUE_SIZE);
 	memcpy(salt + ACS_CONFIRM_VALUE_SIZE, client_random_be, ACS_CONFIRM_VALUE_SIZE);
 
-	ret = acs_hkdf(ACS_PSA_HKDF_ALG, salt, sizeof(salt), acs_conn->crypto.kex->shared_secret,
-		       acs_conn->crypto.kex->key_mat_len, info, sizeof(info) - 1, exchange_key->key,
+	ret = acs_hkdf(ACS_PSA_HKDF_ALG, salt, sizeof(salt), acs_conn->crypto.kex->key_material,
+		       acs_conn->crypto.kex->key_mat_len, info, sizeof(info) - 1, session_key,
 		       CONFIG_BT_ACS_SESSION_KEY_SIZE);
 
 	if (ret != 0) {
@@ -616,16 +643,9 @@ int acs_crypto_derive_session_key(struct bt_acs_conn *acs_conn)
 		return ret;
 	}
 
-	ret = acs_crypto_import_current_key(exchange_key);
-	if (ret == 0) {
-		ret = acs_crypto_rebind_key_desc_runtimes(acs_conn);
-		if (ret == 0) {
-			ret = acs_derive_nonce_state_for_current_key(
-				acs_conn, acs_runtime_key_id(exchange_key), exchange_key->key,
-				CONFIG_BT_ACS_SESSION_KEY_SIZE);
-		}
-	}
-
+	ret = acs_crypto_activate_key(acs_conn, exchange_key, session_key,
+				      CONFIG_BT_ACS_SESSION_KEY_SIZE);
+	mbedtls_platform_zeroize(session_key, sizeof(session_key));
 	return ret;
 }
 
@@ -633,11 +653,13 @@ int acs_crypto_derive_session_key(struct bt_acs_conn *acs_conn)
 /* §4.4.3.17.2.1: Derive child key from the ECDH session key via HKDF. */
 static int bt_acs_crypto_derive_kdf_child_key(struct bt_acs_conn *acs_conn)
 {
+	uint8_t parent_buf[CONFIG_BT_ACS_SESSION_KEY_SIZE];
 	uint8_t child_key[CONFIG_BT_ACS_SESSION_KEY_SIZE];
 	struct bt_acs_runtime_key_state *parent_key;
 	struct bt_acs_runtime_key_state *kdf_key;
 	uint8_t salt_be[CONFIG_BT_ACS_KDF_SALT_MAX_SIZE];
 	uint8_t info_be[CONFIG_BT_ACS_KDF_INFO_MAX_SIZE];
+	size_t parent_len;
 	int ret;
 
 	ret = acs_crypto_current_key_lookup(acs_conn, ACS_KEY_ID_ECDH, &parent_key);
@@ -652,35 +674,33 @@ static int bt_acs_crypto_derive_kdf_child_key(struct bt_acs_conn *acs_conn)
 		return ret;
 	}
 
+	ret = acs_crypto_export_current_key(parent_key, parent_buf, sizeof(parent_buf),
+					    &parent_len);
+	if (ret) {
+		LOG_ERR("Failed to export ECDH parent key: %d", ret);
+		return ret;
+	}
+
 	/* Salt and info are stored in wire order (LSO) but HKDF requires big-endian input. */
 	sys_memcpy_swap(salt_be, acs_conn->crypto.kex->kdf.salt,
 			acs_conn->crypto.kex->kdf.salt_size);
 	sys_memcpy_swap(info_be, acs_conn->crypto.kex->kdf.info,
 			acs_conn->crypto.kex->kdf.info_size);
 
-	ret = acs_hkdf(ACS_PSA_HKDF_ALG, salt_be, acs_conn->crypto.kex->kdf.salt_size,
-		       parent_key->key, CONFIG_BT_ACS_SESSION_KEY_SIZE, info_be,
-		       acs_conn->crypto.kex->kdf.info_size, child_key,
+	ret = acs_hkdf(ACS_PSA_HKDF_ALG, salt_be, acs_conn->crypto.kex->kdf.salt_size, parent_buf,
+		       parent_len, info_be, acs_conn->crypto.kex->kdf.info_size, child_key,
 		       CONFIG_BT_ACS_SESSION_KEY_SIZE);
+
+	mbedtls_platform_zeroize(parent_buf, sizeof(parent_buf));
 
 	if (ret != 0) {
 		LOG_ERR("KDF child key derivation failed: %d", ret);
+		mbedtls_platform_zeroize(child_key, sizeof(child_key));
 		return ret;
 	}
 
-	memcpy(kdf_key->key, child_key, CONFIG_BT_ACS_SESSION_KEY_SIZE);
-
-	acs_crypto_destroy_current_key(kdf_key);
-	ret = acs_crypto_import_current_key(kdf_key);
-	if (ret == 0) {
-		ret = acs_crypto_rebind_key_desc_runtimes(acs_conn);
-		if (ret == 0) {
-			ret = acs_derive_nonce_state_for_current_key(
-				acs_conn, ACS_KEY_ID_KDF, kdf_key->key,
-				CONFIG_BT_ACS_SESSION_KEY_SIZE);
-		}
-	}
-
+	ret = acs_crypto_activate_key(acs_conn, kdf_key, child_key, CONFIG_BT_ACS_SESSION_KEY_SIZE);
+	mbedtls_platform_zeroize(child_key, sizeof(child_key));
 	return ret;
 }
 #endif /* CONFIG_BT_ACS_KEY_EXCHANGE_KDF */
@@ -831,18 +851,17 @@ int acs_key_exchange_ecdh_kdf(struct bt_acs_conn *acs_conn, struct net_buf_simpl
 		return err;
 	}
 
-	/* HKDF: IKM=shared_secret → ecdh_key (same union buffer, safe: PSA
-	 * reads IKM fully during extract before writing during expand).
-	 * Salt and info reversed to BE per spec. */
+	/* HKDF overwrites key_material in-place (safe: PSA reads IKM fully
+	 * during extract before writing during expand). */
 	sys_memcpy_swap(salt_be, acs_conn->crypto.kex->kdf.salt,
 			acs_conn->crypto.kex->kdf.salt_size);
 	sys_memcpy_swap(info_be, acs_conn->crypto.kex->kdf.info,
 			acs_conn->crypto.kex->kdf.info_size);
 
 	err = acs_hkdf(ACS_PSA_HKDF_ALG, salt_be, acs_conn->crypto.kex->kdf.salt_size,
-		       acs_conn->crypto.kex->shared_secret, acs_conn->crypto.kex->key_mat_len,
-		       info_be, acs_conn->crypto.kex->kdf.info_size, acs_conn->crypto.kex->ecdh_key,
-		       CONFIG_BT_ACS_SESSION_KEY_SIZE);
+		       acs_conn->crypto.kex->key_material, acs_conn->crypto.kex->key_mat_len,
+		       info_be, acs_conn->crypto.kex->kdf.info_size,
+		       acs_conn->crypto.kex->key_material, CONFIG_BT_ACS_SESSION_KEY_SIZE);
 	if (err != 0) {
 		LOG_ERR("HKDF ECDHKey derivation failed: %d", err);
 		return err;
@@ -879,10 +898,7 @@ int acs_key_exchange_ecdh_confirm_code(struct bt_acs_conn *acs_conn, struct net_
 	sys_rand_get(acs_conn->crypto.kex->server_random,
 		     sizeof(acs_conn->crypto.kex->server_random));
 
-	/* Key material: KDF overwrites the union buffer in-place, so
-	 * shared_secret/ecdh_key are the same storage; key_mat_len tracks
-	 * whichever was written last. */
-	key_mat = acs_conn->crypto.kex->shared_secret;
+	key_mat = acs_conn->crypto.kex->key_material;
 	key_mat_len = acs_conn->crypto.kex->key_mat_len;
 
 	err = acs_ecdh_confirm_code_compute(acs_conn->crypto.kex->server_pubkey.x,
@@ -938,7 +954,7 @@ int acs_key_exchange_ecdh_confirm_rand(struct bt_acs_conn *acs_conn, struct net_
 		return err;
 	}
 
-	key_mat = acs_conn->crypto.kex->shared_secret;
+	key_mat = acs_conn->crypto.kex->key_material;
 	key_mat_len = acs_conn->crypto.kex->key_mat_len;
 
 	/* client_random is wire LE; reverse to BE for HMAC */

@@ -53,8 +53,8 @@ static int acs_runtime_classify_frame(const struct acs_frame *frame, uint16_t ma
 			route->kind = ACS_ROUTE_PROTECTED_CHAR;
 			break;
 		default:
-			LOG_WRN("handle 0x%04x not in restriction map %u",
-				frame->resource_handle, map_id);
+			LOG_WRN("handle 0x%04x not in restriction map %u", frame->resource_handle,
+				map_id);
 			return -ENOENT;
 		}
 

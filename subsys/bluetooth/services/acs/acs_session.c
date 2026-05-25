@@ -8,6 +8,8 @@
 #include <stdbool.h>
 #include <string.h>
 
+#include <mbedtls/platform_util.h>
+#include <psa/crypto.h>
 #include <zephyr/sys/util.h>
 #include <zephyr/bluetooth/addr.h>
 #include <zephyr/bluetooth/conn.h>
@@ -20,7 +22,6 @@
 
 #if defined(CONFIG_BT_SETTINGS)
 #include <zephyr/psa/key_ids.h>
-#include <psa/crypto.h>
 
 #include "host/settings.h"
 #include "acs_key_desc.h"
@@ -43,10 +44,10 @@ struct acs_session_cache_entry {
 
 static struct acs_session_cache_entry session_cache[CONFIG_BT_MAX_PAIRED];
 
-static bool key_material_is_set(const uint8_t *key, size_t len)
+static bool any_current_key_installed(const struct bt_acs_conn *acs_conn)
 {
-	for (size_t i = 0; i < len; i++) {
-		if (key[i] != 0U) {
+	for (size_t i = 0; i < ARRAY_SIZE(acs_conn->crypto.current_keys); i++) {
+		if (acs_conn->crypto.current_keys[i].psa_key_id != 0U) {
 			return true;
 		}
 	}
@@ -66,17 +67,8 @@ static struct acs_session_cache_entry *session_cache_find(const bt_addr_le_t *ad
 void acs_session_cache_save(const bt_addr_le_t *addr, const struct bt_acs_conn *acs_conn)
 {
 	struct acs_session_cache_entry *entry;
-	bool has_key_material = false;
 
-	for (size_t i = 0; i < ARRAY_SIZE(acs_conn->crypto.current_keys); i++) {
-		if (key_material_is_set(acs_conn->crypto.current_keys[i].key,
-					sizeof(acs_conn->crypto.current_keys[i].key))) {
-			has_key_material = true;
-			break;
-		}
-	}
-
-	if (!has_key_material) {
+	if (!any_current_key_installed(acs_conn)) {
 		return;
 	}
 
@@ -101,9 +93,6 @@ void acs_session_cache_save(const bt_addr_le_t *addr, const struct bt_acs_conn *
 	entry->status_flags = acs_conn->status_flags;
 
 	entry->crypto.kex = NULL;
-	for (size_t i = 0; i < ARRAY_SIZE(entry->crypto.current_keys); i++) {
-		entry->crypto.current_keys[i].psa_key_id = 0U;
-	}
 	for (size_t i = 0; i < ARRAY_SIZE(entry->crypto.key_desc_runtimes); i++) {
 		entry->crypto.key_desc_runtimes[i].psa_key_id = 0U;
 	}
@@ -127,41 +116,37 @@ int acs_session_cache_restore(const bt_addr_le_t *addr, struct bt_acs_conn *acs_
 
 	for (size_t i = 0; i < ARRAY_SIZE(acs_conn->crypto.current_keys); i++) {
 		struct bt_acs_runtime_key_state *ck = &acs_conn->crypto.current_keys[i];
+		psa_key_attributes_t attrs = PSA_KEY_ATTRIBUTES_INIT;
 
-		if (!ck->key_desc || !key_material_is_set(ck->key, sizeof(ck->key))) {
+		if (!ck->key_desc || ck->psa_key_id == 0U) {
 			continue;
 		}
 
-		err = acs_crypto_import_current_key(ck);
-		if (err) {
-			LOG_ERR("Re-import current key 0x%04x failed: %d", acs_runtime_key_id(ck),
-				err);
+		if (psa_get_key_attributes(ck->psa_key_id, &attrs) != PSA_SUCCESS) {
+			LOG_ERR("Cached PSA key 0x%08x no longer valid",
+				(unsigned int)ck->psa_key_id);
+			psa_reset_key_attributes(&attrs);
 			goto reimport_failed;
 		}
+		psa_reset_key_attributes(&attrs);
+
+		entry->crypto.current_keys[i].psa_key_id = 0U;
 	}
 
-	for (size_t i = 0; i < ARRAY_SIZE(acs_conn->crypto.key_desc_runtimes); i++) {
-		struct bt_acs_key_desc_runtime *rt = &acs_conn->crypto.key_desc_runtimes[i];
-
-		if (!rt->key_desc || !key_material_is_set(rt->key, sizeof(rt->key))) {
-			continue;
-		}
-
-		err = acs_crypto_import_record_key(rt);
-		if (err) {
-			LOG_ERR("Re-import record key 0x%04x failed: %d",
-				acs_key_desc_runtime_key_id(rt), err);
-			goto reimport_failed;
-		}
+	err = acs_crypto_rebind_key_desc_runtimes(acs_conn);
+	if (err) {
+		LOG_ERR("Re-import record keys failed: %d", err);
+		goto reimport_failed;
 	}
 
 	goto reimport_ok;
 
 reimport_failed:
-	LOG_ERR("Failed to re-import cached keys - resetting crypto");
+	LOG_ERR("Cached PSA keys invalid - resetting crypto");
+	acs_crypto_destroy_connection_keys(acs_conn);
 	acs_crypto_reset(acs_conn);
 	acs_conn->status_flags = BT_ACS_STATUS_SECURITY_CONTROLS_ENABLED;
-	return err;
+	return -EIO;
 
 reimport_ok:
 	LOG_INF("ACS session restored from RAM cache for peer %s%s", bt_addr_le_str(addr),
@@ -172,24 +157,21 @@ reimport_ok:
 	if (acs_conn->status_flags & BT_ACS_STATUS_SECURITY_ESTABLISHED) {
 		cb = acs_cb_get();
 		if (cb && cb->security_established) {
-			struct bt_acs_runtime_key_state const *parent = NULL;
-
-			for (size_t i = 0; i < ARRAY_SIZE(acs_conn->crypto.current_keys); i++) {
-				struct bt_acs_runtime_key_state const *ck =
-					&acs_conn->crypto.current_keys[i];
-
-				if (ck->psa_key_id != 0U) {
-					parent = ck;
-				}
-			}
-			if (parent) {
-				cb->security_established(acs_conn->conn, parent->key,
-							 CONFIG_BT_ACS_SESSION_KEY_SIZE);
-			}
+			cb->security_established(acs_conn->conn);
 		}
 	}
 
 	return 0;
+}
+
+static void session_cache_destroy_entry(struct acs_session_cache_entry *entry)
+{
+	for (size_t i = 0; i < ARRAY_SIZE(entry->crypto.current_keys); i++) {
+		if (entry->crypto.current_keys[i].psa_key_id != 0U) {
+			psa_destroy_key(entry->crypto.current_keys[i].psa_key_id);
+		}
+	}
+	memset(entry, 0, sizeof(*entry));
 }
 
 void acs_session_cache_clear_peer(const bt_addr_le_t *addr)
@@ -197,7 +179,7 @@ void acs_session_cache_clear_peer(const bt_addr_le_t *addr)
 	struct acs_session_cache_entry *entry = session_cache_find(addr);
 
 	if (entry) {
-		memset(entry, 0, sizeof(*entry));
+		session_cache_destroy_entry(entry);
 	}
 }
 
@@ -206,7 +188,7 @@ void acs_session_cache_clear_all_except(const bt_addr_le_t *keep_addr)
 	for (size_t i = 0; i < ARRAY_SIZE(session_cache); i++) {
 		if (!bt_addr_le_eq(&session_cache[i].addr, BT_ADDR_LE_ANY) &&
 		    !bt_addr_le_eq(&session_cache[i].addr, keep_addr)) {
-			memset(&session_cache[i], 0, sizeof(session_cache[i]));
+			session_cache_destroy_entry(&session_cache[i]);
 		}
 	}
 }
@@ -457,17 +439,29 @@ void acs_session_store(const struct bt_conn *conn, const struct bt_acs_conn *acs
 	acs_slots[slot].meta.parent_key_id = acs_runtime_key_id(parent_key);
 	acs_slots[slot].meta.restriction_map_id = acs_conn->restriction_map_id;
 
-	psa_set_key_id(&parent_attrs, acs_psa_key_id(slot));
-	psa_set_key_lifetime(&parent_attrs, PSA_KEY_LIFETIME_PERSISTENT);
-	psa_set_key_type(&parent_attrs, PSA_KEY_TYPE_RAW_DATA);
-	psa_set_key_bits(&parent_attrs, CONFIG_BT_ACS_SESSION_KEY_SIZE * BITS_PER_BYTE);
-	psa_set_key_usage_flags(&parent_attrs, PSA_KEY_USAGE_EXPORT);
-	psa_set_key_algorithm(&parent_attrs, PSA_ALG_NONE);
+	{
+		uint8_t key_buf[CONFIG_BT_ACS_SESSION_KEY_SIZE];
+		size_t key_len;
 
-	err = acs_persistent_import_key(&parent_attrs, parent_key->key, sizeof(parent_key->key),
-					"store parent key");
-	if (err) {
-		goto err_free_slot;
+		err = acs_crypto_export_current_key(parent_key, key_buf, sizeof(key_buf), &key_len);
+		if (err) {
+			LOG_ERR("Failed to export parent key for persistent store: %d", err);
+			goto err_free_slot;
+		}
+
+		psa_set_key_id(&parent_attrs, acs_psa_key_id(slot));
+		psa_set_key_lifetime(&parent_attrs, PSA_KEY_LIFETIME_PERSISTENT);
+		psa_set_key_type(&parent_attrs, PSA_KEY_TYPE_RAW_DATA);
+		psa_set_key_bits(&parent_attrs, CONFIG_BT_ACS_SESSION_KEY_SIZE * BITS_PER_BYTE);
+		psa_set_key_usage_flags(&parent_attrs, PSA_KEY_USAGE_EXPORT);
+		psa_set_key_algorithm(&parent_attrs, PSA_ALG_NONE);
+
+		err = acs_persistent_import_key(&parent_attrs, key_buf, key_len,
+						"store parent key");
+		mbedtls_platform_zeroize(key_buf, sizeof(key_buf));
+		if (err) {
+			goto err_free_slot;
+		}
 	}
 
 	err = bt_settings_store("acs", info.id, addr, &acs_slots[slot].meta,
@@ -509,26 +503,25 @@ void acs_session_restore(struct bt_conn *conn, struct bt_acs_conn *acs_conn)
 		return;
 	}
 
-	err = acs_persistent_export_key(acs_psa_key_id(slot), parent_key->key,
-					sizeof(parent_key->key), "restore ACS parent key");
-	if (err) {
-		acs_session_erase_slot(slot);
-		return;
-	}
+	{
+		uint8_t key_buf[CONFIG_BT_ACS_SESSION_KEY_SIZE];
 
-	parent_key->psa_key_id = 0U;
-	if (acs_crypto_import_current_key(parent_key) != 0) {
-		LOG_ERR("Failed to import restored parent key into PSA");
-		acs_crypto_reset(acs_conn);
-		return;
-	}
+		err = acs_persistent_export_key(acs_psa_key_id(slot), key_buf, sizeof(key_buf),
+						"restore ACS parent key");
+		if (err) {
+			acs_session_erase_slot(slot);
+			return;
+		}
 
-	acs_conn->restriction_map_id = acs_slots[slot].meta.restriction_map_id;
+		acs_conn->restriction_map_id = acs_slots[slot].meta.restriction_map_id;
 
-	if (acs_crypto_rebind_key_desc_runtimes(acs_conn) != 0) {
-		LOG_ERR("Failed to import restored key descriptor runtimes into PSA");
-		acs_crypto_reset(acs_conn);
-		return;
+		err = acs_crypto_activate_key(acs_conn, parent_key, key_buf, sizeof(key_buf));
+		mbedtls_platform_zeroize(key_buf, sizeof(key_buf));
+		if (err) {
+			LOG_ERR("Failed to activate restored parent key");
+			acs_crypto_reset(acs_conn);
+			return;
+		}
 	}
 
 	established_key = acs_restored_established_key(acs_conn);
@@ -545,8 +538,7 @@ void acs_session_restore(struct bt_conn *conn, struct bt_acs_conn *acs_conn)
 
 	if ((acs_conn->status_flags & BT_ACS_STATUS_SECURITY_ESTABLISHED) && cb &&
 	    cb->security_established) {
-		cb->security_established(conn, established_key->key,
-					 CONFIG_BT_ACS_SESSION_KEY_SIZE);
+		cb->security_established(conn);
 	}
 }
 

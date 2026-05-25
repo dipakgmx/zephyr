@@ -110,9 +110,7 @@ static void invalidate_kdf_child(struct bt_acs_conn *acs_conn)
 	}
 
 	acs_crypto_destroy_current_key(kdf_key);
-	mbedtls_platform_zeroize(kdf_key->key, sizeof(kdf_key->key));
 	acs_crypto_rebind_key_desc_runtimes(acs_conn);
-	acs_crypto_reset_key_desc_runtime_counters(acs_conn, ACS_KEY_ID_KDF);
 	acs_conn->status_flags &= ~BT_ACS_STATUS_SECURITY_ESTABLISHED;
 }
 #endif
