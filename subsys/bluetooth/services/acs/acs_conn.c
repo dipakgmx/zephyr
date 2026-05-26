@@ -261,6 +261,10 @@ int bt_acs_invalidate_security(struct bt_conn *conn)
 	struct bt_acs_conn *acs_conn;
 	bool was_established;
 	const struct bt_acs_cb *cb;
+
+	if (!conn) {
+		return -EINVAL;
+	}
 	__ASSERT(conn != NULL, "conn must not be NULL");
 
 	if (!acs_is_initialized()) {

@@ -338,8 +338,14 @@ static void acs_req_work_handler(struct k_work *work)
 
 		err = acs_auto_respond(req);
 		if (err) {
-			LOG_WRN("ACS auto-response failed for handle 0x%04x: %d",
+			LOG_ERR("ACS auto-response failed for handle 0x%04x: %d",
 				req->route.resource_handle, err);
+			/* TODO: send an ACS Status or protected-CP error indication
+			 * to the client.  The GATT write response was already sent
+			 * before the request reached this work handler, so we cannot
+			 * use an ATT error code.  Until a proper error indication
+			 * path exists the client will time out waiting for a reply.
+			 */
 		}
 
 		/* The handler / auto_respond consumed the input bytes already.

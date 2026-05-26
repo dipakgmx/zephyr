@@ -394,7 +394,6 @@ int acs_key_desc_build_response(struct net_buf_simple *operand, struct net_buf_s
 		} else {
 			LOG_WRN("Key rec: unknown type_id 0x%02x for key_id 0x%04x; skipping",
 				rec->type_id, rec->key_id);
-			found = false;
 		}
 	}
 

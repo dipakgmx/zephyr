@@ -395,15 +395,17 @@ struct bt_acs_rmap_char_reg {
  * @brief Default ISC ID: best-available protection based on compiled algorithms.
  *
  * Resolves at compile time to the strongest available ISC record so applications
- * don't need to duplicate per-algorithm #if chains.  Priority:
- *   CMAC → MAC_ONLY, GMAC → INTEGRITY, GCM/CCM → HIGH_SEC, none → UNENC.
+ * don't need to duplicate per-algorithm #if chains.  Priority (strongest first):
+ *   CONFIDENTIALITY → HIGH_SEC, GMAC → INTEGRITY, AUTH → AUTH, else → UNENC.
  */
-#if IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_CMAC)
-#define BT_ACS_ISC_ID_DEFAULT BT_ACS_ISC_ID_MAC_ONLY
+#if IS_ENABLED(CONFIG_BT_ACS_FEAT_CONFIDENTIALITY)
+#define BT_ACS_ISC_ID_DEFAULT BT_ACS_ISC_ID_HIGH_SEC
 #elif IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_GMAC)
 #define BT_ACS_ISC_ID_DEFAULT BT_ACS_ISC_ID_INTEGRITY
-#elif IS_ENABLED(CONFIG_BT_ACS_FEAT_CONFIDENTIALITY)
-#define BT_ACS_ISC_ID_DEFAULT BT_ACS_ISC_ID_HIGH_SEC
+#elif IS_ENABLED(CONFIG_BT_ACS_FEAT_AUTHENTICATION)
+#define BT_ACS_ISC_ID_DEFAULT BT_ACS_ISC_ID_AUTH
+#elif IS_ENABLED(CONFIG_BT_ACS_FEAT_AUTHORIZATION)
+#define BT_ACS_ISC_ID_DEFAULT BT_ACS_ISC_ID_UNENC
 #else
 #define BT_ACS_ISC_ID_DEFAULT BT_ACS_ISC_ID_UNENC
 #endif

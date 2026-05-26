@@ -450,7 +450,7 @@ static int acs_ecdh_confirm_code_compute(const uint8_t *server_x_le, const uint8
 	ret = acs_hmac_sha256(zero_key, sizeof(zero_key), pubkey_concat, pubkey_concat_len, salt);
 	if (ret != 0) {
 		LOG_ERR("HMAC-SHA-256 failed in deriving confirmation salt: %d", ret);
-		return ret;
+		goto cleanup;
 	}
 
 	/* Step 2: ConfirmationKey = HMAC(Salt, ECDHKey || AuthValue) */
@@ -461,7 +461,7 @@ static int acs_ecdh_confirm_code_compute(const uint8_t *server_x_le, const uint8
 			      confirmation_key);
 	if (ret != 0) {
 		LOG_ERR("HMAC-SHA-256 failed in deriving confirmation key: %d", ret);
-		return ret;
+		goto cleanup;
 	}
 
 	/* Step 3: ConfirmationCode = HMAC(ConfirmationKey, RandomNumber) */
@@ -469,10 +469,13 @@ static int acs_ecdh_confirm_code_compute(const uint8_t *server_x_le, const uint8
 			      ACS_CONFIRM_VALUE_SIZE, confirm_out);
 	if (ret != 0) {
 		LOG_ERR("HMAC-SHA-256 failed in deriving confirmation code: %d", ret);
-		return ret;
 	}
 
-	return 0;
+cleanup:
+	mbedtls_platform_zeroize(salt, sizeof(salt));
+	mbedtls_platform_zeroize(confirmation_key, sizeof(confirmation_key));
+	mbedtls_platform_zeroize(ecdh_auth, sizeof(ecdh_auth));
+	return ret;
 }
 
 static int bt_acs_crypto_generate_keypair(struct bt_acs_conn *acs_conn)
@@ -573,6 +576,22 @@ static int bt_acs_crypto_compute_shared_secret(struct bt_acs_conn *acs_conn)
 		acs_crypto_warn_destroy_key_failure(
 			psa_destroy_key(acs_conn->crypto.kex->ecdh_key_id),
 			acs_conn->crypto.kex->ecdh_key_id, "client pubkey cleanup");
+		acs_conn->crypto.kex->ecdh_key_id = 0;
+		return -EINVAL;
+	}
+
+	/* Reject if client public key equals server public key (spec 4.4.3.17.1.1) */
+	if (memcmp(cpk->x, acs_conn->crypto.kex->server_pubkey.x, CONFIG_BT_ACS_ECDH_COORD_SIZE) ==
+		    0
+#if CONFIG_BT_ACS_ECDH_HAS_Y
+	    && memcmp(cpk->y, acs_conn->crypto.kex->server_pubkey.y,
+		      CONFIG_BT_ACS_ECDH_COORD_SIZE) == 0
+#endif
+	) {
+		LOG_WRN("client public key matches server public key");
+		acs_crypto_warn_destroy_key_failure(
+			psa_destroy_key(acs_conn->crypto.kex->ecdh_key_id),
+			acs_conn->crypto.kex->ecdh_key_id, "pubkey match cleanup");
 		acs_conn->crypto.kex->ecdh_key_id = 0;
 		return -EINVAL;
 	}
@@ -952,6 +971,13 @@ int acs_key_exchange_ecdh_confirm_rand(struct bt_acs_conn *acs_conn, struct net_
 
 	if (err) {
 		return err;
+	}
+
+	/* Reject if client random equals server random (spec 4.4.3.17.1.3) */
+	if (memcmp(acs_conn->crypto.kex->client_random, acs_conn->crypto.kex->server_random,
+		   ACS_CONFIRM_VALUE_SIZE) == 0) {
+		LOG_WRN("client random matches server random");
+		return -EINVAL;
 	}
 
 	key_mat = acs_conn->crypto.kex->key_material;

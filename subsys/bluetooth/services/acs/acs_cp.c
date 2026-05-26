@@ -50,10 +50,38 @@ static uint16_t acs_cp_min_operand_size(uint8_t opcode)
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_ECDH)
 	case BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH:
 		return sizeof(uint16_t);
+	case BT_ACS_CP_OPCODE_ECDH_CONFIRM_CODE:
+		return sizeof(struct acs_cp_ecdh_confirm_code_req);
+	case BT_ACS_CP_OPCODE_ECDH_CONFIRM_RAND:
+		return sizeof(struct acs_cp_ecdh_confirm_rand_req);
 #endif
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF) || IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_ECDH)
 	case BT_ACS_CP_OPCODE_KEY_EXCHANGE_KDF:
 		return sizeof(struct acs_kdf_req);
+#endif
+#if IS_ENABLED(CONFIG_BT_ACS_ANY_KEY_EXCHANGE)
+	case BT_ACS_CP_OPCODE_GET_KEY_DESCRIPTOR:
+		return sizeof(uint16_t);
+#endif
+#if IS_ENABLED(CONFIG_BT_ACS_FEAT_AUTHENTICATION)
+	case BT_ACS_CP_OPCODE_GET_INFORMATION_SECURITY_CONFIGURATION_DESCRIPTOR:
+		return sizeof(uint16_t);
+#endif
+#if IS_ENABLED(CONFIG_BT_ACS_FEAT_AUTHORIZATION)
+	case BT_ACS_CP_OPCODE_GET_RESTRICTION_MAP_DESCRIPTOR:
+		return sizeof(uint16_t);
+#endif
+#if IS_ENABLED(CONFIG_BT_ACS_INVALIDATE_ESTABLISHED_SECURITY)
+	case BT_ACS_CP_OPCODE_INVALIDATE_KEY:
+		return sizeof(uint16_t);
+#endif
+#if IS_ENABLED(CONFIG_BT_ACS_KEY_URI)
+	case BT_ACS_CP_OPCODE_GET_KEY_URI:
+		return sizeof(uint16_t);
+#endif
+#if IS_ENABLED(CONFIG_BT_ACS_SET_SECURITY_CONTROLS_SWITCH)
+	case BT_ACS_CP_OPCODE_SET_SECURITY_CONTROLS_SWITCH:
+		return sizeof(uint8_t);
 #endif
 	default:
 		return 0U;
@@ -269,8 +297,10 @@ int acs_cp_dispatch(const struct acs_frame *frame, struct bt_acs_conn *acs_conn,
 		return acs_cp_handle_get_key_descriptor(proc, payload);
 #endif /* CONFIG_BT_ACS_ANY_KEY_EXCHANGE */
 
+#if IS_ENABLED(CONFIG_BT_ACS_FEAT_AUTHENTICATION)
 	case BT_ACS_CP_OPCODE_GET_INFORMATION_SECURITY_CONFIGURATION_DESCRIPTOR:
 		return acs_cp_handle_get_isc_descriptor(proc, payload);
+#endif /* CONFIG_BT_ACS_FEAT_AUTHENTICATION */
 
 #if IS_ENABLED(CONFIG_BT_ACS_RESOURCE_HANDLE_UUID_MAP)
 	case BT_ACS_CP_OPCODE_GET_RESOURCE_HANDLE_UUID_MAP:
@@ -408,10 +438,13 @@ static int acs_seq_dispatch_step(struct acs_procedure *proc)
 		return acs_all_active_step_rc(proc);
 #endif
 #if IS_ENABLED(CONFIG_BT_ACS_INVALIDATE_ESTABLISHED_SECURITY)
-	case ACS_CP_SEQ_INVALIDATE_SELF:
+	case ACS_CP_SEQ_INVALIDATE_SELF: {
+		struct bt_conn *conn = proc->acs_conn->conn;
+
 		acs_seq_clear(proc);
-		bt_acs_invalidate_security(proc->acs_conn->conn);
+		bt_acs_invalidate_security(conn);
 		return 0;
+	}
 #endif
 	default:
 		acs_seq_clear(proc);
@@ -429,9 +462,11 @@ void acs_seq_on_confirm(struct acs_procedure *proc)
 		return;
 	}
 
+	enum acs_cp_seq_state prev_state = proc->seq_state;
+
 	err = acs_seq_dispatch_step(proc);
 	if (err) {
-		LOG_WRN("Reply sequence step %u failed: %d", proc->seq_state, err);
+		LOG_WRN("Reply sequence step %u failed: %d", prev_state, err);
 		acs_seq_abort(proc);
 	}
 }

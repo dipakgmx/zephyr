@@ -118,7 +118,13 @@ struct bt_acs_conn *acs_conn_by_index(uint8_t index);
 /** @brief Look up per-connection ACS state. Returns NULL if not found. */
 struct bt_acs_conn *acs_conn_lookup(struct bt_conn *conn);
 
-/** @brief Allocate and initialise per-connection ACS state. Returns NULL on limit. */
+/**
+ * @brief Allocate and initialise per-connection ACS state.
+ *
+ * Indexes into a static array sized by CONFIG_BT_MAX_CONN using
+ * bt_conn_index(), so it always returns a valid pointer for any
+ * valid @p conn.
+ */
 struct bt_acs_conn *acs_conn_alloc(struct bt_conn *conn);
 
 /** @brief Release all resources held by @p acs_conn. */

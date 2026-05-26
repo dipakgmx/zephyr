@@ -203,7 +203,14 @@ static int acs_gatt_attrs_cache(void)
 		bt_gatt_find_by_uuid(acs_svc.attrs, acs_svc.attr_count, BT_UUID_GATT_ACS_DOI);
 #endif
 
-	if (!acs_attrs.status || !acs_attrs.cp) {
+	if (!acs_attrs.status || !acs_attrs.cp
+#if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_NOTIFICATION)
+	    || !acs_attrs.don
+#endif
+#if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION)
+	    || !acs_attrs.doi
+#endif
+	) {
 		return -ENOENT;
 	}
 
@@ -239,6 +246,16 @@ int acs_doi_ccc_check(struct bt_conn *conn)
 #endif
 }
 
+static void acs_status_indicate_cb(struct bt_conn *conn, struct bt_gatt_indicate_params *params,
+				   uint8_t err)
+{
+	if (err) {
+		LOG_WRN("Status indication complete with error: %u", err);
+	}
+
+	params->attr = NULL;
+}
+
 void acs_status_indicate(struct bt_conn *conn)
 {
 	struct bt_acs_conn *acs_conn;
@@ -251,16 +268,23 @@ void acs_status_indicate(struct bt_conn *conn)
 		return;
 	}
 
+	if (acs_conn->status_indicate_params.attr != NULL) {
+		LOG_WRN("Status indication already in flight");
+		return;
+	}
+
 	acs_conn->status_data[0] = acs_conn->status_flags;
 	sys_put_le16(acs_conn->restriction_map_id, &acs_conn->status_data[1]);
 
 	memset(&acs_conn->status_indicate_params, 0, sizeof(acs_conn->status_indicate_params));
 	acs_conn->status_indicate_params.attr = acs_conn->attr_status;
+	acs_conn->status_indicate_params.func = acs_status_indicate_cb;
 	acs_conn->status_indicate_params.data = acs_conn->status_data;
 	acs_conn->status_indicate_params.len = ACS_STATUS_SIZE;
 
 	ret = bt_gatt_indicate(conn, &acs_conn->status_indicate_params);
 	if (ret) {
+		acs_conn->status_indicate_params.attr = NULL;
 		LOG_WRN("Status indication failed: %d", ret);
 	}
 }
@@ -366,6 +390,16 @@ int bt_acs_set_restriction_map(struct bt_conn *conn, uint16_t map_id)
 	if (!acs_initialized || !conn) {
 		return -EINVAL;
 	}
+
+#if IS_ENABLED(CONFIG_BT_ACS_FEAT_AUTHORIZATION)
+	{
+		struct bt_acs_restriction_map map;
+
+		if (acs_rmap_lookup(map_id, &map) != 0) {
+			return -EINVAL;
+		}
+	}
+#endif
 
 	acs_conn = acs_conn_lookup(conn);
 

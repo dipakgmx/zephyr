@@ -133,6 +133,8 @@ static int data_tx_encrypt_in_place(struct bt_acs_conn *acs_conn, uint16_t isc_i
 		return err;
 	}
 
+	__ASSERT_NO_MSG(cipher_len == plain_len + auth_tag_size);
+
 	/* Reorder PSA output to wire: MAC(LSO) || Ciphertext(LSO). */
 	data_tx_format_wire(plaintext, plain_len, auth_tag_size);
 

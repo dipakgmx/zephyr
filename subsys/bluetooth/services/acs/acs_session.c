@@ -624,7 +624,11 @@ static int acs_settings_set(const char *name, size_t len_rd, settings_read_cb re
 	}
 
 	if (name[ACS_SETTINGS_ADDR_LEN] == '/') {
-		bt_id = (uint8_t)(name[ACS_SETTINGS_ADDR_LEN + 1] - '0');
+		char c = name[ACS_SETTINGS_ADDR_LEN + 1];
+
+		if (c >= '0' && c <= '9') {
+			bt_id = (uint8_t)(c - '0');
+		}
 	}
 
 	len = read_cb(cb_arg, &meta, sizeof(meta));

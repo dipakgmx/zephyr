@@ -165,7 +165,7 @@ extern "C" {
  */
 
 #ifdef __cplusplus
-
+}
 #endif
 
 #endif /* BT_GATT_ACS_CRYPTO_CONFIG_H_ */

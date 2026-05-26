@@ -337,7 +337,7 @@ static inline uint8_t acs_key_desc_nonce_prefix_size(const struct bt_acs_key_des
 	case ACS_NONCE_SEQ_DIFF_FIXED:
 		return rec->aes.nonce_fixed_size;
 	case ACS_NONCE_SEQ_EVEN_ODD:
-		return (uint8_t)(acs_key_desc_nonce_size(rec) - sizeof(uint64_t));
+		return 0U;
 	default:
 		return 0U;
 	}

@@ -145,6 +145,12 @@ static int acs_data_in_validate(struct bt_acs_conn *acs_conn, struct net_buf_sim
 		return ACS_DATA_ERR_INCORRECT_SECURITY_CONFIG;
 	}
 
+	/* In EVEN_ODD mode clients must use odd counters (spec §3.2.1.4). */
+	if (key_desc->aes.nonce_type == ACS_NONCE_SEQ_EVEN_ODD && (*received_counter % 2U) == 0U) {
+		LOG_WRN("EVEN_ODD: received even counter from client");
+		return ACS_DATA_ERR_INCORRECT_SECURITY_CONFIG;
+	}
+
 	return 0;
 }
 
@@ -217,6 +223,10 @@ static int acs_data_in_decrypt(struct bt_acs_conn *acs_conn, struct net_buf_simp
 	}
 
 	*resource_handle = net_buf_simple_pull_le16(buf);
+	if (*resource_handle == 0U) {
+		LOG_ERR("invalid zero resource handle in decrypted payload");
+		return -EINVAL;
+	}
 
 	return 0;
 }

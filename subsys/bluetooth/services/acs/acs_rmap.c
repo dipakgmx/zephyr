@@ -237,8 +237,9 @@ bool acs_rmap_char_is_protected(uint16_t map_id, uint16_t att_handle,
 	}
 
 	for (uint8_t j = 0; j < entry->num_ops; j++) {
-		if (acs_att_opcode_matches_direction(entry->ops[j].opcode, direction)) {
-			return entry->ops[j].isc_id != BT_ACS_ISC_ID_NONE;
+		if (acs_att_opcode_matches_direction(entry->ops[j].opcode, direction) &&
+		    entry->ops[j].isc_id != BT_ACS_ISC_ID_NONE) {
+			return true;
 		}
 	}
 
@@ -402,23 +403,13 @@ int acs_rmap_build_descriptor_response(const struct acs_rmap_get_descriptor_req 
 	matched = char_ctx.matched;
 
 	if (handle_filter != ACS_RMAP_FILTER_ALL && !matched) {
-		if (map.default_isc_id != 0) {
-			if (net_buf_simple_tailroom(buf) < (int)sizeof(hdr)) {
-				return -ENOMEM;
-			}
-
-			hdr.type_id = ACS_RMAP_TYPE_PROTECTED_CHAR;
-			hdr.type_value = sys_cpu_to_le16(handle_filter);
-			hdr.data_size = 0;
-			net_buf_simple_add_mem(buf, &hdr, sizeof(hdr));
-
-			LOG_DBG("RM record: handle 0x%04x mapped to default ISC 0x%04x",
-				handle_filter, map.default_isc_id);
-		} else {
+		if (map.default_isc_id == 0) {
 			LOG_WRN("RM descriptor: no record matched handle filter 0x%04x",
 				handle_filter);
 			return -ENOENT;
 		}
+		LOG_DBG("RM record: handle 0x%04x covered by default ISC 0x%04x", handle_filter,
+			map.default_isc_id);
 	}
 
 	return 0;

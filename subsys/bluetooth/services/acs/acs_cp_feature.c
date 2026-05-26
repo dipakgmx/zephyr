@@ -141,7 +141,7 @@ int acs_cp_handle_get_feature(struct acs_procedure *proc, struct net_buf_simple 
 					 BT_ACS_CP_RESPONSE_INVALID_OPERAND);
 	}
 
-	LOG_DBG("feat=0x%02x prot=0x%02x", acs_features.features, acs_features.protection_methods);
+	LOG_DBG("feat=0x%08x prot=0x%04x", acs_features.features, acs_features.protection_methods);
 
 	rsp_buf = acs_prepare_reply_buf(proc, reply_mode.encrypted);
 	if (!rsp_buf) {

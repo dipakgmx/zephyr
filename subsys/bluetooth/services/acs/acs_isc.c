@@ -38,7 +38,7 @@ BT_ACS_ISC_DEFINE(acs_isc_high_sec_ccm, .isc_id = ACS_ISC_ID_HIGH_SEC, .num_cont
 
 #if IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_GMAC)
 BT_ACS_ISC_DEFINE(acs_isc_integrity_gmac, .isc_id = ACS_ISC_ID_INTEGRITY, .num_controls = 3,
-		  .controls = {ACS_CTRL_NONCE, ACS_CTRL_MAC, ACS_CTRL_AUTH_ENC},
+		  .controls = {ACS_CTRL_NONCE, ACS_CTRL_MAC, ACS_CTRL_AUTH},
 		  .key_id = ACS_KEY_ID_GMAC);
 #endif
 
