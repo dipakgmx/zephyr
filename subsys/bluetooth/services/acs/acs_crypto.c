@@ -60,7 +60,7 @@ int acs_crypto_current_key_id_from_key_desc(const struct bt_acs_key_desc_record 
 void acs_crypto_init_slots(struct bt_acs_conn *acs_conn)
 {
 	size_t key_slot = 0;
-	size_t record_slot = 0;
+	size_t runtime_slot = 0;
 
 	__ASSERT_NO_MSG(acs_conn != NULL);
 
@@ -77,21 +77,22 @@ void acs_crypto_init_slots(struct bt_acs_conn *acs_conn)
 	__ASSERT_NO_MSG(key_slot <= ARRAY_SIZE(acs_conn->crypto.current_keys));
 
 	STRUCT_SECTION_FOREACH(bt_acs_key_desc_record, rec) {
-		struct bt_acs_key_desc_runtime *record_state;
+		struct bt_acs_key_desc_runtime *key_desc_runtime;
 		int err;
 
 		if (!acs_key_desc_has_nonce_record(rec)) {
 			continue;
 		}
 
-		__ASSERT_NO_MSG(record_slot < ARRAY_SIZE(acs_conn->crypto.key_desc_runtimes));
-		record_state = &acs_conn->crypto.key_desc_runtimes[record_slot++];
-		record_state->key_desc = rec;
-		err = acs_crypto_current_key_id_from_key_desc(rec, &record_state->current_key_id);
+		__ASSERT_NO_MSG(runtime_slot < ARRAY_SIZE(acs_conn->crypto.key_desc_runtimes));
+		key_desc_runtime = &acs_conn->crypto.key_desc_runtimes[runtime_slot++];
+		key_desc_runtime->key_desc = rec;
+		err = acs_crypto_current_key_id_from_key_desc(rec,
+							      &key_desc_runtime->current_key_id);
 		if (err != 0) {
 			LOG_WRN("Unable to resolve current key for descriptor Key_ID 0x%04x",
 				rec->key_id);
-			record_state->current_key_id = 0U;
+			key_desc_runtime->current_key_id = 0U;
 		}
 	}
 }
@@ -112,13 +113,11 @@ void acs_crypto_reset_preserve_record_states(struct bt_acs_conn *acs_conn)
 
 #if IS_ENABLED(CONFIG_BT_ACS_HAS_NONCE_FIXED)
 	{
-		struct bt_acs_key_desc_runtime saved_record_states[CONFIG_BT_ACS_MAX_NONCE_RECORDS];
+		struct bt_acs_key_desc_runtime saved_runtimes[CONFIG_BT_ACS_MAX_NONCE_RECORDS];
 
-		memcpy(saved_record_states, acs_conn->crypto.key_desc_runtimes,
-		       sizeof(saved_record_states));
+		memcpy(saved_runtimes, acs_conn->crypto.key_desc_runtimes, sizeof(saved_runtimes));
 		memset(&acs_conn->crypto, 0, sizeof(acs_conn->crypto));
-		memcpy(acs_conn->crypto.key_desc_runtimes, saved_record_states,
-		       sizeof(saved_record_states));
+		memcpy(acs_conn->crypto.key_desc_runtimes, saved_runtimes, sizeof(saved_runtimes));
 		acs_crypto_init_slots(acs_conn);
 	}
 #else

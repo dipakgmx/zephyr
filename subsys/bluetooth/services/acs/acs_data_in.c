@@ -73,7 +73,7 @@ int acs_require_data_out_subscription(struct bt_conn *conn, uint16_t resource_ha
 }
 
 static int acs_data_in_validate(struct bt_acs_conn *acs_conn, struct net_buf_simple *buf,
-				uint16_t *isc_id, struct bt_acs_key_desc_runtime **record_state,
+				uint16_t *isc_id, struct bt_acs_key_desc_runtime **key_desc_runtime,
 				uint64_t *received_counter)
 {
 	const struct bt_acs_isc_record *isc;
@@ -85,7 +85,7 @@ static int acs_data_in_validate(struct bt_acs_conn *acs_conn, struct net_buf_sim
 	__ASSERT_NO_MSG(acs_conn != NULL);
 	__ASSERT_NO_MSG(buf != NULL);
 	__ASSERT_NO_MSG(isc_id != NULL);
-	__ASSERT_NO_MSG(record_state != NULL);
+	__ASSERT_NO_MSG(key_desc_runtime != NULL);
 	__ASSERT_NO_MSG(received_counter != NULL);
 
 	*received_counter = 0U;
@@ -109,12 +109,12 @@ static int acs_data_in_validate(struct bt_acs_conn *acs_conn, struct net_buf_sim
 		return ACS_DATA_ERR_INCORRECT_SECURITY_CONFIG;
 	}
 
-	if (acs_crypto_key_desc_runtime_lookup(acs_conn, isc->key_id, record_state) != 0) {
-		LOG_WRN("no record state installed for ISC_ID 0x%04x", *isc_id);
+	if (acs_crypto_key_desc_runtime_lookup(acs_conn, isc->key_id, key_desc_runtime) != 0) {
+		LOG_WRN("no key descriptor runtime for ISC_ID 0x%04x", *isc_id);
 		return ACS_DATA_ERR_INCORRECT_SECURITY_CONFIG;
 	}
 
-	if ((*record_state)->psa_key_id == 0U) {
+	if ((*key_desc_runtime)->psa_key_id == 0U) {
 		LOG_WRN("key for ISC_ID 0x%04x not provisioned (psa_key_id == 0)", *isc_id);
 		return ACS_DATA_ERR_INCORRECT_SECURITY_CONFIG;
 	}
@@ -131,17 +131,17 @@ static int acs_data_in_validate(struct bt_acs_conn *acs_conn, struct net_buf_sim
 	nonce_var = net_buf_simple_pull_mem(buf, nonce_var_size);
 	sys_get_le(received_counter, nonce_var, acs_key_desc_nonce_counter_size(key_desc));
 
-	if (!acs_nonce_var_matches_runtime_prefix(nonce_var, *record_state)) {
+	if (!acs_nonce_var_matches_runtime_prefix(nonce_var, *key_desc_runtime)) {
 		LOG_WRN("received nonce variable prefix does not match runtime state");
 		return ACS_DATA_ERR_INCORRECT_SECURITY_CONFIG;
 	}
 
 	/* Reject stale/replayed messages. */
-	if (*received_counter < (*record_state)->rx_nonce_counter) {
+	if (*received_counter < (*key_desc_runtime)->rx_nonce_counter) {
 		LOG_WRN("stale or replayed nonce (received=0x%016llx vs "
 			"min_expected=0x%016llx)",
 			(unsigned long long)*received_counter,
-			(unsigned long long)(*record_state)->rx_nonce_counter);
+			(unsigned long long)(*key_desc_runtime)->rx_nonce_counter);
 		return ACS_DATA_ERR_INCORRECT_SECURITY_CONFIG;
 	}
 
@@ -162,14 +162,14 @@ static int acs_data_in_validate(struct bt_acs_conn *acs_conn, struct net_buf_sim
  * @param buf               Buffer positioned at MAC || ciphertext on entry.
  *                          Replaced in place with plaintext payload on success.
  * @param isc_id            Information Security Configuration ID for decryption.
- * @param record_state      Runtime record state selected for @p isc_id.
+ * @param key_desc_runtime  Key descriptor runtime selected for @p isc_id.
  * @param received_counter  Received nonce-variable counter from the message.
  * @param resource_handle   [out] Decrypted protected resource handle.
  *
  * @return 0 on success, or an ACS Data error / negative errno on failure.
  */
 static int acs_data_in_decrypt(struct bt_acs_conn *acs_conn, struct net_buf_simple *buf,
-			       uint16_t isc_id, struct bt_acs_key_desc_runtime *record_state,
+			       uint16_t isc_id, struct bt_acs_key_desc_runtime *key_desc_runtime,
 			       uint64_t received_counter, uint16_t *resource_handle)
 {
 	uint16_t plain_len = 0;
@@ -178,7 +178,7 @@ static int acs_data_in_decrypt(struct bt_acs_conn *acs_conn, struct net_buf_simp
 
 	__ASSERT_NO_MSG(acs_conn != NULL);
 	__ASSERT_NO_MSG(buf != NULL);
-	__ASSERT_NO_MSG(record_state != NULL);
+	__ASSERT_NO_MSG(key_desc_runtime != NULL);
 	__ASSERT_NO_MSG(resource_handle != NULL);
 
 	/* Step 1: wire LSO → PSA MSO. */
@@ -186,11 +186,12 @@ static int acs_data_in_decrypt(struct bt_acs_conn *acs_conn, struct net_buf_simp
 
 	/* Decrypt using the received counter as the nonce variable part. Commit the
 	 * advanced receive state only if authentication succeeds. */
-	previous_rx_nonce_counter = record_state->rx_nonce_counter;
-	record_state->rx_nonce_counter = received_counter;
-	err = acs_crypto_decrypt(record_state, buf->data, buf->len, buf->data, &plain_len, NULL, 0);
+	previous_rx_nonce_counter = key_desc_runtime->rx_nonce_counter;
+	key_desc_runtime->rx_nonce_counter = received_counter;
+	err = acs_crypto_decrypt(key_desc_runtime, buf->data, buf->len, buf->data, &plain_len, NULL,
+				 0);
 	if (err) {
-		record_state->rx_nonce_counter = previous_rx_nonce_counter;
+		key_desc_runtime->rx_nonce_counter = previous_rx_nonce_counter;
 		if (err == -ENOSPC) {
 			LOG_WRN("nonce exhausted on decrypt, invalidating security");
 			bt_acs_invalidate_security(acs_conn->conn);
@@ -201,7 +202,7 @@ static int acs_data_in_decrypt(struct bt_acs_conn *acs_conn, struct net_buf_simp
 			return ACS_DATA_ERR_INVALID_KEY;
 		} else {
 			LOG_ERR("decryption failed: err=%d (isc_id=0x%04x, key_id=0x%04x)", err,
-				isc_id, acs_key_desc_runtime_key_id(record_state));
+				isc_id, acs_key_desc_runtime_key_id(key_desc_runtime));
 			return ACS_DATA_ERR_INVALID_KEY;
 		}
 	}
@@ -223,7 +224,7 @@ static int acs_data_in_decrypt(struct bt_acs_conn *acs_conn, struct net_buf_simp
 int acs_data_in_unwrap_and_route(struct bt_acs_conn *acs_conn, struct net_buf_simple *buf)
 {
 	struct acs_frame frame;
-	struct bt_acs_key_desc_runtime *record_state;
+	struct bt_acs_key_desc_runtime *key_desc_runtime;
 	uint64_t received_counter;
 	uint16_t isc_id;
 	uint16_t resource_handle;
@@ -238,12 +239,12 @@ int acs_data_in_unwrap_and_route(struct bt_acs_conn *acs_conn, struct net_buf_si
 		return ACS_DATA_ERR_NOT_AUTHORIZED;
 	}
 
-	err = acs_data_in_validate(acs_conn, buf, &isc_id, &record_state, &received_counter);
+	err = acs_data_in_validate(acs_conn, buf, &isc_id, &key_desc_runtime, &received_counter);
 	if (err) {
 		return err;
 	}
 
-	err = acs_data_in_decrypt(acs_conn, buf, isc_id, record_state, received_counter,
+	err = acs_data_in_decrypt(acs_conn, buf, isc_id, key_desc_runtime, received_counter,
 				  &resource_handle);
 	if (err) {
 		return err;

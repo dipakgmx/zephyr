@@ -298,7 +298,7 @@ static bool is_aes_type(const struct bt_acs_key_desc_record *rec)
 int acs_key_desc_build_response(struct net_buf_simple *operand, struct net_buf_simple *buf,
 				struct bt_acs_conn *acs_conn)
 {
-	bool record_found;
+	bool found;
 	uint16_t filter_id;
 	int err;
 
@@ -307,7 +307,7 @@ int acs_key_desc_build_response(struct net_buf_simple *operand, struct net_buf_s
 	}
 
 	filter_id = net_buf_simple_pull_le16(operand);
-	record_found = false;
+	found = false;
 
 	LOG_DBG("ACS Key Desc: Querying Filter ID 0x%04X", filter_id);
 
@@ -317,7 +317,7 @@ int acs_key_desc_build_response(struct net_buf_simple *operand, struct net_buf_s
 			continue;
 		}
 
-		record_found = true;
+		found = true;
 
 		if (rec->type_id == ACS_KEY_REC_ECDH) {
 			struct acs_key_rec_ecdh wire = {
@@ -394,11 +394,11 @@ int acs_key_desc_build_response(struct net_buf_simple *operand, struct net_buf_s
 		} else {
 			LOG_WRN("Key rec: unknown type_id 0x%02x for key_id 0x%04x; skipping",
 				rec->type_id, rec->key_id);
-			record_found = false;
+			found = false;
 		}
 	}
 
-	if (!record_found) {
+	if (!found) {
 		LOG_WRN("ACS Key Desc: no record found for filter 0x%04X", filter_id);
 		return -ENOENT;
 	}

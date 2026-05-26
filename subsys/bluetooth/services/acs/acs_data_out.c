@@ -74,7 +74,7 @@ static int data_tx_encrypt_in_place(struct bt_acs_conn *acs_conn, uint16_t isc_i
 	uint16_t cipher_len = 0;
 	uint64_t tx_counter;
 	const struct bt_acs_isc_record *isc;
-	struct bt_acs_key_desc_runtime *record_state;
+	struct bt_acs_key_desc_runtime *key_desc_runtime;
 	const struct bt_acs_key_desc_record *key_desc;
 	uint8_t nonce_var_size;
 	uint8_t auth_tag_size;
@@ -111,19 +111,19 @@ static int data_tx_encrypt_in_place(struct bt_acs_conn *acs_conn, uint16_t isc_i
 	plaintext = buf->data;
 	plain_len = buf->len;
 
-	err = acs_crypto_key_desc_runtime_lookup(acs_conn, isc->key_id, &record_state);
-	if (err || record_state->psa_key_id == 0U) {
+	err = acs_crypto_key_desc_runtime_lookup(acs_conn, isc->key_id, &key_desc_runtime);
+	if (err || key_desc_runtime->psa_key_id == 0U) {
 		LOG_ERR("no key runtime for isc_id 0x%04x", isc_id);
 		return -EACCES;
 	}
 
 	/* Capture the nonce variable BEFORE encrypt advances the counter. */
-	tx_counter = record_state->tx_nonce_counter;
+	tx_counter = key_desc_runtime->tx_nonce_counter;
 
 	/* Reverse plaintext to LSO order for wire (spec §3.2). */
 	sys_mem_swap(plaintext, plain_len);
 
-	err = acs_crypto_encrypt(record_state, plaintext, plain_len, plaintext, &cipher_len);
+	err = acs_crypto_encrypt(key_desc_runtime, plaintext, plain_len, plaintext, &cipher_len);
 	if (err) {
 		if (err == -ENOSPC) {
 			LOG_WRN("nonce exhausted on encrypt, invalidating security");
@@ -143,7 +143,7 @@ static int data_tx_encrypt_in_place(struct bt_acs_conn *acs_conn, uint16_t isc_i
 	uint8_t *hdr = net_buf_push(buf, nonce_var_size + sizeof(uint16_t));
 
 	sys_put_le16(isc_id, hdr);
-	data_tx_put_nonce_var(hdr + sizeof(uint16_t), record_state, tx_counter);
+	data_tx_put_nonce_var(hdr + sizeof(uint16_t), key_desc_runtime, tx_counter);
 
 	return 0;
 }
