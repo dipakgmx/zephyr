@@ -136,6 +136,14 @@ static void acs_key_exchange_free_ctx(struct bt_acs_conn *acs_conn)
 		acs_conn->crypto.kex->ecdh_key_id = 0U;
 	}
 
+	if (acs_conn->crypto.kex->shared_secret_id != 0U) {
+		psa_status_t status = psa_destroy_key(acs_conn->crypto.kex->shared_secret_id);
+
+		acs_crypto_warn_destroy_key_failure(status, acs_conn->crypto.kex->shared_secret_id,
+						    "free shared secret");
+		acs_conn->crypto.kex->shared_secret_id = 0U;
+	}
+
 	acs_kex_free(acs_conn->crypto.kex);
 	acs_conn->crypto.kex = NULL;
 }
@@ -402,6 +410,12 @@ int acs_crypto_activate_key(struct bt_acs_conn *acs_conn,
 		return err;
 	}
 
+	err = acs_crypto_ensure_exchange_derive_key(exchange_key);
+	if (err) {
+		acs_crypto_destroy_key(exchange_key);
+		return err;
+	}
+
 	err = acs_crypto_rebind_algorithm_keys(acs_conn);
 	if (err) {
 		return err;
@@ -656,7 +670,6 @@ int acs_crypto_derive_session_key(struct bt_acs_conn *acs_conn)
 	ret = acs_hkdf(ACS_PSA_HKDF_ALG, salt, sizeof(salt), acs_conn->crypto.kex->key_material,
 		       acs_conn->crypto.kex->key_mat_len, info, sizeof(info) - 1, session_key,
 		       CONFIG_BT_ACS_SESSION_KEY_SIZE);
-
 	if (ret != 0) {
 		LOG_ERR("HKDF session key derivation failed: %d", ret);
 		return ret;
@@ -672,13 +685,14 @@ int acs_crypto_derive_session_key(struct bt_acs_conn *acs_conn)
 /* §4.4.3.17.2.1: Derive child key from the ECDH session key via HKDF. */
 static int bt_acs_crypto_derive_kdf_child_key(struct bt_acs_conn *acs_conn)
 {
-	uint8_t parent_buf[CONFIG_BT_ACS_SESSION_KEY_SIZE];
 	uint8_t child_key[CONFIG_BT_ACS_SESSION_KEY_SIZE];
 	struct bt_acs_key_desc_runtime *parent_key;
 	struct bt_acs_key_desc_runtime *kdf_key;
 	uint8_t salt_be[CONFIG_BT_ACS_KDF_SALT_MAX_SIZE];
 	uint8_t info_be[CONFIG_BT_ACS_KDF_INFO_MAX_SIZE];
-	size_t parent_len;
+	psa_key_derivation_operation_t op = PSA_KEY_DERIVATION_OPERATION_INIT;
+	psa_status_t status;
+	size_t child_len = 0U;
 	int ret;
 
 	ret = acs_crypto_key_runtime_lookup(acs_conn, ACS_KEY_ID_ECDH, &parent_key);
@@ -693,9 +707,9 @@ static int bt_acs_crypto_derive_kdf_child_key(struct bt_acs_conn *acs_conn)
 		return ret;
 	}
 
-	ret = acs_crypto_export_key(parent_key, parent_buf, sizeof(parent_buf), &parent_len);
-	if (ret) {
-		LOG_ERR("Failed to export ECDH parent key: %d", ret);
+	ret = acs_crypto_ensure_exchange_derive_key(parent_key);
+	if (ret != 0) {
+		LOG_ERR("Failed to prepare ECDH parent derive key: %d", ret);
 		return ret;
 	}
 
@@ -705,20 +719,73 @@ static int bt_acs_crypto_derive_kdf_child_key(struct bt_acs_conn *acs_conn)
 	sys_memcpy_swap(info_be, acs_conn->crypto.kex->kdf.info,
 			acs_conn->crypto.kex->kdf.info_size);
 
-	ret = acs_hkdf(ACS_PSA_HKDF_ALG, salt_be, acs_conn->crypto.kex->kdf.salt_size, parent_buf,
-		       parent_len, info_be, acs_conn->crypto.kex->kdf.info_size, child_key,
-		       CONFIG_BT_ACS_SESSION_KEY_SIZE);
-
-	mbedtls_platform_zeroize(parent_buf, sizeof(parent_buf));
-
-	if (ret != 0) {
-		LOG_ERR("KDF child key derivation failed: %d", ret);
-		mbedtls_platform_zeroize(child_key, sizeof(child_key));
-		return ret;
+	status = psa_key_derivation_setup(&op, ACS_PSA_HKDF_ALG);
+	if (status != PSA_SUCCESS) {
+		LOG_ERR("KDF child setup failed: %d", status);
+		return -EIO;
 	}
 
-	ret = acs_crypto_activate_key(acs_conn, kdf_key, child_key, CONFIG_BT_ACS_SESSION_KEY_SIZE);
+	status = psa_key_derivation_input_bytes(&op, PSA_KEY_DERIVATION_INPUT_SALT, salt_be,
+						acs_conn->crypto.kex->kdf.salt_size);
+	if (status != PSA_SUCCESS) {
+		LOG_ERR("KDF child salt input failed: %d", status);
+		ret = -EIO;
+		goto cleanup;
+	}
+
+	status = psa_key_derivation_input_key(&op, PSA_KEY_DERIVATION_INPUT_SECRET,
+					      parent_key->derive_key_id);
+	if (status != PSA_SUCCESS) {
+		LOG_ERR("KDF child secret input failed: %d", status);
+		ret = -EIO;
+		goto cleanup;
+	}
+
+	status = psa_key_derivation_input_bytes(&op, PSA_KEY_DERIVATION_INPUT_INFO, info_be,
+						acs_conn->crypto.kex->kdf.info_size);
+	if (status != PSA_SUCCESS) {
+		LOG_ERR("KDF child info input failed: %d", status);
+		ret = -EIO;
+		goto cleanup;
+	}
+
+	acs_crypto_destroy_key(kdf_key);
+
+	ret = acs_crypto_output_exchange_derive_key(kdf_key, &op, CONFIG_BT_ACS_SESSION_KEY_SIZE);
+	if (ret != 0) {
+		goto cleanup;
+	}
+
+	status = psa_export_key(kdf_key->derive_key_id, child_key, sizeof(child_key), &child_len);
+	if (status != PSA_SUCCESS || child_len != CONFIG_BT_ACS_SESSION_KEY_SIZE) {
+		LOG_ERR("KDF child export failed: status=%d len=%zu", status, child_len);
+		ret = -EIO;
+		goto cleanup;
+	}
+
+	ret = acs_crypto_import_exchange_key(kdf_key, child_key, CONFIG_BT_ACS_SESSION_KEY_SIZE);
+	if (ret != 0) {
+		goto cleanup;
+	}
+
+	ret = acs_crypto_rebind_algorithm_keys(acs_conn);
+	if (ret != 0) {
+		goto cleanup;
+	}
+
+	ret = acs_derive_nonce_state_for_current_key(acs_conn, ACS_KEY_ID_KDF, child_key,
+						     CONFIG_BT_ACS_SESSION_KEY_SIZE);
+
+cleanup:
 	mbedtls_platform_zeroize(child_key, sizeof(child_key));
+	status = psa_key_derivation_abort(&op);
+	if (status != PSA_SUCCESS) {
+		LOG_ERR("KDF child derivation abort failed: %d", status);
+		if (ret == 0) {
+			ret = -EIO;
+		}
+	}
+
 	return ret;
 }
 #endif /* CONFIG_BT_ACS_KEY_EXCHANGE_KDF */

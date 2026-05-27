@@ -129,7 +129,16 @@ int acs_session_cache_restore(const bt_addr_le_t *addr, struct bt_acs_conn *acs_
 		}
 		psa_reset_key_attributes(&attrs);
 
+		if (ck->derive_key_id != 0U &&
+		    psa_get_key_attributes(ck->derive_key_id, &attrs) != PSA_SUCCESS) {
+			LOG_WRN("Cached derive key 0x%08x no longer valid, rebuilding later",
+				(unsigned int)ck->derive_key_id);
+			ck->derive_key_id = 0U;
+		}
+		psa_reset_key_attributes(&attrs);
+
 		entry->crypto.key_runtimes[i].psa_key_id = 0U;
+		entry->crypto.key_runtimes[i].derive_key_id = 0U;
 	}
 
 	err = acs_crypto_rebind_algorithm_keys(acs_conn);
@@ -168,6 +177,9 @@ static void session_cache_destroy_entry(struct acs_session_cache_entry *entry)
 	for (size_t i = 0; i < ACS_KEY_ID_COUNT; i++) {
 		if (entry->crypto.key_runtimes[i].psa_key_id != 0U) {
 			psa_destroy_key(entry->crypto.key_runtimes[i].psa_key_id);
+		}
+		if (entry->crypto.key_runtimes[i].derive_key_id != 0U) {
+			psa_destroy_key(entry->crypto.key_runtimes[i].derive_key_id);
 		}
 	}
 	memset(entry, 0, sizeof(*entry));

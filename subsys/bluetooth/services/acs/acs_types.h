@@ -211,6 +211,8 @@ struct bt_acs_key_desc_runtime {
 	uint16_t current_key_id;
 	/** Imported PSA key handle. 0 means no key installed. */
 	psa_key_id_t psa_key_id;
+	/** Derivation-capable twin for exchange-key slots. */
+	psa_key_id_t derive_key_id;
 	/** AC Server nonce fixed value for this Key_ID (runtime order for nonce build). */
 	uint8_t server_nonce_fixed[ACS_MAX_NONCE_FIXED_SIZE];
 	/** AC Client nonce fixed value for this Key_ID (runtime order for nonce build). */
@@ -291,6 +293,7 @@ struct bt_acs_kex_ctx {
 	struct acs_ecdh_pubkey server_pubkey; /**< Server ephemeral public key */
 	struct acs_ecdh_pubkey client_pubkey; /**< Client public key */
 	psa_key_id_t ecdh_key_id; /**< PSA key identifier for the server ephemeral private key */
+	psa_key_id_t shared_secret_id; /**< Derivation-capable shared secret handle */
 	struct acs_cp_start_key_exchange_req start_kex; /**< Cached START_KEY_EXCHANGE operand */
 	uint8_t auth_value[ACS_CONFIRM_VALUE_SIZE];     /**< AuthValue (OOB number / static key) */
 	uint8_t server_random[ACS_CONFIRM_VALUE_SIZE];  /**< Server random nonce */

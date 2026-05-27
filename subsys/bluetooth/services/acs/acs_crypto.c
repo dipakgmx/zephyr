@@ -23,6 +23,15 @@
 #include <zephyr/logging/log.h>
 LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
 
+#if IS_ENABLED(CONFIG_BT_ACS_KDF_HKDF_SHA384) || IS_ENABLED(CONFIG_BT_ACS_KDF_HKDF_SHA384_WITH_INFO)
+#define ACS_PSA_HKDF_ALG PSA_ALG_HKDF(PSA_ALG_SHA_384)
+#elif IS_ENABLED(CONFIG_BT_ACS_KDF_HKDF_SHA512) ||                                                 \
+	IS_ENABLED(CONFIG_BT_ACS_KDF_HKDF_SHA512_WITH_INFO)
+#define ACS_PSA_HKDF_ALG PSA_ALG_HKDF(PSA_ALG_SHA_512)
+#else
+#define ACS_PSA_HKDF_ALG PSA_ALG_HKDF(PSA_ALG_SHA_256)
+#endif
+
 BUILD_ASSERT(!(IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_CMAC) &&
 	       (IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_GCM) ||
 		IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_GMAC) ||
@@ -277,6 +286,34 @@ static void acs_crypto_set_exchange_key_policy(psa_key_attributes_t *attrs, psa_
 	psa_set_key_type(attrs, PSA_KEY_TYPE_AES);
 }
 
+static void acs_crypto_set_exchange_derive_policy(psa_key_attributes_t *attrs,
+						  psa_key_usage_t usage)
+{
+	psa_set_key_usage_flags(attrs, PSA_KEY_USAGE_DERIVE | PSA_KEY_USAGE_EXPORT |
+					       PSA_KEY_USAGE_COPY | usage);
+	psa_set_key_algorithm(attrs, ACS_PSA_HKDF_ALG);
+	psa_set_key_type(attrs, PSA_KEY_TYPE_DERIVE);
+}
+
+static int acs_crypto_import_exchange_derive_key(struct bt_acs_key_desc_runtime *key_runtime,
+						 const uint8_t *key_material, size_t key_len)
+{
+	psa_key_attributes_t attrs = PSA_KEY_ATTRIBUTES_INIT;
+	psa_status_t status;
+
+	acs_crypto_set_exchange_derive_policy(&attrs, 0U);
+	psa_set_key_lifetime(&attrs, PSA_KEY_LIFETIME_VOLATILE);
+	psa_set_key_bits(&attrs, key_len * BITS_PER_BYTE);
+
+	status = psa_import_key(&attrs, key_material, key_len, &key_runtime->derive_key_id);
+	if (status != PSA_SUCCESS) {
+		LOG_ERR("Derive-key import failed: %d", status);
+		return -EIO;
+	}
+
+	return 0;
+}
+
 int acs_crypto_import_exchange_key(struct bt_acs_key_desc_runtime *key_runtime,
 				   const uint8_t *key_material, size_t key_len)
 {
@@ -290,6 +327,37 @@ int acs_crypto_import_exchange_key(struct bt_acs_key_desc_runtime *key_runtime,
 	status = psa_import_key(&attrs, key_material, key_len, &key_runtime->psa_key_id);
 	if (status != PSA_SUCCESS) {
 		LOG_ERR("Key import failed: %d", status);
+		return -EIO;
+	}
+
+	return 0;
+}
+
+int acs_crypto_output_exchange_derive_key(struct bt_acs_key_desc_runtime *key_runtime,
+					  psa_key_derivation_operation_t *op, size_t key_len)
+{
+	psa_key_attributes_t attrs = PSA_KEY_ATTRIBUTES_INIT;
+	psa_status_t status;
+
+	if (!key_runtime || !op) {
+		return -EINVAL;
+	}
+
+	if (key_runtime->derive_key_id != 0U) {
+		psa_status_t destroy_status = psa_destroy_key(key_runtime->derive_key_id);
+
+		acs_crypto_warn_destroy_key_failure(destroy_status, key_runtime->derive_key_id,
+						    "destroy existing derive key");
+		key_runtime->derive_key_id = 0U;
+	}
+
+	acs_crypto_set_exchange_derive_policy(&attrs, 0U);
+	psa_set_key_lifetime(&attrs, PSA_KEY_LIFETIME_VOLATILE);
+	psa_set_key_bits(&attrs, key_len * BITS_PER_BYTE);
+
+	status = psa_key_derivation_output_key(&attrs, op, &key_runtime->derive_key_id);
+	if (status != PSA_SUCCESS) {
+		LOG_ERR("Derived exchange key output failed: %d", status);
 		return -EIO;
 	}
 
@@ -356,7 +424,7 @@ int acs_crypto_copy_persistent_key_to_runtime(psa_key_id_t src_id,
 		return -EIO;
 	}
 
-	return 0;
+	return acs_crypto_ensure_exchange_derive_key(parent);
 }
 
 int acs_crypto_export_key(const struct bt_acs_key_desc_runtime *key_runtime, uint8_t *buf,
@@ -378,6 +446,31 @@ int acs_crypto_export_key(const struct bt_acs_key_desc_runtime *key_runtime, uin
 	return 0;
 }
 
+int acs_crypto_ensure_exchange_derive_key(struct bt_acs_key_desc_runtime *key_runtime)
+{
+	uint8_t key_buf[CONFIG_BT_ACS_SESSION_KEY_SIZE];
+	size_t key_len;
+	int err;
+
+	if (!key_runtime || key_runtime->psa_key_id == 0U) {
+		return -EINVAL;
+	}
+
+	if (key_runtime->derive_key_id != 0U) {
+		return 0;
+	}
+
+	err = acs_crypto_export_key(key_runtime, key_buf, sizeof(key_buf), &key_len);
+	if (err != 0) {
+		return err;
+	}
+
+	err = acs_crypto_import_exchange_derive_key(key_runtime, key_buf, key_len);
+	mbedtls_platform_zeroize(key_buf, sizeof(key_buf));
+
+	return err;
+}
+
 void acs_crypto_destroy_key(struct bt_acs_key_desc_runtime *key_runtime)
 {
 	if (key_runtime && key_runtime->psa_key_id != 0U) {
@@ -385,6 +478,14 @@ void acs_crypto_destroy_key(struct bt_acs_key_desc_runtime *key_runtime)
 
 		acs_crypto_warn_destroy_key_failure(status, key_runtime->psa_key_id, "destroy key");
 		key_runtime->psa_key_id = 0U;
+	}
+
+	if (key_runtime && key_runtime->derive_key_id != 0U) {
+		psa_status_t status = psa_destroy_key(key_runtime->derive_key_id);
+
+		acs_crypto_warn_destroy_key_failure(status, key_runtime->derive_key_id,
+						    "destroy derive key");
+		key_runtime->derive_key_id = 0U;
 	}
 }
 
@@ -399,6 +500,7 @@ void acs_crypto_release_exchange_keys(struct bt_acs_conn *acs_conn)
 {
 	for (size_t i = 0; i < ACS_KEY_ID_COUNT; i++) {
 		acs_conn->crypto.key_runtimes[i].psa_key_id = 0U;
+		acs_conn->crypto.key_runtimes[i].derive_key_id = 0U;
 	}
 }
 
@@ -508,58 +610,24 @@ static void acs_clear_key_desc_runtime_nonce_state(struct bt_acs_key_desc_runtim
 			: 0U;
 }
 
-int acs_crypto_rebind_algorithm_keys(struct bt_acs_conn *acs_conn)
+static void
+acs_reset_key_desc_runtime_nonce_counters(struct bt_acs_key_desc_runtime *key_desc_runtime)
 {
-	int first_err = 0;
-	psa_key_id_t last_parent_id = 0U;
-	uint8_t key_buf[CONFIG_BT_ACS_SESSION_KEY_SIZE];
-	size_t key_len = 0;
-
-	for (size_t i = ACS_KEY_ID_COUNT; i < ACS_KEY_RUNTIME_COUNT; i++) {
-		struct bt_acs_key_desc_runtime *kdr = &acs_conn->crypto.key_runtimes[i];
-		struct bt_acs_key_desc_runtime *parent = NULL;
-		int err;
-
-		if (!kdr->key_desc) {
-			continue;
-		}
-
-		acs_crypto_destroy_record_key(kdr);
-
-		if (kdr->current_key_id == 0U) {
-			if (first_err == 0) {
-				first_err = -ENOENT;
-			}
-			acs_clear_key_desc_runtime_nonce_state(kdr);
-			continue;
-		}
-
-		err = acs_crypto_key_runtime_lookup(acs_conn, kdr->current_key_id, &parent);
-		if (err || !parent || parent->psa_key_id == 0U) {
-			acs_clear_key_desc_runtime_nonce_state(kdr);
-			continue;
-		}
-
-		if (parent->psa_key_id != last_parent_id) {
-			err = acs_crypto_export_key(parent, key_buf, sizeof(key_buf), &key_len);
-			if (err) {
-				acs_clear_key_desc_runtime_nonce_state(kdr);
-				if (first_err == 0) {
-					first_err = err;
-				}
-				continue;
-			}
-			last_parent_id = parent->psa_key_id;
-		}
-
-		err = acs_crypto_import_record_key(kdr, key_buf, key_len);
-		if (err && first_err == 0) {
-			first_err = err;
-		}
+	if (!key_desc_runtime) {
+		return;
 	}
 
-	mbedtls_platform_zeroize(key_buf, sizeof(key_buf));
-	return first_err;
+	key_desc_runtime->tx_nonce_counter = 0U;
+	key_desc_runtime->rx_nonce_counter =
+		key_desc_runtime->key_desc &&
+				key_desc_runtime->key_desc->aes.nonce_type == ACS_NONCE_SEQ_EVEN_ODD
+			? 1U
+			: 0U;
+}
+
+int acs_crypto_rebind_algorithm_keys(struct bt_acs_conn *acs_conn)
+{
+	return acs_crypto_rebind_algorithm_keys_by_copy(acs_conn);
 }
 
 int acs_crypto_rebind_algorithm_keys_by_copy(struct bt_acs_conn *acs_conn)
@@ -611,9 +679,11 @@ int acs_crypto_rebind_algorithm_keys_by_copy(struct bt_acs_conn *acs_conn)
 			if (first_err == 0) {
 				first_err = -EIO;
 			}
+			acs_clear_key_desc_runtime_nonce_state(kdr);
+			continue;
 		}
 
-		acs_clear_key_desc_runtime_nonce_state(kdr);
+		acs_reset_key_desc_runtime_nonce_counters(kdr);
 	}
 
 	return first_err;

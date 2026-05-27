@@ -72,6 +72,7 @@ endmenu # ACS Protection Methods
 menuconfig BT_ACS_KEY_EXCHANGE_ECDH
 	bool "ECDH key exchange"
 	depends on PSA_WANT_ALG_ECDH
+	depends on PSA_WANT_KEY_TYPE_DERIVE
 	depends on BT_SETTINGS
 	depends on BT_ACS_FEAT_AUTHENTICATION
 	default y if BT_ACS_FEAT_AUTHENTICATION
@@ -134,6 +135,7 @@ config BT_ACS_SHARED_SECRET_MAX_SIZE
 menuconfig BT_ACS_KEY_EXCHANGE_KDF
 	bool "Key Derivation Function key exchange"
 	depends on PSA_WANT_ALG_HKDF
+	depends on PSA_WANT_KEY_TYPE_DERIVE
 	depends on BT_SETTINGS
 	depends on BT_ACS_FEAT_AUTHENTICATION
 	help
@@ -201,6 +203,7 @@ config BT_ACS_KDF_INFO_MAX_SIZE
 
 menuconfig BT_ACS_KEY_EXCHANGE_OOB
 	bool "Out-of-Band key exchange"
+	depends on PSA_WANT_KEY_TYPE_DERIVE
 	depends on BT_SETTINGS
 	depends on BT_ACS_FEAT_AUTHENTICATION
 	help

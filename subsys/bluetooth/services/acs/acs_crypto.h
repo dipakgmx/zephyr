@@ -116,6 +116,22 @@ int acs_crypto_export_key(const struct bt_acs_key_desc_runtime *key_runtime, uin
 			  size_t buf_len, size_t *out_len);
 
 /**
+ * @brief Ensure that an exchange runtime key has a derivation-capable twin.
+ *
+ * Rebuilds @p key_runtime->derive_key_id from the installed exchange key if
+ * needed so later HKDF steps can use psa_key_derivation_input_key().
+ */
+int acs_crypto_ensure_exchange_derive_key(struct bt_acs_key_desc_runtime *key_runtime);
+
+/**
+ * @brief Materialize a derivation-capable exchange key from a PSA derivation op.
+ *
+ * Outputs a key of type PSA_KEY_TYPE_DERIVE into @p key_runtime->derive_key_id.
+ */
+int acs_crypto_output_exchange_derive_key(struct bt_acs_key_desc_runtime *key_runtime,
+					  psa_key_derivation_operation_t *op, size_t key_len);
+
+/**
  * @brief Release exchange-key handles without destroying the underlying PSA keys.
  *
  * Zeros the psa_key_id fields in the connection's exchange-key slots so the
