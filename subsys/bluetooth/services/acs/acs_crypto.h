@@ -93,7 +93,10 @@ int acs_crypto_derive_session_key(struct bt_acs_conn *acs_conn);
 /**
  * @brief Import an exchange key into the PSA keystore.
  *
- * @param key_runtime    Runtime slot to populate with a PSA key handle.
+ * Populates both the operational exchange-key handle and its derivation-capable
+ * twin from the same caller-supplied key material.
+ *
+ * @param key_runtime    Runtime slot to populate with PSA key handles.
  * @param key_material   Raw key bytes to import.
  * @param key_len        Length of @p key_material.
  * @return 0 on success, negative errno on failure.
@@ -102,34 +105,21 @@ int acs_crypto_import_exchange_key(struct bt_acs_key_desc_runtime *key_runtime,
 				   const uint8_t *key_material, size_t key_len);
 
 /**
- * @brief Export raw key bytes from a runtime slot's PSA key to a caller buffer.
- *
- * The caller must zeroize the output buffer after use.
- *
- * @param key_runtime  Runtime slot with a live PSA key.
- * @param buf          Output buffer for raw key bytes.
- * @param buf_len      Size of @p buf.
- * @param out_len      Receives the number of bytes written.
- * @return 0 on success, negative errno on failure.
- */
-int acs_crypto_export_key(const struct bt_acs_key_desc_runtime *key_runtime, uint8_t *buf,
-			  size_t buf_len, size_t *out_len);
-
-/**
- * @brief Ensure that an exchange runtime key has a derivation-capable twin.
- *
- * Rebuilds @p key_runtime->derive_key_id from the installed exchange key if
- * needed so later HKDF steps can use psa_key_derivation_input_key().
- */
-int acs_crypto_ensure_exchange_derive_key(struct bt_acs_key_desc_runtime *key_runtime);
-
-/**
  * @brief Materialize a derivation-capable exchange key from a PSA derivation op.
  *
  * Outputs a key of type PSA_KEY_TYPE_DERIVE into @p key_runtime->derive_key_id.
  */
 int acs_crypto_output_exchange_derive_key(struct bt_acs_key_desc_runtime *key_runtime,
 					  psa_key_derivation_operation_t *op, size_t key_len);
+
+/**
+ * @brief Materialize an operational exchange key from a PSA derivation op.
+ *
+ * Outputs an AES exchange key into @p key_runtime->psa_key_id using the normal
+ * exchange-key policy.
+ */
+int acs_crypto_output_exchange_key(struct bt_acs_key_desc_runtime *key_runtime,
+				   psa_key_derivation_operation_t *op, size_t key_len);
 
 /**
  * @brief Release exchange-key handles without destroying the underlying PSA keys.
@@ -180,29 +170,33 @@ int acs_crypto_rebind_algorithm_keys(struct bt_acs_conn *acs_conn);
 int acs_crypto_rebind_algorithm_keys_by_copy(struct bt_acs_conn *acs_conn);
 
 /**
- * @brief Copy a runtime exchange key into a persistent PSA keystore entry.
+ * @brief Copy a runtime exchange-key pair into persistent PSA keystore entries.
  *
- * Duplicates the key inside the keystore (no plaintext export) under a
- * persistent policy at @p dst_id.  Replaces an existing entry at @p dst_id.
+ * Duplicates both the operational key and its derivation-capable twin inside
+ * the keystore (no plaintext export) under persistent policies at
+ * @p dst_id / @p dst_derive_id. Replaces existing entries at those ids.
  *
- * @param parent  Runtime slot holding a live exchange key.
- * @param dst_id  Persistent PSA key id to populate.
+ * @param parent         Runtime slot holding a live exchange-key pair.
+ * @param dst_id         Persistent PSA key id for the operational key.
+ * @param dst_derive_id  Persistent PSA key id for the derive key.
  * @return 0 on success, negative errno on failure.
  */
 int acs_crypto_copy_key_to_persistent(const struct bt_acs_key_desc_runtime *parent,
-				      psa_key_id_t dst_id);
+				      psa_key_id_t dst_id, psa_key_id_t dst_derive_id);
 
 /**
- * @brief Copy a persistent PSA key into a fresh volatile runtime exchange key.
+ * @brief Copy persistent PSA exchange-key entries into a volatile runtime pair.
  *
- * Destroys any existing key on @p parent, then duplicates @p src_id inside the
- * keystore (no plaintext export), storing the new id in @p parent->psa_key_id.
+ * Destroys any existing exchange-key pair on @p parent, then duplicates
+ * @p src_id and @p src_derive_id inside the keystore (no plaintext export),
+ * storing the new ids in the runtime slot.
  *
- * @param src_id  Persistent PSA key id to copy from.
- * @param parent  Runtime slot to populate.
+ * @param src_id         Persistent PSA key id to copy from for the operational key.
+ * @param src_derive_id  Persistent PSA key id to copy from for the derive key.
+ * @param parent         Runtime slot to populate.
  * @return 0 on success, negative errno on failure.
  */
-int acs_crypto_copy_persistent_key_to_runtime(psa_key_id_t src_id,
+int acs_crypto_copy_persistent_key_to_runtime(psa_key_id_t src_id, psa_key_id_t src_derive_id,
 					      struct bt_acs_key_desc_runtime *parent);
 
 /**

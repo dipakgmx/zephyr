@@ -319,6 +319,7 @@ int acs_crypto_import_exchange_key(struct bt_acs_key_desc_runtime *key_runtime,
 {
 	psa_key_attributes_t attrs = PSA_KEY_ATTRIBUTES_INIT;
 	psa_status_t status;
+	int err;
 
 	acs_crypto_set_exchange_key_policy(&attrs, PSA_KEY_USAGE_EXPORT | PSA_KEY_USAGE_COPY);
 	psa_set_key_lifetime(&attrs, PSA_KEY_LIFETIME_VOLATILE);
@@ -327,6 +328,43 @@ int acs_crypto_import_exchange_key(struct bt_acs_key_desc_runtime *key_runtime,
 	status = psa_import_key(&attrs, key_material, key_len, &key_runtime->psa_key_id);
 	if (status != PSA_SUCCESS) {
 		LOG_ERR("Key import failed: %d", status);
+		return -EIO;
+	}
+
+	err = acs_crypto_import_exchange_derive_key(key_runtime, key_material, key_len);
+	if (err != 0) {
+		acs_crypto_destroy_key(key_runtime);
+		return err;
+	}
+
+	return 0;
+}
+
+int acs_crypto_output_exchange_key(struct bt_acs_key_desc_runtime *key_runtime,
+				   psa_key_derivation_operation_t *op, size_t key_len)
+{
+	psa_key_attributes_t attrs = PSA_KEY_ATTRIBUTES_INIT;
+	psa_status_t status;
+
+	if (!key_runtime || !op) {
+		return -EINVAL;
+	}
+
+	if (key_runtime->psa_key_id != 0U) {
+		psa_status_t destroy_status = psa_destroy_key(key_runtime->psa_key_id);
+
+		acs_crypto_warn_destroy_key_failure(destroy_status, key_runtime->psa_key_id,
+						    "destroy existing exchange key");
+		key_runtime->psa_key_id = 0U;
+	}
+
+	acs_crypto_set_exchange_key_policy(&attrs, PSA_KEY_USAGE_EXPORT | PSA_KEY_USAGE_COPY);
+	psa_set_key_lifetime(&attrs, PSA_KEY_LIFETIME_VOLATILE);
+	psa_set_key_bits(&attrs, key_len * BITS_PER_BYTE);
+
+	status = psa_key_derivation_output_key(&attrs, op, &key_runtime->psa_key_id);
+	if (status != PSA_SUCCESS) {
+		LOG_ERR("Derived exchange key output failed: %d", status);
 		return -EIO;
 	}
 
@@ -365,13 +403,13 @@ int acs_crypto_output_exchange_derive_key(struct bt_acs_key_desc_runtime *key_ru
 }
 
 int acs_crypto_copy_key_to_persistent(const struct bt_acs_key_desc_runtime *parent,
-				      psa_key_id_t dst_id)
+				      psa_key_id_t dst_id, psa_key_id_t dst_derive_id)
 {
 	psa_key_attributes_t attrs = PSA_KEY_ATTRIBUTES_INIT;
 	psa_key_id_t out_id;
 	psa_status_t status;
 
-	if (!parent || parent->psa_key_id == 0U) {
+	if (!parent || parent->psa_key_id == 0U || parent->derive_key_id == 0U) {
 		return -EINVAL;
 	}
 
@@ -384,23 +422,44 @@ int acs_crypto_copy_key_to_persistent(const struct bt_acs_key_desc_runtime *pare
 	if (status == PSA_ERROR_ALREADY_EXISTS) {
 		status = psa_destroy_key(dst_id);
 		if (status != PSA_SUCCESS) {
-			LOG_ERR("destroy existing persistent key 0x%08x failed: %d",
+			LOG_ERR("destroy existing persistent exchange key 0x%08x failed: %d",
 				(unsigned int)dst_id, status);
 			return -EIO;
 		}
 		status = psa_copy_key(parent->psa_key_id, &attrs, &out_id);
 	}
-
 	if (status != PSA_SUCCESS) {
-		LOG_ERR("psa_copy_key to persistent 0x%08x failed: %d", (unsigned int)dst_id,
-			status);
+		LOG_ERR("psa_copy_key for persistent exchange key 0x%08x failed: %d",
+			(unsigned int)dst_id, status);
+		return -EIO;
+	}
+
+	psa_reset_key_attributes(&attrs);
+	acs_crypto_set_exchange_derive_policy(&attrs, PSA_KEY_USAGE_EXPORT | PSA_KEY_USAGE_COPY);
+	psa_set_key_lifetime(&attrs, PSA_KEY_LIFETIME_PERSISTENT);
+	psa_set_key_id(&attrs, dst_derive_id);
+	psa_set_key_bits(&attrs, CONFIG_BT_ACS_SESSION_KEY_SIZE * BITS_PER_BYTE);
+
+	status = psa_copy_key(parent->derive_key_id, &attrs, &out_id);
+	if (status == PSA_ERROR_ALREADY_EXISTS) {
+		status = psa_destroy_key(dst_derive_id);
+		if (status != PSA_SUCCESS) {
+			LOG_ERR("destroy existing persistent derive key 0x%08x failed: %d",
+				(unsigned int)dst_derive_id, status);
+			return -EIO;
+		}
+		status = psa_copy_key(parent->derive_key_id, &attrs, &out_id);
+	}
+	if (status != PSA_SUCCESS) {
+		LOG_ERR("psa_copy_key for persistent derive key 0x%08x failed: %d",
+			(unsigned int)dst_derive_id, status);
 		return -EIO;
 	}
 
 	return 0;
 }
 
-int acs_crypto_copy_persistent_key_to_runtime(psa_key_id_t src_id,
+int acs_crypto_copy_persistent_key_to_runtime(psa_key_id_t src_id, psa_key_id_t src_derive_id,
 					      struct bt_acs_key_desc_runtime *parent)
 {
 	psa_key_attributes_t attrs = PSA_KEY_ATTRIBUTES_INIT;
@@ -424,51 +483,21 @@ int acs_crypto_copy_persistent_key_to_runtime(psa_key_id_t src_id,
 		return -EIO;
 	}
 
-	return acs_crypto_ensure_exchange_derive_key(parent);
-}
+	psa_reset_key_attributes(&attrs);
+	acs_crypto_set_exchange_derive_policy(&attrs, PSA_KEY_USAGE_EXPORT | PSA_KEY_USAGE_COPY);
+	psa_set_key_lifetime(&attrs, PSA_KEY_LIFETIME_VOLATILE);
+	psa_set_key_bits(&attrs, CONFIG_BT_ACS_SESSION_KEY_SIZE * BITS_PER_BYTE);
 
-int acs_crypto_export_key(const struct bt_acs_key_desc_runtime *key_runtime, uint8_t *buf,
-			  size_t buf_len, size_t *out_len)
-{
-	psa_status_t status;
-
-	if (!key_runtime || key_runtime->psa_key_id == 0U) {
-		return -EINVAL;
-	}
-
-	status = psa_export_key(key_runtime->psa_key_id, buf, buf_len, out_len);
+	status = psa_copy_key(src_derive_id, &attrs, &parent->derive_key_id);
 	if (status != PSA_SUCCESS) {
-		LOG_ERR("psa_export_key(0x%08x) failed: %d", (unsigned int)key_runtime->psa_key_id,
-			status);
+		LOG_ERR("psa_copy_key from persistent derive 0x%08x failed: %d",
+			(unsigned int)src_derive_id, status);
+		parent->derive_key_id = 0U;
+		acs_crypto_destroy_key(parent);
 		return -EIO;
 	}
 
 	return 0;
-}
-
-int acs_crypto_ensure_exchange_derive_key(struct bt_acs_key_desc_runtime *key_runtime)
-{
-	uint8_t key_buf[CONFIG_BT_ACS_SESSION_KEY_SIZE];
-	size_t key_len;
-	int err;
-
-	if (!key_runtime || key_runtime->psa_key_id == 0U) {
-		return -EINVAL;
-	}
-
-	if (key_runtime->derive_key_id != 0U) {
-		return 0;
-	}
-
-	err = acs_crypto_export_key(key_runtime, key_buf, sizeof(key_buf), &key_len);
-	if (err != 0) {
-		return err;
-	}
-
-	err = acs_crypto_import_exchange_derive_key(key_runtime, key_buf, key_len);
-	mbedtls_platform_zeroize(key_buf, sizeof(key_buf));
-
-	return err;
 }
 
 void acs_crypto_destroy_key(struct bt_acs_key_desc_runtime *key_runtime)

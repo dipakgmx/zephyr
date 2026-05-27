@@ -178,17 +178,19 @@ static void acs_seg_notify_work_handler(struct k_work *work)
 	ctx->notify_params.data = ctx->tx_scratch;
 	ctx->notify_params.len = chunk + ACS_SEG_HDR_SIZE;
 
+	ctx->tx_offset += chunk;
+	ctx->tx_counter = (ctx->tx_counter + 1) % ACS_SEG_COUNTER_MAX;
 	ctx->tx_in_flight = true;
 
 	err = bt_gatt_notify_cb(ctx->tx_conn, &ctx->notify_params);
 	if (err) {
 		ctx->tx_in_flight = false;
+		ctx->tx_offset -= chunk;
+		ctx->tx_counter =
+			(ctx->tx_counter + ACS_SEG_COUNTER_MAX - 1U) % ACS_SEG_COUNTER_MAX;
 		LOG_ERR("seg_notify_async: bt_gatt_notify_cb failed: %d", err);
 		goto cleanup;
 	}
-
-	ctx->tx_offset += chunk;
-	ctx->tx_counter = (ctx->tx_counter + 1) % ACS_SEG_COUNTER_MAX;
 	return;
 
 cleanup:

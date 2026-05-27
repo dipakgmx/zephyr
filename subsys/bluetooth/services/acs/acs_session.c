@@ -129,11 +129,12 @@ int acs_session_cache_restore(const bt_addr_le_t *addr, struct bt_acs_conn *acs_
 		}
 		psa_reset_key_attributes(&attrs);
 
-		if (ck->derive_key_id != 0U &&
+		if (ck->derive_key_id == 0U ||
 		    psa_get_key_attributes(ck->derive_key_id, &attrs) != PSA_SUCCESS) {
-			LOG_WRN("Cached derive key 0x%08x no longer valid, rebuilding later",
+			LOG_ERR("Cached derive key 0x%08x no longer valid",
 				(unsigned int)ck->derive_key_id);
-			ck->derive_key_id = 0U;
+			psa_reset_key_attributes(&attrs);
+			goto reimport_failed;
 		}
 		psa_reset_key_attributes(&attrs);
 
@@ -219,8 +220,8 @@ struct acs_session_slot {
 
 static struct acs_session_slot acs_slots[CONFIG_BT_MAX_PAIRED];
 
-BUILD_ASSERT(CONFIG_BT_MAX_PAIRED <= ZEPHYR_PSA_BT_ACS_KEY_ID_RANGE_SIZE,
-	     "Bluetooth ACS PSA key ID range is too small for CONFIG_BT_MAX_PAIRED");
+BUILD_ASSERT((2 * CONFIG_BT_MAX_PAIRED) <= ZEPHYR_PSA_BT_ACS_KEY_ID_RANGE_SIZE,
+	     "Bluetooth ACS PSA key ID range is too small for persistent key pairs");
 
 static inline bool acs_slot_is_free(size_t idx)
 {
@@ -230,6 +231,12 @@ static inline bool acs_slot_is_free(size_t idx)
 static psa_key_id_t acs_psa_key_id(size_t slot)
 {
 	return ZEPHYR_PSA_BT_ACS_KEY_ID_RANGE_BEGIN + (psa_key_id_t)slot;
+}
+
+static psa_key_id_t acs_psa_derive_key_id(size_t slot)
+{
+	return ZEPHYR_PSA_BT_ACS_KEY_ID_RANGE_BEGIN + (psa_key_id_t)CONFIG_BT_MAX_PAIRED +
+	       (psa_key_id_t)slot;
 }
 
 static int acs_slot_from_addr(const bt_addr_le_t *addr, size_t *slot)
@@ -276,6 +283,11 @@ static void acs_destroy_persistent_slot(size_t slot)
 	status = psa_destroy_key(acs_psa_key_id(slot));
 	if (status != PSA_SUCCESS && status != PSA_ERROR_INVALID_HANDLE) {
 		LOG_WRN("destroy persistent parent key failed for slot %zu: %d", slot, status);
+	}
+
+	status = psa_destroy_key(acs_psa_derive_key_id(slot));
+	if (status != PSA_SUCCESS && status != PSA_ERROR_INVALID_HANDLE) {
+		LOG_WRN("destroy persistent derive key failed for slot %zu: %d", slot, status);
 	}
 }
 
@@ -384,9 +396,12 @@ void acs_session_store(const struct bt_conn *conn, const struct bt_acs_conn *acs
 	    acs_slots[slot].meta.restriction_map_id == acs_conn->restriction_map_id) {
 		psa_key_attributes_t chk = PSA_KEY_ATTRIBUTES_INIT;
 		psa_status_t chk_st = psa_get_key_attributes(acs_psa_key_id(slot), &chk);
+		psa_status_t chk_derive_st;
 
 		psa_reset_key_attributes(&chk);
-		if (chk_st == PSA_SUCCESS) {
+		chk_derive_st = psa_get_key_attributes(acs_psa_derive_key_id(slot), &chk);
+		psa_reset_key_attributes(&chk);
+		if (chk_st == PSA_SUCCESS && chk_derive_st == PSA_SUCCESS) {
 			LOG_DBG("ACS session already persisted, skipping");
 			return;
 		}
@@ -400,7 +415,8 @@ void acs_session_store(const struct bt_conn *conn, const struct bt_acs_conn *acs
 	 * Duplicate the parent key into persistent PSA storage in-keystore via
 	 * psa_copy_key(); the raw key material never enters a plaintext buffer.
 	 */
-	err = acs_crypto_copy_key_to_persistent(parent_key, acs_psa_key_id(slot));
+	err = acs_crypto_copy_key_to_persistent(parent_key, acs_psa_key_id(slot),
+						acs_psa_derive_key_id(slot));
 	if (err) {
 		LOG_ERR("Failed to copy parent key to persistent store: %d", err);
 		goto err_free_slot;
@@ -458,7 +474,8 @@ void acs_session_restore(struct bt_conn *conn, struct bt_acs_conn *acs_conn)
 	 * A copy failure means the stored key is missing or unusable, so erase
 	 * the orphaned slot.
 	 */
-	err = acs_crypto_copy_persistent_key_to_runtime(acs_psa_key_id(slot), parent_key);
+	err = acs_crypto_copy_persistent_key_to_runtime(acs_psa_key_id(slot),
+							acs_psa_derive_key_id(slot), parent_key);
 	if (err) {
 		LOG_ERR("Failed to restore parent key from persistent store: %d", err);
 		acs_session_erase_slot(slot);
