@@ -291,6 +291,23 @@ static void acs_destroy_persistent_slot(size_t slot)
 	}
 }
 
+static bool acs_persistent_slot_keys_present(size_t slot)
+{
+	psa_key_attributes_t attrs = PSA_KEY_ATTRIBUTES_INIT;
+	psa_status_t status;
+
+	status = psa_get_key_attributes(acs_psa_key_id(slot), &attrs);
+	psa_reset_key_attributes(&attrs);
+	if (status != PSA_SUCCESS) {
+		return false;
+	}
+
+	status = psa_get_key_attributes(acs_psa_derive_key_id(slot), &attrs);
+	psa_reset_key_attributes(&attrs);
+
+	return status == PSA_SUCCESS;
+}
+
 static void acs_session_erase_slot(size_t slot)
 {
 	acs_destroy_persistent_slot(slot);
@@ -333,8 +350,13 @@ static struct bt_acs_key_desc_runtime *acs_restored_established_key(struct bt_ac
 #endif
 }
 
-static int acs_session_find_exchange_key(const struct bt_acs_conn *acs_conn,
-					 struct bt_acs_key_desc_runtime **exchange_key)
+/*
+ * Persist the long-lived parent exchange key, not the derived KDF child. A
+ * restored session can rebuild child/materialized record keys from that parent
+ * without storing every transient layer.
+ */
+static int acs_session_parent_key(const struct bt_acs_conn *acs_conn,
+				  struct bt_acs_key_desc_runtime **exchange_key)
 {
 	int err;
 
@@ -374,7 +396,7 @@ void acs_session_store(const struct bt_conn *conn, const struct bt_acs_conn *acs
 	size_t slot;
 	int err;
 
-	err = acs_session_find_exchange_key(acs_conn, &parent_key);
+	err = acs_session_parent_key(acs_conn, &parent_key);
 	if (err) {
 		LOG_ERR("No exchanged runtime key available to persist");
 		return;
@@ -393,18 +415,10 @@ void acs_session_store(const struct bt_conn *conn, const struct bt_acs_conn *acs
 	}
 
 	if (acs_slots[slot].meta.parent_key_id == acs_key_desc_runtime_key_id(parent_key) &&
-	    acs_slots[slot].meta.restriction_map_id == acs_conn->restriction_map_id) {
-		psa_key_attributes_t chk = PSA_KEY_ATTRIBUTES_INIT;
-		psa_status_t chk_st = psa_get_key_attributes(acs_psa_key_id(slot), &chk);
-		psa_status_t chk_derive_st;
-
-		psa_reset_key_attributes(&chk);
-		chk_derive_st = psa_get_key_attributes(acs_psa_derive_key_id(slot), &chk);
-		psa_reset_key_attributes(&chk);
-		if (chk_st == PSA_SUCCESS && chk_derive_st == PSA_SUCCESS) {
-			LOG_DBG("ACS session already persisted, skipping");
-			return;
-		}
+	    acs_slots[slot].meta.restriction_map_id == acs_conn->restriction_map_id &&
+	    acs_persistent_slot_keys_present(slot)) {
+		LOG_DBG("ACS session already persisted, skipping");
+		return;
 	}
 
 	acs_slots[slot].bt_id = info.id;
@@ -485,7 +499,7 @@ void acs_session_restore(struct bt_conn *conn, struct bt_acs_conn *acs_conn)
 	acs_conn->restriction_map_id = acs_slots[slot].meta.restriction_map_id;
 
 	/* Rebind the record keys from the restored parent, again without export. */
-	err = acs_crypto_rebind_algorithm_keys_by_copy(acs_conn);
+	err = acs_crypto_rebind_algorithm_keys(acs_conn);
 	if (err) {
 		LOG_ERR("Failed to rebind restored record keys: %d", err);
 		acs_crypto_reset(acs_conn);

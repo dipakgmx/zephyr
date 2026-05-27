@@ -105,23 +105,6 @@ int acs_crypto_import_exchange_key(struct bt_acs_key_desc_runtime *key_runtime,
 				   const uint8_t *key_material, size_t key_len);
 
 /**
- * @brief Materialize a derivation-capable exchange key from a PSA derivation op.
- *
- * Outputs a key of type PSA_KEY_TYPE_DERIVE into @p key_runtime->derive_key_id.
- */
-int acs_crypto_output_exchange_derive_key(struct bt_acs_key_desc_runtime *key_runtime,
-					  psa_key_derivation_operation_t *op, size_t key_len);
-
-/**
- * @brief Materialize an operational exchange key from a PSA derivation op.
- *
- * Outputs an AES exchange key into @p key_runtime->psa_key_id using the normal
- * exchange-key policy.
- */
-int acs_crypto_output_exchange_key(struct bt_acs_key_desc_runtime *key_runtime,
-				   psa_key_derivation_operation_t *op, size_t key_len);
-
-/**
  * @brief Release exchange-key handles without destroying the underlying PSA keys.
  *
  * Zeros the psa_key_id fields in the connection's exchange-key slots so the
@@ -132,9 +115,6 @@ void acs_crypto_release_exchange_keys(struct bt_acs_conn *acs_conn);
 
 /** @brief Destroy one key from the PSA keystore and zero its runtime slot. */
 void acs_crypto_destroy_key(struct bt_acs_key_desc_runtime *key_runtime);
-
-/** @brief Log a warning if a PSA key destroy operation fails. */
-void acs_crypto_warn_destroy_key_failure(psa_status_t status, psa_key_id_t key_id, const char *ctx);
 
 /** @brief Destroy every imported exchange key on @p acs_conn. */
 void acs_crypto_destroy_exchange_keys(struct bt_acs_conn *acs_conn);
@@ -157,47 +137,6 @@ void acs_crypto_destroy_connection_record_keys(struct bt_acs_conn *acs_conn);
 
 /** @brief Refresh algorithm-record PSA keys from the exchange-key slots. */
 int acs_crypto_rebind_algorithm_keys(struct bt_acs_conn *acs_conn);
-
-/**
- * @brief Refresh algorithm-record PSA keys by copying from the parent keystore
- *        entry instead of exporting and re-importing raw key bytes.
- *
- * Behaves like acs_crypto_rebind_algorithm_keys() but mints each record key via
- * psa_copy_key(), so no key material is materialized in plaintext.  Per-record
- * nonce state is reset (tx/rx counters and fixed parts), matching the state a
- * freshly restored session starts from.
- */
-int acs_crypto_rebind_algorithm_keys_by_copy(struct bt_acs_conn *acs_conn);
-
-/**
- * @brief Copy a runtime exchange-key pair into persistent PSA keystore entries.
- *
- * Duplicates both the operational key and its derivation-capable twin inside
- * the keystore (no plaintext export) under persistent policies at
- * @p dst_id / @p dst_derive_id. Replaces existing entries at those ids.
- *
- * @param parent         Runtime slot holding a live exchange-key pair.
- * @param dst_id         Persistent PSA key id for the operational key.
- * @param dst_derive_id  Persistent PSA key id for the derive key.
- * @return 0 on success, negative errno on failure.
- */
-int acs_crypto_copy_key_to_persistent(const struct bt_acs_key_desc_runtime *parent,
-				      psa_key_id_t dst_id, psa_key_id_t dst_derive_id);
-
-/**
- * @brief Copy persistent PSA exchange-key entries into a volatile runtime pair.
- *
- * Destroys any existing exchange-key pair on @p parent, then duplicates
- * @p src_id and @p src_derive_id inside the keystore (no plaintext export),
- * storing the new ids in the runtime slot.
- *
- * @param src_id         Persistent PSA key id to copy from for the operational key.
- * @param src_derive_id  Persistent PSA key id to copy from for the derive key.
- * @param parent         Runtime slot to populate.
- * @return 0 on success, negative errno on failure.
- */
-int acs_crypto_copy_persistent_key_to_runtime(psa_key_id_t src_id, psa_key_id_t src_derive_id,
-					      struct bt_acs_key_desc_runtime *parent);
 
 /**
  * @brief Import an exchange key, rebind algorithm records, and derive nonce state.

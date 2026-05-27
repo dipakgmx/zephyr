@@ -249,11 +249,20 @@ int acs_crypto_get_server_nonce_fixed(struct bt_acs_conn *acs_conn, uint16_t key
 #endif
 }
 
-void acs_crypto_warn_destroy_key_failure(psa_status_t status, psa_key_id_t key_id, const char *ctx)
+void acs_psa_destroy_key(psa_key_id_t *key_id)
 {
-	if (status != PSA_SUCCESS) {
-		LOG_WRN("%s: psa_destroy_key(%u) failed: %d", ctx, (unsigned int)key_id, status);
+	psa_status_t status;
+
+	if (!key_id || *key_id == 0U) {
+		return;
 	}
+
+	status = psa_destroy_key(*key_id);
+	if (status != PSA_SUCCESS) {
+		LOG_WRN("psa_destroy_key(%u) failed: %d", (unsigned int)*key_id, status);
+	}
+
+	*key_id = 0U;
 }
 
 /*
@@ -351,11 +360,7 @@ int acs_crypto_output_exchange_key(struct bt_acs_key_desc_runtime *key_runtime,
 	}
 
 	if (key_runtime->psa_key_id != 0U) {
-		psa_status_t destroy_status = psa_destroy_key(key_runtime->psa_key_id);
-
-		acs_crypto_warn_destroy_key_failure(destroy_status, key_runtime->psa_key_id,
-						    "destroy existing exchange key");
-		key_runtime->psa_key_id = 0U;
+		acs_psa_destroy_key(&key_runtime->psa_key_id);
 	}
 
 	acs_crypto_set_exchange_key_policy(&attrs, PSA_KEY_USAGE_EXPORT | PSA_KEY_USAGE_COPY);
@@ -382,11 +387,7 @@ int acs_crypto_output_exchange_derive_key(struct bt_acs_key_desc_runtime *key_ru
 	}
 
 	if (key_runtime->derive_key_id != 0U) {
-		psa_status_t destroy_status = psa_destroy_key(key_runtime->derive_key_id);
-
-		acs_crypto_warn_destroy_key_failure(destroy_status, key_runtime->derive_key_id,
-						    "destroy existing derive key");
-		key_runtime->derive_key_id = 0U;
+		acs_psa_destroy_key(&key_runtime->derive_key_id);
 	}
 
 	acs_crypto_set_exchange_derive_policy(&attrs, 0U);
@@ -502,19 +503,9 @@ int acs_crypto_copy_persistent_key_to_runtime(psa_key_id_t src_id, psa_key_id_t 
 
 void acs_crypto_destroy_key(struct bt_acs_key_desc_runtime *key_runtime)
 {
-	if (key_runtime && key_runtime->psa_key_id != 0U) {
-		psa_status_t status = psa_destroy_key(key_runtime->psa_key_id);
-
-		acs_crypto_warn_destroy_key_failure(status, key_runtime->psa_key_id, "destroy key");
-		key_runtime->psa_key_id = 0U;
-	}
-
-	if (key_runtime && key_runtime->derive_key_id != 0U) {
-		psa_status_t status = psa_destroy_key(key_runtime->derive_key_id);
-
-		acs_crypto_warn_destroy_key_failure(status, key_runtime->derive_key_id,
-						    "destroy derive key");
-		key_runtime->derive_key_id = 0U;
+	if (key_runtime) {
+		acs_psa_destroy_key(&key_runtime->psa_key_id);
+		acs_psa_destroy_key(&key_runtime->derive_key_id);
 	}
 }
 
@@ -608,12 +599,8 @@ int acs_crypto_import_record_key(struct bt_acs_key_desc_runtime *key_desc_runtim
 
 void acs_crypto_destroy_record_key(struct bt_acs_key_desc_runtime *key_desc_runtime)
 {
-	if (key_desc_runtime && key_desc_runtime->psa_key_id != 0U) {
-		psa_status_t status = psa_destroy_key(key_desc_runtime->psa_key_id);
-
-		acs_crypto_warn_destroy_key_failure(status, key_desc_runtime->psa_key_id,
-						    "destroy record key");
-		key_desc_runtime->psa_key_id = 0U;
+	if (key_desc_runtime) {
+		acs_psa_destroy_key(&key_desc_runtime->psa_key_id);
 	}
 }
 
@@ -655,11 +642,6 @@ acs_reset_key_desc_runtime_nonce_counters(struct bt_acs_key_desc_runtime *key_de
 }
 
 int acs_crypto_rebind_algorithm_keys(struct bt_acs_conn *acs_conn)
-{
-	return acs_crypto_rebind_algorithm_keys_by_copy(acs_conn);
-}
-
-int acs_crypto_rebind_algorithm_keys_by_copy(struct bt_acs_conn *acs_conn)
 {
 	int first_err = 0;
 

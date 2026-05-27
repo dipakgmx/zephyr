@@ -43,6 +43,45 @@
 extern "C" {
 #endif
 
+/** @brief Destroy one PSA key handle, log failures, and clear the caller's id. */
+void acs_psa_destroy_key(psa_key_id_t *key_id);
+
+/**
+ * @brief Materialize an operational exchange key from a PSA derivation op.
+ *
+ * Internal helper used by key exchange to output an AES exchange key directly
+ * into the runtime slot without a plaintext import round-trip.
+ */
+int acs_crypto_output_exchange_key(struct bt_acs_key_desc_runtime *key_runtime,
+				   psa_key_derivation_operation_t *op, size_t key_len);
+
+/**
+ * @brief Materialize a derivation-capable exchange key from a PSA derivation op.
+ *
+ * Internal helper used by key exchange to output the paired derive handle for a
+ * runtime exchange key.
+ */
+int acs_crypto_output_exchange_derive_key(struct bt_acs_key_desc_runtime *key_runtime,
+					  psa_key_derivation_operation_t *op, size_t key_len);
+
+/**
+ * @brief Copy a runtime exchange-key pair into persistent PSA key slots.
+ *
+ * Session persistence uses this to duplicate both the operational exchange key
+ * and its derive-capable twin in-keystore under persistent ids.
+ */
+int acs_crypto_copy_key_to_persistent(const struct bt_acs_key_desc_runtime *parent,
+				      psa_key_id_t dst_id, psa_key_id_t dst_derive_id);
+
+/**
+ * @brief Restore a persistent PSA exchange-key pair into a volatile runtime slot.
+ *
+ * Session restore uses this to duplicate both persistent key handles back into
+ * the connection-owned runtime slot.
+ */
+int acs_crypto_copy_persistent_key_to_runtime(psa_key_id_t src_id, psa_key_id_t src_derive_id,
+					      struct bt_acs_key_desc_runtime *parent);
+
 /**
  * @brief Allocate a buffer from the shared ACS net_buf pool.
  *

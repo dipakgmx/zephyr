@@ -129,19 +129,11 @@ static void acs_key_exchange_free_ctx(struct bt_acs_conn *acs_conn)
 	}
 
 	if (acs_conn->crypto.kex->ecdh_key_id != 0U) {
-		psa_status_t status = psa_destroy_key(acs_conn->crypto.kex->ecdh_key_id);
-
-		acs_crypto_warn_destroy_key_failure(status, acs_conn->crypto.kex->ecdh_key_id,
-						    "free kex ctx");
-		acs_conn->crypto.kex->ecdh_key_id = 0U;
+		acs_psa_destroy_key(&acs_conn->crypto.kex->ecdh_key_id);
 	}
 
 	if (acs_conn->crypto.kex->shared_secret_id != 0U) {
-		psa_status_t status = psa_destroy_key(acs_conn->crypto.kex->shared_secret_id);
-
-		acs_crypto_warn_destroy_key_failure(status, acs_conn->crypto.kex->shared_secret_id,
-						    "free shared secret");
-		acs_conn->crypto.kex->shared_secret_id = 0U;
+		acs_psa_destroy_key(&acs_conn->crypto.kex->shared_secret_id);
 	}
 
 	acs_kex_free(acs_conn->crypto.kex);
@@ -660,10 +652,7 @@ static int bt_acs_crypto_generate_keypair(struct bt_acs_conn *acs_conn)
 				       &pub_len);
 	if (status != PSA_SUCCESS) {
 		LOG_ERR("psa_export_public_key failed: %d", status);
-		acs_crypto_warn_destroy_key_failure(
-			psa_destroy_key(acs_conn->crypto.kex->ecdh_key_id),
-			acs_conn->crypto.kex->ecdh_key_id, "export public key cleanup");
-		acs_conn->crypto.kex->ecdh_key_id = 0;
+		acs_psa_destroy_key(&acs_conn->crypto.kex->ecdh_key_id);
 		return -EIO;
 	}
 
@@ -676,10 +665,7 @@ static int bt_acs_crypto_generate_keypair(struct bt_acs_conn *acs_conn)
 	if (pub_len != (size_t)CONFIG_BT_ACS_ECDH_COORD_SIZE) {
 		LOG_ERR("Unexpected Curve25519 public key size: %zu (expected %u)", pub_len,
 			CONFIG_BT_ACS_ECDH_COORD_SIZE);
-		acs_crypto_warn_destroy_key_failure(
-			psa_destroy_key(acs_conn->crypto.kex->ecdh_key_id),
-			acs_conn->crypto.kex->ecdh_key_id, "curve25519 pubkey cleanup");
-		acs_conn->crypto.kex->ecdh_key_id = 0;
+		acs_psa_destroy_key(&acs_conn->crypto.kex->ecdh_key_id);
 		return -EIO;
 	}
 	memcpy(pk->x, pub, CONFIG_BT_ACS_ECDH_COORD_SIZE);
@@ -691,10 +677,7 @@ static int bt_acs_crypto_generate_keypair(struct bt_acs_conn *acs_conn)
 	if (pub_len != expected_len) {
 		LOG_ERR("Unexpected NIST public key size: %zu (expected %zu)", pub_len,
 			expected_len);
-		acs_crypto_warn_destroy_key_failure(
-			psa_destroy_key(acs_conn->crypto.kex->ecdh_key_id),
-			acs_conn->crypto.kex->ecdh_key_id, "nist pubkey cleanup");
-		acs_conn->crypto.kex->ecdh_key_id = 0;
+		acs_psa_destroy_key(&acs_conn->crypto.kex->ecdh_key_id);
 		return -EIO;
 	}
 
@@ -731,10 +714,7 @@ static int bt_acs_crypto_compute_shared_secret(struct bt_acs_conn *acs_conn)
 	) {
 		LOG_ERR("Client pubkey coord size mismatch: x=%u (expected %u)", x_size,
 			CONFIG_BT_ACS_ECDH_COORD_SIZE);
-		acs_crypto_warn_destroy_key_failure(
-			psa_destroy_key(acs_conn->crypto.kex->ecdh_key_id),
-			acs_conn->crypto.kex->ecdh_key_id, "client pubkey cleanup");
-		acs_conn->crypto.kex->ecdh_key_id = 0;
+		acs_psa_destroy_key(&acs_conn->crypto.kex->ecdh_key_id);
 		return -EINVAL;
 	}
 
@@ -747,10 +727,7 @@ static int bt_acs_crypto_compute_shared_secret(struct bt_acs_conn *acs_conn)
 #endif
 	) {
 		LOG_WRN("client public key matches server public key");
-		acs_crypto_warn_destroy_key_failure(
-			psa_destroy_key(acs_conn->crypto.kex->ecdh_key_id),
-			acs_conn->crypto.kex->ecdh_key_id, "pubkey match cleanup");
-		acs_conn->crypto.kex->ecdh_key_id = 0;
+		acs_psa_destroy_key(&acs_conn->crypto.kex->ecdh_key_id);
 		return -EINVAL;
 	}
 
@@ -771,10 +748,7 @@ static int bt_acs_crypto_compute_shared_secret(struct bt_acs_conn *acs_conn)
 				       psa_pubkey_len, acs_conn->crypto.kex->key_material,
 				       sizeof(acs_conn->crypto.kex->key_material), &olen);
 
-	acs_crypto_warn_destroy_key_failure(psa_destroy_key(acs_conn->crypto.kex->ecdh_key_id),
-					    acs_conn->crypto.kex->ecdh_key_id,
-					    "raw key agreement cleanup");
-	acs_conn->crypto.kex->ecdh_key_id = 0;
+	acs_psa_destroy_key(&acs_conn->crypto.kex->ecdh_key_id);
 
 	if (status != PSA_SUCCESS) {
 		LOG_ERR("psa_raw_key_agreement failed: %d", status);
@@ -1017,10 +991,7 @@ int acs_key_exchange_ecdh_start(struct bt_acs_conn *acs_conn, uint16_t key_id)
 
 	/* Destroy any ECDH private key left from a prior aborted exchange. */
 	if (acs_conn->crypto.kex && acs_conn->crypto.kex->ecdh_key_id != 0) {
-		acs_crypto_warn_destroy_key_failure(
-			psa_destroy_key(acs_conn->crypto.kex->ecdh_key_id),
-			acs_conn->crypto.kex->ecdh_key_id, "pre-start cleanup");
-		acs_conn->crypto.kex->ecdh_key_id = 0;
+		acs_psa_destroy_key(&acs_conn->crypto.kex->ecdh_key_id);
 	}
 
 	/* Reset live crypto state while keeping the descriptor runtime slots bound.
