@@ -101,16 +101,23 @@ int acs_sec_mgmt_invalidate_all(struct acs_procedure *proc)
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
 static void invalidate_kdf_child(struct bt_acs_conn *acs_conn)
 {
-	struct bt_acs_runtime_key_state *kdf_key;
-	int err = acs_crypto_current_key_lookup(acs_conn, ACS_KEY_ID_KDF, &kdf_key);
+	struct bt_acs_key_desc_runtime *kdf_key;
+	int err;
+
+	err = acs_crypto_key_runtime_lookup(acs_conn, ACS_KEY_ID_KDF, &kdf_key);
 
 	if (err) {
 		LOG_ERR("Missing KDF runtime key state");
 		return;
 	}
 
-	acs_crypto_destroy_current_key(kdf_key);
-	acs_crypto_rebind_key_desc_runtimes(acs_conn);
+	acs_crypto_destroy_key(kdf_key);
+	err = acs_crypto_rebind_algorithm_keys(acs_conn);
+	if (err) {
+		LOG_ERR("Re-import record keys failed: %d", err);
+		return;
+	}
+
 	acs_conn->status_flags &= ~BT_ACS_STATUS_SECURITY_ESTABLISHED;
 }
 #endif
@@ -150,9 +157,9 @@ int acs_sec_mgmt_invalidate_key(struct acs_procedure *proc, struct net_buf_simpl
 		response_code = BT_ACS_CP_RESPONSE_SUCCESS;
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
 	} else if (key_id == ACS_KEY_ID_KDF) {
-		struct bt_acs_runtime_key_state *kdf_key;
+		struct bt_acs_key_desc_runtime *kdf_key;
 
-		ret = acs_crypto_current_key_lookup(proc->acs_conn, ACS_KEY_ID_KDF, &kdf_key);
+		ret = acs_crypto_key_runtime_lookup(proc->acs_conn, ACS_KEY_ID_KDF, &kdf_key);
 		if (ret) {
 			LOG_ERR("Missing KDF runtime key state");
 			response_code = BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED;
@@ -177,9 +184,9 @@ int acs_sec_mgmt_invalidate_key(struct acs_procedure *proc, struct net_buf_simpl
 			LOG_DBG("KDF child key invalidated");
 		}
 	} else if (is_active_algorithm_key_id(key_id)) {
-		struct bt_acs_runtime_key_state *kdf_key;
+		struct bt_acs_key_desc_runtime *kdf_key;
 
-		ret = acs_crypto_current_key_lookup(proc->acs_conn, ACS_KEY_ID_KDF, &kdf_key);
+		ret = acs_crypto_key_runtime_lookup(proc->acs_conn, ACS_KEY_ID_KDF, &kdf_key);
 		if (ret == 0 && kdf_key->psa_key_id != 0U) {
 			/* Algorithm keys (GCM, CCM, …) use the KDF child as their actual key
 			 * material.  Invalidating them is equivalent to invalidating the child. */
@@ -207,9 +214,9 @@ int acs_sec_mgmt_invalidate_key(struct acs_procedure *proc, struct net_buf_simpl
 		}
 #endif
 	} else if (is_active_key_id(key_id)) {
-		struct bt_acs_runtime_key_state *current_key;
+		struct bt_acs_key_desc_runtime *current_key;
 
-		if (acs_crypto_current_key_lookup(proc->acs_conn, key_id, &current_key) != 0 ||
+		if (acs_crypto_key_runtime_lookup(proc->acs_conn, key_id, &current_key) != 0 ||
 		    current_key->psa_key_id == 0U) {
 			response_code = BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE;
 		} else {

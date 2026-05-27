@@ -49,9 +49,9 @@ static inline enum bt_acs_cp_response_code errno_to_acs_status(int err)
 	}
 }
 
-static inline bool acs_current_key_installed(const struct bt_acs_runtime_key_state *key_state)
+static inline bool acs_current_key_installed(const struct bt_acs_key_desc_runtime *key_runtime)
 {
-	return key_state && key_state->psa_key_id != 0U;
+	return key_runtime && key_runtime->psa_key_id != 0U;
 }
 
 static inline bool acs_session_established(const struct bt_acs_conn *acs_conn)

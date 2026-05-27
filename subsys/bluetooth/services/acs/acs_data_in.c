@@ -109,7 +109,7 @@ static int acs_data_in_validate(struct bt_acs_conn *acs_conn, struct net_buf_sim
 		return ACS_DATA_ERR_INCORRECT_SECURITY_CONFIG;
 	}
 
-	if (acs_crypto_key_desc_runtime_lookup(acs_conn, isc->key_id, key_desc_runtime) != 0) {
+	if (acs_crypto_key_runtime_lookup(acs_conn, isc->key_id, key_desc_runtime) != 0) {
 		LOG_WRN("no key descriptor runtime for ISC_ID 0x%04x", *isc_id);
 		return ACS_DATA_ERR_INCORRECT_SECURITY_CONFIG;
 	}

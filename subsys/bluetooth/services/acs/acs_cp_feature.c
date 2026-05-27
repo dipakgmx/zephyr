@@ -182,9 +182,8 @@ static bool acs_client_nonce_fixed_is_unique(struct bt_acs_conn *acs_conn,
 					     const struct bt_acs_key_desc_runtime *kdr,
 					     uint8_t fixed_size)
 {
-	for (size_t i = 0; i < ARRAY_SIZE(acs_conn->crypto.key_desc_runtimes); i++) {
-		const struct bt_acs_key_desc_runtime *other =
-			&acs_conn->crypto.key_desc_runtimes[i];
+	for (size_t i = ACS_KEY_ID_COUNT; i < ACS_KEY_RUNTIME_COUNT; i++) {
+		const struct bt_acs_key_desc_runtime *other = &acs_conn->crypto.key_runtimes[i];
 
 		if (!other->key_desc) {
 			continue;
@@ -240,7 +239,7 @@ int acs_cp_handle_set_client_nonce_fixed(struct acs_procedure *proc, struct net_
 					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE);
 	}
 
-	if (acs_crypto_key_desc_runtime_lookup(acs_conn, key_id, &kdr) != 0) {
+	if (acs_crypto_key_runtime_lookup(acs_conn, key_id, &kdr) != 0) {
 		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_SET_CLIENT_NONCE_FIXED,
 					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 	}

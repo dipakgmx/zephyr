@@ -21,12 +21,12 @@
 
 LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
 
-struct bt_acs_runtime_key_state *acs_key_exchange_established_key(struct bt_acs_conn *acs_conn)
+struct bt_acs_key_desc_runtime *acs_key_exchange_established_key(struct bt_acs_conn *acs_conn)
 {
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
-	struct bt_acs_runtime_key_state *kdf_key;
+	struct bt_acs_key_desc_runtime *kdf_key;
 
-	if (acs_crypto_current_key_lookup(acs_conn, ACS_KEY_ID_KDF, &kdf_key) == 0 &&
+	if (acs_crypto_key_runtime_lookup(acs_conn, ACS_KEY_ID_KDF, &kdf_key) == 0 &&
 	    kdf_key->psa_key_id != 0U) {
 		return kdf_key;
 	}
@@ -34,9 +34,9 @@ struct bt_acs_runtime_key_state *acs_key_exchange_established_key(struct bt_acs_
 
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_ECDH)
 	{
-		struct bt_acs_runtime_key_state *ecdh_key;
+		struct bt_acs_key_desc_runtime *ecdh_key;
 
-		if (acs_crypto_current_key_lookup(acs_conn, ACS_KEY_ID_ECDH, &ecdh_key) == 0 &&
+		if (acs_crypto_key_runtime_lookup(acs_conn, ACS_KEY_ID_ECDH, &ecdh_key) == 0 &&
 		    ecdh_key->psa_key_id != 0U) {
 			return ecdh_key;
 		}
@@ -45,9 +45,9 @@ struct bt_acs_runtime_key_state *acs_key_exchange_established_key(struct bt_acs_
 
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_OOB)
 	{
-		struct bt_acs_runtime_key_state *oob_key;
+		struct bt_acs_key_desc_runtime *oob_key;
 
-		if (acs_crypto_current_key_lookup(acs_conn, ACS_KEY_ID_OOB, &oob_key) == 0 &&
+		if (acs_crypto_key_runtime_lookup(acs_conn, ACS_KEY_ID_OOB, &oob_key) == 0 &&
 		    oob_key->psa_key_id != 0U) {
 			return oob_key;
 		}
@@ -152,20 +152,20 @@ void acs_key_exchange_abort(struct bt_acs_conn *acs_conn)
 
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
 	if (key_id == ACS_KEY_ID_KDF) {
-		struct bt_acs_runtime_key_state *kdf_key;
+		struct bt_acs_key_desc_runtime *kdf_key;
 
-		if (acs_crypto_current_key_lookup(acs_conn, ACS_KEY_ID_KDF, &kdf_key) == 0) {
-			acs_crypto_destroy_current_key(kdf_key);
+		if (acs_crypto_key_runtime_lookup(acs_conn, ACS_KEY_ID_KDF, &kdf_key) == 0) {
+			acs_crypto_destroy_key(kdf_key);
 		}
 
-		acs_crypto_rebind_key_desc_runtimes(acs_conn);
+		acs_crypto_rebind_algorithm_keys(acs_conn);
 		acs_key_exchange_free_ctx(acs_conn);
 		return;
 	}
 #endif
 
-	acs_crypto_destroy_connection_keys(acs_conn);
-	acs_crypto_rebind_key_desc_runtimes(acs_conn);
+	acs_crypto_destroy_exchange_keys(acs_conn);
+	acs_crypto_rebind_algorithm_keys(acs_conn);
 	acs_key_exchange_free_ctx(acs_conn);
 }
 
@@ -368,9 +368,9 @@ static int acs_derive_nonce_state_for_current_key(struct bt_acs_conn *acs_conn,
 						  const uint8_t *key_material,
 						  size_t key_material_len)
 {
-	for (size_t i = 0; i < ARRAY_SIZE(acs_conn->crypto.key_desc_runtimes); i++) {
+	for (size_t i = ACS_KEY_ID_COUNT; i < ACS_KEY_RUNTIME_COUNT; i++) {
 		struct bt_acs_key_desc_runtime *key_desc_runtime =
-			&acs_conn->crypto.key_desc_runtimes[i];
+			&acs_conn->crypto.key_runtimes[i];
 		int ret;
 
 		if (!key_desc_runtime->key_desc ||
@@ -389,20 +389,20 @@ static int acs_derive_nonce_state_for_current_key(struct bt_acs_conn *acs_conn,
 }
 
 int acs_crypto_activate_key(struct bt_acs_conn *acs_conn,
-			    struct bt_acs_runtime_key_state *exchange_key,
+			    struct bt_acs_key_desc_runtime *exchange_key,
 			    const uint8_t *key_material, size_t key_len)
 {
-	uint16_t key_id = acs_runtime_key_id(exchange_key);
+	uint16_t key_id = acs_key_desc_runtime_key_id(exchange_key);
 	int err;
 
-	acs_crypto_destroy_current_key(exchange_key);
+	acs_crypto_destroy_key(exchange_key);
 
-	err = acs_crypto_import_current_key(exchange_key, key_material, key_len);
+	err = acs_crypto_import_exchange_key(exchange_key, key_material, key_len);
 	if (err) {
 		return err;
 	}
 
-	err = acs_crypto_rebind_key_desc_runtimes(acs_conn);
+	err = acs_crypto_rebind_algorithm_keys(acs_conn);
 	if (err) {
 		return err;
 	}
@@ -635,13 +635,13 @@ int acs_crypto_derive_session_key(struct bt_acs_conn *acs_conn)
 {
 	static const uint8_t info[] = "ACS";
 	uint16_t key_id = sys_le16_to_cpu(acs_conn->crypto.kex->start_kex.key_id);
-	struct bt_acs_runtime_key_state *exchange_key;
+	struct bt_acs_key_desc_runtime *exchange_key;
 	uint8_t salt[2 * ACS_CONFIRM_VALUE_SIZE];
 	uint8_t client_random_be[ACS_CONFIRM_VALUE_SIZE];
 	uint8_t session_key[CONFIG_BT_ACS_SESSION_KEY_SIZE];
 	int ret;
 
-	ret = acs_crypto_current_key_lookup(acs_conn, key_id, &exchange_key);
+	ret = acs_crypto_key_runtime_lookup(acs_conn, key_id, &exchange_key);
 	if (ret) {
 		LOG_ERR("No runtime key state for exchange Key_ID 0x%04x", key_id);
 		return ret;
@@ -674,27 +674,26 @@ static int bt_acs_crypto_derive_kdf_child_key(struct bt_acs_conn *acs_conn)
 {
 	uint8_t parent_buf[CONFIG_BT_ACS_SESSION_KEY_SIZE];
 	uint8_t child_key[CONFIG_BT_ACS_SESSION_KEY_SIZE];
-	struct bt_acs_runtime_key_state *parent_key;
-	struct bt_acs_runtime_key_state *kdf_key;
+	struct bt_acs_key_desc_runtime *parent_key;
+	struct bt_acs_key_desc_runtime *kdf_key;
 	uint8_t salt_be[CONFIG_BT_ACS_KDF_SALT_MAX_SIZE];
 	uint8_t info_be[CONFIG_BT_ACS_KDF_INFO_MAX_SIZE];
 	size_t parent_len;
 	int ret;
 
-	ret = acs_crypto_current_key_lookup(acs_conn, ACS_KEY_ID_ECDH, &parent_key);
+	ret = acs_crypto_key_runtime_lookup(acs_conn, ACS_KEY_ID_ECDH, &parent_key);
 	if (ret) {
 		LOG_ERR("No runtime key state for ECDH parent");
 		return ret;
 	}
 
-	ret = acs_crypto_current_key_lookup(acs_conn, ACS_KEY_ID_KDF, &kdf_key);
+	ret = acs_crypto_key_runtime_lookup(acs_conn, ACS_KEY_ID_KDF, &kdf_key);
 	if (ret) {
 		LOG_ERR("No runtime key state for KDF child");
 		return ret;
 	}
 
-	ret = acs_crypto_export_current_key(parent_key, parent_buf, sizeof(parent_buf),
-					    &parent_len);
+	ret = acs_crypto_export_key(parent_key, parent_buf, sizeof(parent_buf), &parent_len);
 	if (ret) {
 		LOG_ERR("Failed to export ECDH parent key: %d", ret);
 		return ret;
@@ -787,7 +786,7 @@ int acs_key_exchange_ecdh_start(struct bt_acs_conn *acs_conn, uint16_t key_id)
 	/* Reset live crypto state while keeping the descriptor runtime slots bound.
 	 * Fresh session or KDF key material will repopulate the nonce prefixes.
 	 */
-	acs_crypto_destroy_connection_keys(acs_conn);
+	acs_crypto_destroy_exchange_keys(acs_conn);
 	acs_crypto_destroy_connection_record_keys(acs_conn);
 	struct bt_acs_kex_ctx *kex = acs_conn->crypto.kex;
 	acs_crypto_reset_preserve_record_states(acs_conn);

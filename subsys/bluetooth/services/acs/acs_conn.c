@@ -148,7 +148,7 @@ void acs_conn_cleanup(struct bt_acs_conn *acs_conn)
 	/* Release transient key-exchange context back to the pool. */
 	acs_key_exchange_abort(acs_conn);
 
-	acs_crypto_release_connection_keys(acs_conn);
+	acs_crypto_release_exchange_keys(acs_conn);
 	acs_crypto_destroy_connection_record_keys(acs_conn);
 	/* Preserve nonce fixed parts across disconnect - they are set once per
 	 * device pair and reused on reconnect (§3.6.4: "does not change for
@@ -280,7 +280,7 @@ int bt_acs_invalidate_security(struct bt_conn *conn)
 
 	acs_conn->status_flags &= ~BT_ACS_STATUS_SECURITY_ESTABLISHED;
 	acs_key_exchange_abort(acs_conn);
-	acs_crypto_destroy_connection_keys(acs_conn);
+	acs_crypto_destroy_exchange_keys(acs_conn);
 	acs_crypto_destroy_connection_record_keys(acs_conn);
 	acs_crypto_reset(acs_conn);
 

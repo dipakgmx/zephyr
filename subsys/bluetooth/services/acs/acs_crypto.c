@@ -59,40 +59,40 @@ int acs_crypto_current_key_id_from_key_desc(const struct bt_acs_key_desc_record 
 
 void acs_crypto_init_slots(struct bt_acs_conn *acs_conn)
 {
-	size_t key_slot = 0;
-	size_t runtime_slot = 0;
+	size_t slot = 0;
 
 	__ASSERT_NO_MSG(acs_conn != NULL);
 
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_ECDH)
-	acs_conn->crypto.current_keys[key_slot++].key_desc = acs_key_desc_lookup(ACS_KEY_ID_ECDH);
+	acs_conn->crypto.key_runtimes[slot++].key_desc = acs_key_desc_lookup(ACS_KEY_ID_ECDH);
 #endif
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
-	acs_conn->crypto.current_keys[key_slot++].key_desc = acs_key_desc_lookup(ACS_KEY_ID_KDF);
+	acs_conn->crypto.key_runtimes[slot++].key_desc = acs_key_desc_lookup(ACS_KEY_ID_KDF);
 #endif
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_OOB)
-	acs_conn->crypto.current_keys[key_slot++].key_desc = acs_key_desc_lookup(ACS_KEY_ID_OOB);
+	acs_conn->crypto.key_runtimes[slot++].key_desc = acs_key_desc_lookup(ACS_KEY_ID_OOB);
 #endif
 
-	__ASSERT_NO_MSG(key_slot <= ARRAY_SIZE(acs_conn->crypto.current_keys));
+	__ASSERT_NO_MSG(slot <= ACS_KEY_ID_COUNT);
+
+	slot = ACS_KEY_ID_COUNT;
 
 	STRUCT_SECTION_FOREACH(bt_acs_key_desc_record, rec) {
-		struct bt_acs_key_desc_runtime *key_desc_runtime;
+		struct bt_acs_key_desc_runtime *kdr;
 		int err;
 
 		if (!acs_key_desc_has_nonce_record(rec)) {
 			continue;
 		}
 
-		__ASSERT_NO_MSG(runtime_slot < ARRAY_SIZE(acs_conn->crypto.key_desc_runtimes));
-		key_desc_runtime = &acs_conn->crypto.key_desc_runtimes[runtime_slot++];
-		key_desc_runtime->key_desc = rec;
-		err = acs_crypto_current_key_id_from_key_desc(rec,
-							      &key_desc_runtime->current_key_id);
+		__ASSERT_NO_MSG(slot < ACS_KEY_RUNTIME_COUNT);
+		kdr = &acs_conn->crypto.key_runtimes[slot++];
+		kdr->key_desc = rec;
+		err = acs_crypto_current_key_id_from_key_desc(rec, &kdr->current_key_id);
 		if (err != 0) {
 			LOG_WRN("Unable to resolve current key for descriptor Key_ID 0x%04x",
 				rec->key_id);
-			key_desc_runtime->current_key_id = 0U;
+			kdr->current_key_id = 0U;
 		}
 	}
 }
@@ -102,7 +102,7 @@ void acs_crypto_reset(struct bt_acs_conn *acs_conn)
 	__ASSERT_NO_MSG(acs_conn != NULL);
 
 	acs_crypto_destroy_connection_record_keys(acs_conn);
-	acs_crypto_destroy_connection_keys(acs_conn);
+	acs_crypto_destroy_exchange_keys(acs_conn);
 	memset(&acs_conn->crypto, 0, sizeof(acs_conn->crypto));
 	acs_crypto_init_slots(acs_conn);
 }
@@ -113,11 +113,11 @@ void acs_crypto_reset_preserve_record_states(struct bt_acs_conn *acs_conn)
 
 #if IS_ENABLED(CONFIG_BT_ACS_HAS_NONCE_FIXED)
 	{
-		struct bt_acs_key_desc_runtime saved_runtimes[CONFIG_BT_ACS_MAX_NONCE_RECORDS];
+		struct bt_acs_key_desc_runtime saved[CONFIG_BT_ACS_MAX_NONCE_RECORDS];
 
-		memcpy(saved_runtimes, acs_conn->crypto.key_desc_runtimes, sizeof(saved_runtimes));
+		memcpy(saved, &acs_conn->crypto.key_runtimes[ACS_KEY_ID_COUNT], sizeof(saved));
 		memset(&acs_conn->crypto, 0, sizeof(acs_conn->crypto));
-		memcpy(acs_conn->crypto.key_desc_runtimes, saved_runtimes, sizeof(saved_runtimes));
+		memcpy(&acs_conn->crypto.key_runtimes[ACS_KEY_ID_COUNT], saved, sizeof(saved));
 		acs_crypto_init_slots(acs_conn);
 	}
 #else
@@ -125,31 +125,31 @@ void acs_crypto_reset_preserve_record_states(struct bt_acs_conn *acs_conn)
 #endif
 }
 
-int acs_crypto_current_key_lookup(const struct bt_acs_conn *acs_conn, uint16_t key_id,
-				  struct bt_acs_runtime_key_state **current_key)
+int acs_crypto_key_runtime_lookup(const struct bt_acs_conn *acs_conn, uint16_t key_id,
+				  struct bt_acs_key_desc_runtime **key_runtime)
 {
-	if (!acs_conn || !current_key) {
-		LOG_DBG("current key lookup called with invalid arguments");
+	if (!acs_conn || !key_runtime) {
+		LOG_DBG("key runtime lookup called with invalid arguments");
 		__ASSERT_NO_MSG(acs_conn != NULL);
-		__ASSERT_NO_MSG(current_key != NULL);
+		__ASSERT_NO_MSG(key_runtime != NULL);
 		return -EINVAL;
 	}
 
-	for (size_t i = 0; i < ARRAY_SIZE(acs_conn->crypto.current_keys); i++) {
-		if (acs_runtime_key_id(&acs_conn->crypto.current_keys[i]) == key_id) {
-			*current_key = (struct bt_acs_runtime_key_state *)&acs_conn->crypto
-					       .current_keys[i];
+	for (size_t i = 0; i < ARRAY_SIZE(acs_conn->crypto.key_runtimes); i++) {
+		if (acs_key_desc_runtime_key_id(&acs_conn->crypto.key_runtimes[i]) == key_id) {
+			*key_runtime =
+				(struct bt_acs_key_desc_runtime *)&acs_conn->crypto.key_runtimes[i];
 			return 0;
 		}
 	}
 
-	*current_key = NULL;
-	LOG_ERR("No runtime key state reserved for Key_ID 0x%04x", key_id);
+	*key_runtime = NULL;
+	LOG_ERR("No runtime slot reserved for Key_ID 0x%04x", key_id);
 	return -ENOENT;
 }
 
 int acs_crypto_current_key_from_isc(struct bt_acs_conn *acs_conn, uint16_t isc_id,
-				    struct bt_acs_runtime_key_state **current_key)
+				    struct bt_acs_key_desc_runtime **current_key)
 {
 	const struct bt_acs_isc_record *isc = acs_isc_lookup(isc_id);
 	const struct bt_acs_key_desc_record *desc;
@@ -181,29 +181,7 @@ int acs_crypto_current_key_from_isc(struct bt_acs_conn *acs_conn, uint16_t isc_i
 		return err;
 	}
 
-	return acs_crypto_current_key_lookup(acs_conn, current_key_id, current_key);
-}
-
-int acs_crypto_key_desc_runtime_lookup(struct bt_acs_conn *acs_conn, uint16_t key_id,
-				       struct bt_acs_key_desc_runtime **key_desc_runtime)
-{
-	if (!acs_conn || !key_desc_runtime) {
-		LOG_DBG("key descriptor runtime lookup called with invalid arguments");
-		__ASSERT_NO_MSG(acs_conn != NULL);
-		__ASSERT_NO_MSG(key_desc_runtime != NULL);
-		return -EINVAL;
-	}
-
-	for (size_t i = 0; i < ARRAY_SIZE(acs_conn->crypto.key_desc_runtimes); i++) {
-		if (acs_key_desc_runtime_key_id(&acs_conn->crypto.key_desc_runtimes[i]) == key_id) {
-			*key_desc_runtime = &acs_conn->crypto.key_desc_runtimes[i];
-			return 0;
-		}
-	}
-
-	*key_desc_runtime = NULL;
-	LOG_ERR("No key descriptor runtime reserved for Key_ID 0x%04x", key_id);
-	return -ENOENT;
+	return acs_crypto_key_runtime_lookup(acs_conn, current_key_id, current_key);
 }
 
 int acs_crypto_get_server_nonce_fixed(struct bt_acs_conn *acs_conn, uint16_t key_id,
@@ -221,7 +199,7 @@ int acs_crypto_get_server_nonce_fixed(struct bt_acs_conn *acs_conn, uint16_t key
 		return -EINVAL;
 	}
 
-	err = acs_crypto_key_desc_runtime_lookup(acs_conn, key_id, &key_desc_runtime);
+	err = acs_crypto_key_runtime_lookup(acs_conn, key_id, &key_desc_runtime);
 	if (err) {
 		return err;
 	}
@@ -269,8 +247,8 @@ void acs_crypto_warn_destroy_key_failure(psa_status_t status, psa_key_id_t key_i
 	}
 }
 
-int acs_crypto_import_current_key(struct bt_acs_runtime_key_state *current_key,
-				  const uint8_t *key_material, size_t key_len)
+int acs_crypto_import_exchange_key(struct bt_acs_key_desc_runtime *key_runtime,
+				   const uint8_t *key_material, size_t key_len)
 {
 	psa_key_attributes_t attrs = PSA_KEY_ATTRIBUTES_INIT;
 	psa_status_t status;
@@ -302,7 +280,7 @@ int acs_crypto_import_current_key(struct bt_acs_runtime_key_state *current_key,
 	psa_set_key_type(&attrs, PSA_KEY_TYPE_AES);
 	psa_set_key_bits(&attrs, key_len * BITS_PER_BYTE);
 
-	status = psa_import_key(&attrs, key_material, key_len, &current_key->psa_key_id);
+	status = psa_import_key(&attrs, key_material, key_len, &key_runtime->psa_key_id);
 	if (status != PSA_SUCCESS) {
 		LOG_ERR("Key import failed: %d", status);
 		return -EIO;
@@ -311,18 +289,18 @@ int acs_crypto_import_current_key(struct bt_acs_runtime_key_state *current_key,
 	return 0;
 }
 
-int acs_crypto_export_current_key(const struct bt_acs_runtime_key_state *current_key, uint8_t *buf,
-				  size_t buf_len, size_t *out_len)
+int acs_crypto_export_key(const struct bt_acs_key_desc_runtime *key_runtime, uint8_t *buf,
+			  size_t buf_len, size_t *out_len)
 {
 	psa_status_t status;
 
-	if (!current_key || current_key->psa_key_id == 0U) {
+	if (!key_runtime || key_runtime->psa_key_id == 0U) {
 		return -EINVAL;
 	}
 
-	status = psa_export_key(current_key->psa_key_id, buf, buf_len, out_len);
+	status = psa_export_key(key_runtime->psa_key_id, buf, buf_len, out_len);
 	if (status != PSA_SUCCESS) {
-		LOG_ERR("psa_export_key(0x%08x) failed: %d", (unsigned int)current_key->psa_key_id,
+		LOG_ERR("psa_export_key(0x%08x) failed: %d", (unsigned int)key_runtime->psa_key_id,
 			status);
 		return -EIO;
 	}
@@ -330,28 +308,27 @@ int acs_crypto_export_current_key(const struct bt_acs_runtime_key_state *current
 	return 0;
 }
 
-void acs_crypto_destroy_current_key(struct bt_acs_runtime_key_state *current_key)
+void acs_crypto_destroy_key(struct bt_acs_key_desc_runtime *key_runtime)
 {
-	if (current_key && current_key->psa_key_id != 0U) {
-		psa_status_t status = psa_destroy_key(current_key->psa_key_id);
+	if (key_runtime && key_runtime->psa_key_id != 0U) {
+		psa_status_t status = psa_destroy_key(key_runtime->psa_key_id);
 
-		acs_crypto_warn_destroy_key_failure(status, current_key->psa_key_id,
-						    "destroy current key");
-		current_key->psa_key_id = 0U;
+		acs_crypto_warn_destroy_key_failure(status, key_runtime->psa_key_id, "destroy key");
+		key_runtime->psa_key_id = 0U;
 	}
 }
 
-void acs_crypto_destroy_connection_keys(struct bt_acs_conn *acs_conn)
+void acs_crypto_destroy_exchange_keys(struct bt_acs_conn *acs_conn)
 {
-	for (size_t i = 0; i < ARRAY_SIZE(acs_conn->crypto.current_keys); i++) {
-		acs_crypto_destroy_current_key(&acs_conn->crypto.current_keys[i]);
+	for (size_t i = 0; i < ACS_KEY_ID_COUNT; i++) {
+		acs_crypto_destroy_key(&acs_conn->crypto.key_runtimes[i]);
 	}
 }
 
-void acs_crypto_release_connection_keys(struct bt_acs_conn *acs_conn)
+void acs_crypto_release_exchange_keys(struct bt_acs_conn *acs_conn)
 {
-	for (size_t i = 0; i < ARRAY_SIZE(acs_conn->crypto.current_keys); i++) {
-		acs_conn->crypto.current_keys[i].psa_key_id = 0U;
+	for (size_t i = 0; i < ACS_KEY_ID_COUNT; i++) {
+		acs_conn->crypto.key_runtimes[i].psa_key_id = 0U;
 	}
 }
 
@@ -422,8 +399,8 @@ void acs_crypto_destroy_record_key(struct bt_acs_key_desc_runtime *key_desc_runt
 
 void acs_crypto_destroy_connection_record_keys(struct bt_acs_conn *acs_conn)
 {
-	for (size_t i = 0; i < ARRAY_SIZE(acs_conn->crypto.key_desc_runtimes); i++) {
-		acs_crypto_destroy_record_key(&acs_conn->crypto.key_desc_runtimes[i]);
+	for (size_t i = ACS_KEY_ID_COUNT; i < ACS_KEY_RUNTIME_COUNT; i++) {
+		acs_crypto_destroy_record_key(&acs_conn->crypto.key_runtimes[i]);
 	}
 }
 
@@ -442,54 +419,51 @@ static void acs_clear_key_desc_runtime_nonce_state(struct bt_acs_key_desc_runtim
 			: 0U;
 }
 
-int acs_crypto_rebind_key_desc_runtimes(struct bt_acs_conn *acs_conn)
+int acs_crypto_rebind_algorithm_keys(struct bt_acs_conn *acs_conn)
 {
 	int first_err = 0;
 	psa_key_id_t last_parent_id = 0U;
 	uint8_t key_buf[CONFIG_BT_ACS_SESSION_KEY_SIZE];
 	size_t key_len = 0;
 
-	for (size_t i = 0; i < ARRAY_SIZE(acs_conn->crypto.key_desc_runtimes); i++) {
-		struct bt_acs_key_desc_runtime *key_desc_runtime =
-			&acs_conn->crypto.key_desc_runtimes[i];
-		struct bt_acs_runtime_key_state *current_key = NULL;
+	for (size_t i = ACS_KEY_ID_COUNT; i < ACS_KEY_RUNTIME_COUNT; i++) {
+		struct bt_acs_key_desc_runtime *kdr = &acs_conn->crypto.key_runtimes[i];
+		struct bt_acs_key_desc_runtime *parent = NULL;
 		int err;
 
-		if (!key_desc_runtime->key_desc) {
+		if (!kdr->key_desc) {
 			continue;
 		}
 
-		acs_crypto_destroy_record_key(key_desc_runtime);
+		acs_crypto_destroy_record_key(kdr);
 
-		if (key_desc_runtime->current_key_id == 0U) {
+		if (kdr->current_key_id == 0U) {
 			if (first_err == 0) {
 				first_err = -ENOENT;
 			}
-			acs_clear_key_desc_runtime_nonce_state(key_desc_runtime);
+			acs_clear_key_desc_runtime_nonce_state(kdr);
 			continue;
 		}
 
-		err = acs_crypto_current_key_lookup(acs_conn, key_desc_runtime->current_key_id,
-						    &current_key);
-		if (err || !current_key || current_key->psa_key_id == 0U) {
-			acs_clear_key_desc_runtime_nonce_state(key_desc_runtime);
+		err = acs_crypto_key_runtime_lookup(acs_conn, kdr->current_key_id, &parent);
+		if (err || !parent || parent->psa_key_id == 0U) {
+			acs_clear_key_desc_runtime_nonce_state(kdr);
 			continue;
 		}
 
-		if (current_key->psa_key_id != last_parent_id) {
-			err = acs_crypto_export_current_key(current_key, key_buf, sizeof(key_buf),
-							    &key_len);
+		if (parent->psa_key_id != last_parent_id) {
+			err = acs_crypto_export_key(parent, key_buf, sizeof(key_buf), &key_len);
 			if (err) {
-				acs_clear_key_desc_runtime_nonce_state(key_desc_runtime);
+				acs_clear_key_desc_runtime_nonce_state(kdr);
 				if (first_err == 0) {
 					first_err = err;
 				}
 				continue;
 			}
-			last_parent_id = current_key->psa_key_id;
+			last_parent_id = parent->psa_key_id;
 		}
 
-		err = acs_crypto_import_record_key(key_desc_runtime, key_buf, key_len);
+		err = acs_crypto_import_record_key(kdr, key_buf, key_len);
 		if (err && first_err == 0) {
 			first_err = err;
 		}

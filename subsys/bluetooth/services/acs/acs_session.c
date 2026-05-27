@@ -46,8 +46,8 @@ static struct acs_session_cache_entry session_cache[CONFIG_BT_MAX_PAIRED];
 
 static bool any_current_key_installed(const struct bt_acs_conn *acs_conn)
 {
-	for (size_t i = 0; i < ARRAY_SIZE(acs_conn->crypto.current_keys); i++) {
-		if (acs_conn->crypto.current_keys[i].psa_key_id != 0U) {
+	for (size_t i = 0; i < ACS_KEY_ID_COUNT; i++) {
+		if (acs_conn->crypto.key_runtimes[i].psa_key_id != 0U) {
 			return true;
 		}
 	}
@@ -93,8 +93,8 @@ void acs_session_cache_save(const bt_addr_le_t *addr, const struct bt_acs_conn *
 	entry->status_flags = acs_conn->status_flags;
 
 	entry->crypto.kex = NULL;
-	for (size_t i = 0; i < ARRAY_SIZE(entry->crypto.key_desc_runtimes); i++) {
-		entry->crypto.key_desc_runtimes[i].psa_key_id = 0U;
+	for (size_t i = ACS_KEY_ID_COUNT; i < ACS_KEY_RUNTIME_COUNT; i++) {
+		entry->crypto.key_runtimes[i].psa_key_id = 0U;
 	}
 
 	LOG_DBG("Saved ACS session to RAM cache for peer %s", bt_addr_le_str(addr));
@@ -114,8 +114,8 @@ int acs_session_cache_restore(const bt_addr_le_t *addr, struct bt_acs_conn *acs_
 	acs_conn->restriction_map_id = entry->restriction_map_id;
 	acs_conn->status_flags = entry->status_flags;
 
-	for (size_t i = 0; i < ARRAY_SIZE(acs_conn->crypto.current_keys); i++) {
-		struct bt_acs_runtime_key_state *ck = &acs_conn->crypto.current_keys[i];
+	for (size_t i = 0; i < ACS_KEY_ID_COUNT; i++) {
+		struct bt_acs_key_desc_runtime *ck = &acs_conn->crypto.key_runtimes[i];
 		psa_key_attributes_t attrs = PSA_KEY_ATTRIBUTES_INIT;
 
 		if (!ck->key_desc || ck->psa_key_id == 0U) {
@@ -130,10 +130,10 @@ int acs_session_cache_restore(const bt_addr_le_t *addr, struct bt_acs_conn *acs_
 		}
 		psa_reset_key_attributes(&attrs);
 
-		entry->crypto.current_keys[i].psa_key_id = 0U;
+		entry->crypto.key_runtimes[i].psa_key_id = 0U;
 	}
 
-	err = acs_crypto_rebind_key_desc_runtimes(acs_conn);
+	err = acs_crypto_rebind_algorithm_keys(acs_conn);
 	if (err) {
 		LOG_ERR("Re-import record keys failed: %d", err);
 		goto reimport_failed;
@@ -143,7 +143,7 @@ int acs_session_cache_restore(const bt_addr_le_t *addr, struct bt_acs_conn *acs_
 
 reimport_failed:
 	LOG_ERR("Cached PSA keys invalid - resetting crypto");
-	acs_crypto_destroy_connection_keys(acs_conn);
+	acs_crypto_destroy_exchange_keys(acs_conn);
 	acs_crypto_reset(acs_conn);
 	acs_conn->status_flags = BT_ACS_STATUS_SECURITY_CONTROLS_ENABLED;
 	return -EIO;
@@ -166,9 +166,9 @@ reimport_ok:
 
 static void session_cache_destroy_entry(struct acs_session_cache_entry *entry)
 {
-	for (size_t i = 0; i < ARRAY_SIZE(entry->crypto.current_keys); i++) {
-		if (entry->crypto.current_keys[i].psa_key_id != 0U) {
-			psa_destroy_key(entry->crypto.current_keys[i].psa_key_id);
+	for (size_t i = 0; i < ACS_KEY_ID_COUNT; i++) {
+		if (entry->crypto.key_runtimes[i].psa_key_id != 0U) {
+			psa_destroy_key(entry->crypto.key_runtimes[i].psa_key_id);
 		}
 	}
 	memset(entry, 0, sizeof(*entry));
@@ -223,7 +223,7 @@ static psa_key_id_t acs_psa_key_id(size_t slot)
 
 static int acs_slot_from_addr(const bt_addr_le_t *addr, size_t *slot)
 {
-	for (size_t i = 0; i < ARRAY_SIZE(acs_slots); i++) {
+	ARRAY_FOR_EACH(acs_slots, i) {
 		if (bt_addr_le_eq(&acs_slots[i].addr, addr)) {
 			*slot = i;
 			return 0;
@@ -242,7 +242,7 @@ static int acs_slot_alloc(const bt_addr_le_t *addr, size_t *slot)
 		return 0;
 	}
 
-	for (size_t i = 0; i < ARRAY_SIZE(acs_slots); i++) {
+	ARRAY_FOR_EACH(acs_slots, i) {
 		if (acs_slot_is_free(i)) {
 			bt_addr_le_copy(&acs_slots[i].addr, addr);
 			*slot = i;
@@ -258,8 +258,7 @@ static void acs_slot_free_idx(size_t idx)
 	memset(&acs_slots[idx], 0, sizeof(acs_slots[idx]));
 }
 
-static int acs_persistent_import_key(psa_key_attributes_t *attrs, const void *data, size_t len,
-				     const char *ctx)
+static int acs_persistent_import_key(psa_key_attributes_t *attrs, const void *data, size_t len)
 {
 	psa_key_id_t key_id = psa_get_key_id(attrs);
 	psa_key_id_t imported_key_id;
@@ -269,7 +268,7 @@ static int acs_persistent_import_key(psa_key_attributes_t *attrs, const void *da
 	if (status == PSA_ERROR_ALREADY_EXISTS) {
 		status = psa_destroy_key(key_id);
 		if (status != PSA_SUCCESS) {
-			LOG_ERR("%s: destroy existing key 0x%08x failed: %d", ctx,
+			LOG_ERR("destroy existing key 0x%08x failed: %d",
 				(unsigned int)key_id, status);
 			psa_reset_key_attributes(attrs);
 			return -EIO;
@@ -281,14 +280,14 @@ static int acs_persistent_import_key(psa_key_attributes_t *attrs, const void *da
 	psa_reset_key_attributes(attrs);
 
 	if (status != PSA_SUCCESS) {
-		LOG_ERR("%s: psa_import_key(0x%08x) failed: %d", ctx, (unsigned int)key_id, status);
+		LOG_ERR("psa_import_key(0x%08x) failed: %d", (unsigned int)key_id, status);
 		return -EIO;
 	}
 
 	return 0;
 }
 
-static int acs_persistent_export_key(psa_key_id_t key_id, void *data, size_t len, const char *ctx)
+static int acs_persistent_export_key(psa_key_id_t key_id, void *data, size_t len)
 {
 	size_t out_len;
 	psa_status_t status;
@@ -296,14 +295,14 @@ static int acs_persistent_export_key(psa_key_id_t key_id, void *data, size_t len
 	status = psa_export_key(key_id, data, len, &out_len);
 	if (status != PSA_SUCCESS) {
 		if (status != PSA_ERROR_INVALID_HANDLE) {
-			LOG_ERR("%s: psa_export_key(0x%08x) failed: %d", ctx, (unsigned int)key_id,
+			LOG_ERR("psa_export_key(0x%08x) failed: %d", (unsigned int)key_id,
 				status);
 		}
 		return (status == PSA_ERROR_INVALID_HANDLE) ? -ENOENT : -EIO;
 	}
 
 	if (out_len != len) {
-		LOG_ERR("%s: exported size mismatch for key 0x%08x (%zu != %zu)", ctx,
+		LOG_ERR("exported size mismatch for key 0x%08x (%zu != %zu)",
 			(unsigned int)key_id, out_len, len);
 		return -EIO;
 	}
@@ -328,30 +327,30 @@ static void acs_session_erase_slot(size_t slot)
 	acs_slot_free_idx(slot);
 }
 
-static struct bt_acs_runtime_key_state *acs_restored_established_key(struct bt_acs_conn *acs_conn)
+static struct bt_acs_key_desc_runtime *acs_restored_established_key(struct bt_acs_conn *acs_conn)
 {
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
-	struct bt_acs_runtime_key_state *kdf_key;
+	struct bt_acs_key_desc_runtime *kdf_key;
 
-	if (acs_crypto_current_key_lookup(acs_conn, ACS_KEY_ID_KDF, &kdf_key) == 0 &&
+	if (acs_crypto_key_runtime_lookup(acs_conn, ACS_KEY_ID_KDF, &kdf_key) == 0 &&
 	    acs_current_key_installed(kdf_key)) {
 		return kdf_key;
 	}
 
 	return NULL;
 #elif IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_ECDH)
-	struct bt_acs_runtime_key_state *ecdh_key;
+	struct bt_acs_key_desc_runtime *ecdh_key;
 
-	if (acs_crypto_current_key_lookup(acs_conn, ACS_KEY_ID_ECDH, &ecdh_key) == 0 &&
+	if (acs_crypto_key_runtime_lookup(acs_conn, ACS_KEY_ID_ECDH, &ecdh_key) == 0 &&
 	    acs_current_key_installed(ecdh_key)) {
 		return ecdh_key;
 	}
 
 	return NULL;
 #elif IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_OOB)
-	struct bt_acs_runtime_key_state *oob_key;
+	struct bt_acs_key_desc_runtime *oob_key;
 
-	if (acs_crypto_current_key_lookup(acs_conn, ACS_KEY_ID_OOB, &oob_key) == 0 &&
+	if (acs_crypto_key_runtime_lookup(acs_conn, ACS_KEY_ID_OOB, &oob_key) == 0 &&
 	    acs_current_key_installed(oob_key)) {
 		return oob_key;
 	}
@@ -364,7 +363,7 @@ static struct bt_acs_runtime_key_state *acs_restored_established_key(struct bt_a
 }
 
 static int acs_session_store_exchange_key(const struct bt_acs_conn *acs_conn,
-					  struct bt_acs_runtime_key_state **exchange_key)
+					  struct bt_acs_key_desc_runtime **exchange_key)
 {
 	int err;
 
@@ -372,9 +371,9 @@ static int acs_session_store_exchange_key(const struct bt_acs_conn *acs_conn,
 	__ASSERT_NO_MSG(exchange_key != NULL);
 
 	{
-		struct bt_acs_runtime_key_state *ecdh_key;
+		struct bt_acs_key_desc_runtime *ecdh_key;
 
-		err = acs_crypto_current_key_lookup(acs_conn, ACS_KEY_ID_ECDH, &ecdh_key);
+		err = acs_crypto_key_runtime_lookup(acs_conn, ACS_KEY_ID_ECDH, &ecdh_key);
 		if (!err && ecdh_key->psa_key_id != 0U) {
 			*exchange_key = ecdh_key;
 			return 0;
@@ -383,9 +382,9 @@ static int acs_session_store_exchange_key(const struct bt_acs_conn *acs_conn,
 
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_OOB)
 	{
-		struct bt_acs_runtime_key_state *oob_key;
+		struct bt_acs_key_desc_runtime *oob_key;
 
-		err = acs_crypto_current_key_lookup(acs_conn, ACS_KEY_ID_OOB, &oob_key);
+		err = acs_crypto_key_runtime_lookup(acs_conn, ACS_KEY_ID_OOB, &oob_key);
 		if (!err && oob_key->psa_key_id != 0U) {
 			*exchange_key = oob_key;
 			return 0;
@@ -398,7 +397,7 @@ static int acs_session_store_exchange_key(const struct bt_acs_conn *acs_conn,
 
 void acs_session_store(const struct bt_conn *conn, const struct bt_acs_conn *acs_conn)
 {
-	struct bt_acs_runtime_key_state *parent_key;
+	struct bt_acs_key_desc_runtime *parent_key;
 	const bt_addr_le_t *addr = bt_conn_get_dst(conn);
 	struct bt_conn_info info;
 	psa_key_attributes_t parent_attrs = PSA_KEY_ATTRIBUTES_INIT;
@@ -423,7 +422,7 @@ void acs_session_store(const struct bt_conn *conn, const struct bt_acs_conn *acs
 		return;
 	}
 
-	if (acs_slots[slot].meta.parent_key_id == acs_runtime_key_id(parent_key) &&
+	if (acs_slots[slot].meta.parent_key_id == acs_key_desc_runtime_key_id(parent_key) &&
 	    acs_slots[slot].meta.restriction_map_id == acs_conn->restriction_map_id) {
 		psa_key_attributes_t chk = PSA_KEY_ATTRIBUTES_INIT;
 		psa_status_t chk_st = psa_get_key_attributes(acs_psa_key_id(slot), &chk);
@@ -436,14 +435,14 @@ void acs_session_store(const struct bt_conn *conn, const struct bt_acs_conn *acs
 	}
 
 	acs_slots[slot].bt_id = info.id;
-	acs_slots[slot].meta.parent_key_id = acs_runtime_key_id(parent_key);
+	acs_slots[slot].meta.parent_key_id = acs_key_desc_runtime_key_id(parent_key);
 	acs_slots[slot].meta.restriction_map_id = acs_conn->restriction_map_id;
 
 	{
 		uint8_t key_buf[CONFIG_BT_ACS_SESSION_KEY_SIZE];
 		size_t key_len;
 
-		err = acs_crypto_export_current_key(parent_key, key_buf, sizeof(key_buf), &key_len);
+		err = acs_crypto_export_key(parent_key, key_buf, sizeof(key_buf), &key_len);
 		if (err) {
 			LOG_ERR("Failed to export parent key for persistent store: %d", err);
 			goto err_free_slot;
@@ -456,8 +455,7 @@ void acs_session_store(const struct bt_conn *conn, const struct bt_acs_conn *acs
 		psa_set_key_usage_flags(&parent_attrs, PSA_KEY_USAGE_EXPORT);
 		psa_set_key_algorithm(&parent_attrs, PSA_ALG_NONE);
 
-		err = acs_persistent_import_key(&parent_attrs, key_buf, key_len,
-						"store parent key");
+		err = acs_persistent_import_key(&parent_attrs, key_buf, key_len);
 		mbedtls_platform_zeroize(key_buf, sizeof(key_buf));
 		if (err) {
 			goto err_free_slot;
@@ -482,8 +480,8 @@ err_free_slot:
 void acs_session_restore(struct bt_conn *conn, struct bt_acs_conn *acs_conn)
 {
 	const bt_addr_le_t *addr = bt_conn_get_dst(conn);
-	struct bt_acs_runtime_key_state *established_key;
-	struct bt_acs_runtime_key_state *parent_key;
+	struct bt_acs_key_desc_runtime *established_key;
+	struct bt_acs_key_desc_runtime *parent_key;
 	const struct bt_acs_cb *cb = acs_cb_get();
 	size_t slot;
 	int err;
@@ -494,7 +492,7 @@ void acs_session_restore(struct bt_conn *conn, struct bt_acs_conn *acs_conn)
 		return;
 	}
 
-	err = acs_crypto_current_key_lookup(acs_conn, acs_slots[slot].meta.parent_key_id,
+	err = acs_crypto_key_runtime_lookup(acs_conn, acs_slots[slot].meta.parent_key_id,
 					    &parent_key);
 	if (err) {
 		LOG_ERR("Stored ACS parent Key_ID 0x%04x has no runtime slot",
@@ -506,8 +504,7 @@ void acs_session_restore(struct bt_conn *conn, struct bt_acs_conn *acs_conn)
 	{
 		uint8_t key_buf[CONFIG_BT_ACS_SESSION_KEY_SIZE];
 
-		err = acs_persistent_export_key(acs_psa_key_id(slot), key_buf, sizeof(key_buf),
-						"restore ACS parent key");
+		err = acs_persistent_export_key(acs_psa_key_id(slot), key_buf, sizeof(key_buf));
 		if (err) {
 			acs_session_erase_slot(slot);
 			return;

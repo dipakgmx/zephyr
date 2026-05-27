@@ -32,15 +32,15 @@ int acs_cp_kex_get_current_key_list(struct acs_procedure *proc)
 	uint8_t count = 0;
 	uint16_t pos = sizeof(uint8_t); /* byte 0 reserved for count */
 
-	for (size_t i = 0; i < ARRAY_SIZE(proc->acs_conn->crypto.current_keys); i++) {
-		const struct bt_acs_runtime_key_state *current_key =
-			&proc->acs_conn->crypto.current_keys[i];
+	for (size_t i = 0; i < ACS_KEY_ID_COUNT; i++) {
+		const struct bt_acs_key_desc_runtime *current_key =
+			&proc->acs_conn->crypto.key_runtimes[i];
 
 		if (!acs_current_key_installed(current_key)) {
 			continue;
 		}
 
-		sys_put_le16(acs_runtime_key_id(current_key), &buf[pos]);
+		sys_put_le16(acs_key_desc_runtime_key_id(current_key), &buf[pos]);
 		pos += sizeof(uint16_t);
 		count++;
 	}
@@ -277,8 +277,8 @@ int acs_cp_kex_start(struct acs_procedure *proc, struct net_buf_simple *buf)
 
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
 	if (key_id == ACS_KEY_ID_KDF) {
-		struct bt_acs_runtime_key_state *parent_key;
-		struct bt_acs_runtime_key_state *kdf_key;
+		struct bt_acs_key_desc_runtime *parent_key;
+		struct bt_acs_key_desc_runtime *kdf_key;
 
 		/* KDF standalone: requires parent key and method=None. */
 		if (method != BT_ACS_CONFIRM_METHOD_NONE ||
@@ -288,7 +288,7 @@ int acs_cp_kex_start(struct acs_procedure *proc, struct net_buf_simple *buf)
 			return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_START_KEY_EXCHANGE,
 						 BT_ACS_CP_RESPONSE_INVALID_OPERAND);
 		}
-		if (acs_crypto_current_key_lookup(acs_conn, ACS_KEY_ID_ECDH, &parent_key) != 0 ||
+		if (acs_crypto_key_runtime_lookup(acs_conn, ACS_KEY_ID_ECDH, &parent_key) != 0 ||
 		    !acs_current_key_installed(parent_key)) {
 			LOG_WRN("no ECDH parent key available, prior exchange required");
 			return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_START_KEY_EXCHANGE,
@@ -298,7 +298,7 @@ int acs_cp_kex_start(struct acs_procedure *proc, struct net_buf_simple *buf)
 		 * The peer must invalidate it before deriving a new one; silently
 		 * re-deriving would orphan the old child's nonce counters and create
 		 * ambiguity about which key is current in NVS. */
-		if (acs_crypto_current_key_lookup(acs_conn, ACS_KEY_ID_KDF, &kdf_key) != 0) {
+		if (acs_crypto_key_runtime_lookup(acs_conn, ACS_KEY_ID_KDF, &kdf_key) != 0) {
 			LOG_ERR("Missing KDF runtime key state");
 			return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_START_KEY_EXCHANGE,
 						 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
@@ -619,9 +619,9 @@ int acs_cp_kex_ecdh_confirm_rand(struct acs_procedure *proc, struct net_buf_simp
 	}
 
 	if (acs_conn->crypto.kex->kdf_applied) {
-		struct bt_acs_runtime_key_state *exchange_key;
+		struct bt_acs_key_desc_runtime *exchange_key;
 
-		if (acs_crypto_current_key_lookup(acs_conn, ACS_KEY_ID_ECDH, &exchange_key) != 0) {
+		if (acs_crypto_key_runtime_lookup(acs_conn, ACS_KEY_ID_ECDH, &exchange_key) != 0) {
 			LOG_ERR("Missing ECDH runtime key state");
 			proc->seq_state = ACS_CP_SEQ_KEX_FAIL_RSP;
 			return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_ECDH_CONFIRM_RAND,

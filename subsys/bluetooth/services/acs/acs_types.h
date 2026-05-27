@@ -198,29 +198,18 @@ enum acs_proc_kind {
 };
 
 /**
- * @brief Runtime state for one live ACS key on a connection.
- */
-struct bt_acs_runtime_key_state {
-	/** Static key descriptor that this runtime state is bound to. */
-	const struct bt_acs_key_desc_record *key_desc;
-	/** Imported PSA key handle. 0 means this current key is not installed/usable. */
-	psa_key_id_t psa_key_id;
-};
-
-static inline uint16_t acs_runtime_key_id(const struct bt_acs_runtime_key_state *key_state)
-{
-	return (key_state && key_state->key_desc) ? key_state->key_desc->key_id : 0U;
-}
-
-/**
- * @brief Runtime nonce + algorithm state for one AES key descriptor record.
+ * @brief Unified runtime state for one key descriptor on a connection.
+ *
+ * Covers both key-exchange records (ECDH, KDF, OOB) and algorithm records
+ * (GCM, CCM, GMAC, CMAC).  Exchange-key entries use only key_desc and
+ * psa_key_id; the nonce fields are unused for them.
  */
 struct bt_acs_key_desc_runtime {
-	/** Static AES-with-nonce key descriptor bound to this runtime slot. */
+	/** Static key descriptor bound to this runtime slot. */
 	const struct bt_acs_key_desc_record *key_desc;
-	/** Resolved current exchange-key Key_ID for this record's parent chain. */
+	/** Resolved parent exchange-key Key_ID (0 for exchange-key entries). */
 	uint16_t current_key_id;
-	/** Imported PSA key handle for the algorithm record. */
+	/** Imported PSA key handle. 0 means no key installed. */
 	psa_key_id_t psa_key_id;
 	/** AC Server nonce fixed value for this Key_ID (runtime order for nonce build). */
 	uint8_t server_nonce_fixed[ACS_MAX_NONCE_FIXED_SIZE];
@@ -241,22 +230,22 @@ acs_key_desc_runtime_key_id(const struct bt_acs_key_desc_runtime *key_desc_runti
 								: 0U;
 }
 
+/** Total unified key-runtime slots: exchange keys + algorithm records. */
+#define ACS_KEY_RUNTIME_COUNT (ACS_KEY_ID_COUNT + CONFIG_BT_ACS_MAX_NONCE_RECORDS)
+
 /**
  * @brief Persistent per-connection ACS crypto state.
  */
 struct bt_acs_crypto_session {
-	/** Runtime live-key states for this connection.
+	/** Unified per-Key_ID runtime state for all key descriptors.
 	 *
-	 * Only key-exchange records become current keys:
-	 * ECDH, KDF, and OOB. Algorithm records remain compile-time descriptors
-	 * that resolve to one of these current keys via their parent Key_ID
-	 * relation.
+	 * Exchange-key slots (ECDH, KDF, OOB) are bound first, followed by
+	 * algorithm-record slots (GCM, CCM, GMAC).  Looked up uniformly via
+	 * acs_crypto_key_runtime_lookup().
 	 */
-	struct bt_acs_runtime_key_state current_keys[ACS_KEY_ID_COUNT];
+	struct bt_acs_key_desc_runtime key_runtimes[ACS_KEY_RUNTIME_COUNT];
 	/** Transient key-exchange scratch state, if a handshake is active. */
 	struct bt_acs_kex_ctx *kex;
-	/** Per-Key_ID nonce/counter state for AES records that use nonce material. */
-	struct bt_acs_key_desc_runtime key_desc_runtimes[CONFIG_BT_ACS_MAX_NONCE_RECORDS];
 };
 
 /**

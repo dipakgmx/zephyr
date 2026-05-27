@@ -111,7 +111,7 @@ static int data_tx_encrypt_in_place(struct bt_acs_conn *acs_conn, uint16_t isc_i
 	plaintext = buf->data;
 	plain_len = buf->len;
 
-	err = acs_crypto_key_desc_runtime_lookup(acs_conn, isc->key_id, &key_desc_runtime);
+	err = acs_crypto_key_runtime_lookup(acs_conn, isc->key_id, &key_desc_runtime);
 	if (err || key_desc_runtime->psa_key_id == 0U) {
 		LOG_ERR("no key runtime for isc_id 0x%04x", isc_id);
 		return -EACCES;
