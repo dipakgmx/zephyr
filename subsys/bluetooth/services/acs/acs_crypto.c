@@ -247,42 +247,112 @@ void acs_crypto_warn_destroy_key_failure(psa_status_t status, psa_key_id_t key_i
 	}
 }
 
+/*
+ * Apply the exchange-key PSA policy (type, algorithm, usage) for the build's
+ * configured data-protection algorithm.  Shared by the import and the
+ * persistence copy paths so the copy target can never drift from the imported
+ * key's policy - psa_copy_key requires a common permitted algorithm.
+ */
+static void acs_crypto_set_exchange_key_policy(psa_key_attributes_t *attrs, psa_key_usage_t usage)
+{
+#if IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_CMAC)
+	psa_set_key_usage_flags(attrs,
+				PSA_KEY_USAGE_SIGN_MESSAGE | PSA_KEY_USAGE_VERIFY_MESSAGE | usage);
+	psa_set_key_algorithm(attrs, PSA_ALG_CMAC);
+#elif IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_CCM)
+	psa_set_key_usage_flags(attrs, PSA_KEY_USAGE_ENCRYPT | PSA_KEY_USAGE_DECRYPT | usage);
+	psa_set_key_algorithm(
+		attrs, PSA_ALG_AEAD_WITH_SHORTENED_TAG(PSA_ALG_CCM, CONFIG_BT_ACS_CCM_MAC_SIZE));
+#elif IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_GMAC)
+	psa_set_key_usage_flags(attrs, PSA_KEY_USAGE_ENCRYPT | PSA_KEY_USAGE_DECRYPT | usage);
+	psa_set_key_algorithm(attrs, PSA_ALG_AEAD_WITH_SHORTENED_TAG(
+					     PSA_ALG_GCM, PSA_AEAD_TAG_LENGTH(PSA_KEY_TYPE_AES, 128,
+									      PSA_ALG_GCM)));
+#else
+	psa_set_key_usage_flags(attrs, PSA_KEY_USAGE_ENCRYPT | PSA_KEY_USAGE_DECRYPT | usage);
+	psa_set_key_algorithm(attrs, PSA_ALG_AEAD_WITH_SHORTENED_TAG(
+					     PSA_ALG_GCM, PSA_AEAD_TAG_LENGTH(PSA_KEY_TYPE_AES, 128,
+									      PSA_ALG_GCM)));
+#endif
+	psa_set_key_type(attrs, PSA_KEY_TYPE_AES);
+}
+
 int acs_crypto_import_exchange_key(struct bt_acs_key_desc_runtime *key_runtime,
 				   const uint8_t *key_material, size_t key_len)
 {
 	psa_key_attributes_t attrs = PSA_KEY_ATTRIBUTES_INIT;
 	psa_status_t status;
 
-#if IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_CMAC)
-	psa_set_key_usage_flags(&attrs, PSA_KEY_USAGE_SIGN_MESSAGE | PSA_KEY_USAGE_VERIFY_MESSAGE |
-						PSA_KEY_USAGE_EXPORT);
-	psa_set_key_algorithm(&attrs, PSA_ALG_CMAC);
-#elif IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_CCM)
-	psa_set_key_usage_flags(&attrs, PSA_KEY_USAGE_ENCRYPT | PSA_KEY_USAGE_DECRYPT |
-						PSA_KEY_USAGE_EXPORT);
-	psa_set_key_algorithm(
-		&attrs, PSA_ALG_AEAD_WITH_SHORTENED_TAG(PSA_ALG_CCM, CONFIG_BT_ACS_CCM_MAC_SIZE));
-#elif IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_GMAC)
-	psa_set_key_usage_flags(&attrs, PSA_KEY_USAGE_ENCRYPT | PSA_KEY_USAGE_DECRYPT |
-						PSA_KEY_USAGE_EXPORT);
-	psa_set_key_algorithm(&attrs, PSA_ALG_AEAD_WITH_SHORTENED_TAG(
-					      PSA_ALG_GCM, PSA_AEAD_TAG_LENGTH(PSA_KEY_TYPE_AES,
-									       128, PSA_ALG_GCM)));
-#else
-	psa_set_key_usage_flags(&attrs, PSA_KEY_USAGE_ENCRYPT | PSA_KEY_USAGE_DECRYPT |
-						PSA_KEY_USAGE_EXPORT);
-	psa_set_key_algorithm(&attrs, PSA_ALG_AEAD_WITH_SHORTENED_TAG(
-					      PSA_ALG_GCM, PSA_AEAD_TAG_LENGTH(PSA_KEY_TYPE_AES,
-									       128, PSA_ALG_GCM)));
-#endif
-
+	acs_crypto_set_exchange_key_policy(&attrs, PSA_KEY_USAGE_EXPORT | PSA_KEY_USAGE_COPY);
 	psa_set_key_lifetime(&attrs, PSA_KEY_LIFETIME_VOLATILE);
-	psa_set_key_type(&attrs, PSA_KEY_TYPE_AES);
 	psa_set_key_bits(&attrs, key_len * BITS_PER_BYTE);
 
 	status = psa_import_key(&attrs, key_material, key_len, &key_runtime->psa_key_id);
 	if (status != PSA_SUCCESS) {
 		LOG_ERR("Key import failed: %d", status);
+		return -EIO;
+	}
+
+	return 0;
+}
+
+int acs_crypto_copy_key_to_persistent(const struct bt_acs_key_desc_runtime *parent,
+				      psa_key_id_t dst_id)
+{
+	psa_key_attributes_t attrs = PSA_KEY_ATTRIBUTES_INIT;
+	psa_key_id_t out_id;
+	psa_status_t status;
+
+	if (!parent || parent->psa_key_id == 0U) {
+		return -EINVAL;
+	}
+
+	acs_crypto_set_exchange_key_policy(&attrs, PSA_KEY_USAGE_EXPORT | PSA_KEY_USAGE_COPY);
+	psa_set_key_lifetime(&attrs, PSA_KEY_LIFETIME_PERSISTENT);
+	psa_set_key_id(&attrs, dst_id);
+	psa_set_key_bits(&attrs, CONFIG_BT_ACS_SESSION_KEY_SIZE * BITS_PER_BYTE);
+
+	status = psa_copy_key(parent->psa_key_id, &attrs, &out_id);
+	if (status == PSA_ERROR_ALREADY_EXISTS) {
+		status = psa_destroy_key(dst_id);
+		if (status != PSA_SUCCESS) {
+			LOG_ERR("destroy existing persistent key 0x%08x failed: %d",
+				(unsigned int)dst_id, status);
+			return -EIO;
+		}
+		status = psa_copy_key(parent->psa_key_id, &attrs, &out_id);
+	}
+
+	if (status != PSA_SUCCESS) {
+		LOG_ERR("psa_copy_key to persistent 0x%08x failed: %d", (unsigned int)dst_id,
+			status);
+		return -EIO;
+	}
+
+	return 0;
+}
+
+int acs_crypto_copy_persistent_key_to_runtime(psa_key_id_t src_id,
+					      struct bt_acs_key_desc_runtime *parent)
+{
+	psa_key_attributes_t attrs = PSA_KEY_ATTRIBUTES_INIT;
+	psa_status_t status;
+
+	if (!parent) {
+		return -EINVAL;
+	}
+
+	acs_crypto_set_exchange_key_policy(&attrs, PSA_KEY_USAGE_EXPORT | PSA_KEY_USAGE_COPY);
+	psa_set_key_lifetime(&attrs, PSA_KEY_LIFETIME_VOLATILE);
+	psa_set_key_bits(&attrs, CONFIG_BT_ACS_SESSION_KEY_SIZE * BITS_PER_BYTE);
+
+	acs_crypto_destroy_key(parent);
+
+	status = psa_copy_key(src_id, &attrs, &parent->psa_key_id);
+	if (status != PSA_SUCCESS) {
+		LOG_ERR("psa_copy_key from persistent 0x%08x failed: %d", (unsigned int)src_id,
+			status);
+		parent->psa_key_id = 0U;
 		return -EIO;
 	}
 
@@ -332,49 +402,68 @@ void acs_crypto_release_exchange_keys(struct bt_acs_conn *acs_conn)
 	}
 }
 
-int acs_crypto_import_record_key(struct bt_acs_key_desc_runtime *key_desc_runtime,
-				 const uint8_t *key_material, size_t key_len)
+/*
+ * Apply the record-key PSA policy (type, algorithm, usage) for a key
+ * descriptor's configured algorithm.  Shared by the import and the copy-based
+ * rebind paths so the copy target matches the imported policy exactly.
+ */
+static int acs_crypto_set_record_key_policy(psa_key_attributes_t *attrs,
+					    const struct bt_acs_key_desc_runtime *key_desc_runtime,
+					    psa_key_usage_t usage)
 {
-	psa_key_attributes_t attrs = PSA_KEY_ATTRIBUTES_INIT;
-	psa_status_t status;
-
-	__ASSERT_NO_MSG(key_desc_runtime != NULL);
-	__ASSERT_NO_MSG(key_desc_runtime->key_desc != NULL);
-	__ASSERT_NO_MSG(key_material != NULL);
-
 	switch (key_desc_runtime->key_desc->type_id) {
 #if IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_CCM)
 	case ACS_KEY_REC_AES_128_CCM:
-		psa_set_key_usage_flags(&attrs, PSA_KEY_USAGE_ENCRYPT | PSA_KEY_USAGE_DECRYPT);
+		psa_set_key_usage_flags(attrs,
+					PSA_KEY_USAGE_ENCRYPT | PSA_KEY_USAGE_DECRYPT | usage);
 		psa_set_key_algorithm(
-			&attrs, PSA_ALG_AEAD_WITH_SHORTENED_TAG(
-					PSA_ALG_CCM, key_desc_runtime->key_desc->aes.mac_size));
+			attrs, PSA_ALG_AEAD_WITH_SHORTENED_TAG(
+				       PSA_ALG_CCM, key_desc_runtime->key_desc->aes.mac_size));
 		break;
 #endif
 #if IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_GCM) ||                                           \
 	IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_GMAC)
 	case ACS_KEY_REC_AES_128_GCM:
 	case ACS_KEY_REC_AES_128_GMAC:
-		psa_set_key_usage_flags(&attrs, PSA_KEY_USAGE_ENCRYPT | PSA_KEY_USAGE_DECRYPT);
+		psa_set_key_usage_flags(attrs,
+					PSA_KEY_USAGE_ENCRYPT | PSA_KEY_USAGE_DECRYPT | usage);
 		psa_set_key_algorithm(
-			&attrs, PSA_ALG_AEAD_WITH_SHORTENED_TAG(
-					PSA_ALG_GCM, key_desc_runtime->key_desc->aes.mac_size));
+			attrs, PSA_ALG_AEAD_WITH_SHORTENED_TAG(
+				       PSA_ALG_GCM, key_desc_runtime->key_desc->aes.mac_size));
 		break;
 #endif
 #if IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_CMAC)
 	case ACS_KEY_REC_AES_128_CMAC:
-		psa_set_key_usage_flags(&attrs,
-					PSA_KEY_USAGE_SIGN_MESSAGE | PSA_KEY_USAGE_VERIFY_MESSAGE);
-		psa_set_key_algorithm(&attrs, PSA_ALG_CMAC);
+		psa_set_key_usage_flags(attrs, PSA_KEY_USAGE_SIGN_MESSAGE |
+						       PSA_KEY_USAGE_VERIFY_MESSAGE | usage);
+		psa_set_key_algorithm(attrs, PSA_ALG_CMAC);
 		break;
 #endif
 	default:
 		return -ENOTSUP;
 	}
 
+	psa_set_key_type(attrs, PSA_KEY_TYPE_AES);
+	psa_set_key_bits(attrs, CONFIG_BT_ACS_SESSION_KEY_SIZE * BITS_PER_BYTE);
+	return 0;
+}
+
+int acs_crypto_import_record_key(struct bt_acs_key_desc_runtime *key_desc_runtime,
+				 const uint8_t *key_material, size_t key_len)
+{
+	psa_key_attributes_t attrs = PSA_KEY_ATTRIBUTES_INIT;
+	psa_status_t status;
+	int err;
+
+	__ASSERT_NO_MSG(key_desc_runtime != NULL);
+	__ASSERT_NO_MSG(key_desc_runtime->key_desc != NULL);
+	__ASSERT_NO_MSG(key_material != NULL);
+
+	err = acs_crypto_set_record_key_policy(&attrs, key_desc_runtime, 0U);
+	if (err) {
+		return err;
+	}
 	psa_set_key_lifetime(&attrs, PSA_KEY_LIFETIME_VOLATILE);
-	psa_set_key_type(&attrs, PSA_KEY_TYPE_AES);
-	psa_set_key_bits(&attrs, CONFIG_BT_ACS_SESSION_KEY_SIZE * BITS_PER_BYTE);
 
 	status = psa_import_key(&attrs, key_material, key_len, &key_desc_runtime->psa_key_id);
 	if (status != PSA_SUCCESS) {
@@ -470,5 +559,62 @@ int acs_crypto_rebind_algorithm_keys(struct bt_acs_conn *acs_conn)
 	}
 
 	mbedtls_platform_zeroize(key_buf, sizeof(key_buf));
+	return first_err;
+}
+
+int acs_crypto_rebind_algorithm_keys_by_copy(struct bt_acs_conn *acs_conn)
+{
+	int first_err = 0;
+
+	for (size_t i = ACS_KEY_ID_COUNT; i < ACS_KEY_RUNTIME_COUNT; i++) {
+		struct bt_acs_key_desc_runtime *kdr = &acs_conn->crypto.key_runtimes[i];
+		struct bt_acs_key_desc_runtime *parent = NULL;
+		psa_key_attributes_t attrs = PSA_KEY_ATTRIBUTES_INIT;
+		psa_status_t status;
+		int err;
+
+		if (!kdr->key_desc) {
+			continue;
+		}
+
+		acs_crypto_destroy_record_key(kdr);
+
+		if (kdr->current_key_id == 0U) {
+			if (first_err == 0) {
+				first_err = -ENOENT;
+			}
+			acs_clear_key_desc_runtime_nonce_state(kdr);
+			continue;
+		}
+
+		err = acs_crypto_key_runtime_lookup(acs_conn, kdr->current_key_id, &parent);
+		if (err || !parent || parent->psa_key_id == 0U) {
+			acs_clear_key_desc_runtime_nonce_state(kdr);
+			continue;
+		}
+
+		err = acs_crypto_set_record_key_policy(&attrs, kdr, 0U);
+		if (err) {
+			if (first_err == 0) {
+				first_err = err;
+			}
+			acs_clear_key_desc_runtime_nonce_state(kdr);
+			continue;
+		}
+		psa_set_key_lifetime(&attrs, PSA_KEY_LIFETIME_VOLATILE);
+
+		status = psa_copy_key(parent->psa_key_id, &attrs, &kdr->psa_key_id);
+		if (status != PSA_SUCCESS) {
+			LOG_ERR("record key copy for Key_ID 0x%04x failed: %d",
+				acs_key_desc_runtime_key_id(kdr), status);
+			kdr->psa_key_id = 0U;
+			if (first_err == 0) {
+				first_err = -EIO;
+			}
+		}
+
+		acs_clear_key_desc_runtime_nonce_state(kdr);
+	}
+
 	return first_err;
 }

@@ -150,7 +150,7 @@ void acs_session_store(struct bt_conn const *conn, struct bt_acs_conn const *acs
 void acs_session_clear(struct bt_conn const *conn);
 
 /** @brief Erase stored parent keys for every peer except @p conn's peer. */
-void acs_session_clear_all(struct bt_conn const *conn);
+void acs_session_clear_all_except(struct bt_conn const *conn);
 
 /** @brief Restore a previously stored parent key for @p conn from PSA storage. */
 void acs_session_restore(struct bt_conn *conn, struct bt_acs_conn *acs_conn);

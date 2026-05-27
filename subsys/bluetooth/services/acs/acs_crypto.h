@@ -153,6 +153,43 @@ void acs_crypto_destroy_connection_record_keys(struct bt_acs_conn *acs_conn);
 int acs_crypto_rebind_algorithm_keys(struct bt_acs_conn *acs_conn);
 
 /**
+ * @brief Refresh algorithm-record PSA keys by copying from the parent keystore
+ *        entry instead of exporting and re-importing raw key bytes.
+ *
+ * Behaves like acs_crypto_rebind_algorithm_keys() but mints each record key via
+ * psa_copy_key(), so no key material is materialized in plaintext.  Per-record
+ * nonce state is reset (tx/rx counters and fixed parts), matching the state a
+ * freshly restored session starts from.
+ */
+int acs_crypto_rebind_algorithm_keys_by_copy(struct bt_acs_conn *acs_conn);
+
+/**
+ * @brief Copy a runtime exchange key into a persistent PSA keystore entry.
+ *
+ * Duplicates the key inside the keystore (no plaintext export) under a
+ * persistent policy at @p dst_id.  Replaces an existing entry at @p dst_id.
+ *
+ * @param parent  Runtime slot holding a live exchange key.
+ * @param dst_id  Persistent PSA key id to populate.
+ * @return 0 on success, negative errno on failure.
+ */
+int acs_crypto_copy_key_to_persistent(const struct bt_acs_key_desc_runtime *parent,
+				      psa_key_id_t dst_id);
+
+/**
+ * @brief Copy a persistent PSA key into a fresh volatile runtime exchange key.
+ *
+ * Destroys any existing key on @p parent, then duplicates @p src_id inside the
+ * keystore (no plaintext export), storing the new id in @p parent->psa_key_id.
+ *
+ * @param src_id  Persistent PSA key id to copy from.
+ * @param parent  Runtime slot to populate.
+ * @return 0 on success, negative errno on failure.
+ */
+int acs_crypto_copy_persistent_key_to_runtime(psa_key_id_t src_id,
+					      struct bt_acs_key_desc_runtime *parent);
+
+/**
  * @brief Import an exchange key, rebind algorithm records, and derive nonce state.
  *
  * Single entry point that replaces the three-call pattern of import + rebind +

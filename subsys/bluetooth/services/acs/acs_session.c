@@ -8,7 +8,6 @@
 #include <stdbool.h>
 #include <string.h>
 
-#include <mbedtls/platform_util.h>
 #include <psa/crypto.h>
 #include <zephyr/sys/util.h>
 #include <zephyr/bluetooth/addr.h>
@@ -258,58 +257,6 @@ static void acs_slot_free_idx(size_t idx)
 	memset(&acs_slots[idx], 0, sizeof(acs_slots[idx]));
 }
 
-static int acs_persistent_import_key(psa_key_attributes_t *attrs, const void *data, size_t len)
-{
-	psa_key_id_t key_id = psa_get_key_id(attrs);
-	psa_key_id_t imported_key_id;
-	psa_status_t status;
-
-	status = psa_import_key(attrs, data, len, &imported_key_id);
-	if (status == PSA_ERROR_ALREADY_EXISTS) {
-		status = psa_destroy_key(key_id);
-		if (status != PSA_SUCCESS) {
-			LOG_ERR("destroy existing key 0x%08x failed: %d",
-				(unsigned int)key_id, status);
-			psa_reset_key_attributes(attrs);
-			return -EIO;
-		}
-
-		status = psa_import_key(attrs, data, len, &imported_key_id);
-	}
-
-	psa_reset_key_attributes(attrs);
-
-	if (status != PSA_SUCCESS) {
-		LOG_ERR("psa_import_key(0x%08x) failed: %d", (unsigned int)key_id, status);
-		return -EIO;
-	}
-
-	return 0;
-}
-
-static int acs_persistent_export_key(psa_key_id_t key_id, void *data, size_t len)
-{
-	size_t out_len;
-	psa_status_t status;
-
-	status = psa_export_key(key_id, data, len, &out_len);
-	if (status != PSA_SUCCESS) {
-		if (status != PSA_ERROR_INVALID_HANDLE) {
-			LOG_ERR("psa_export_key(0x%08x) failed: %d", (unsigned int)key_id,
-				status);
-		}
-		return (status == PSA_ERROR_INVALID_HANDLE) ? -ENOENT : -EIO;
-	}
-
-	if (out_len != len) {
-		LOG_ERR("exported size mismatch for key 0x%08x (%zu != %zu)",
-			(unsigned int)key_id, out_len, len);
-		return -EIO;
-	}
-
-	return 0;
-}
-
 static void acs_destroy_persistent_slot(size_t slot)
 {
 	psa_status_t status;
@@ -362,8 +309,8 @@ static struct bt_acs_key_desc_runtime *acs_restored_established_key(struct bt_ac
 #endif
 }
 
-static int acs_session_store_exchange_key(const struct bt_acs_conn *acs_conn,
-					  struct bt_acs_key_desc_runtime **exchange_key)
+static int acs_session_find_exchange_key(const struct bt_acs_conn *acs_conn,
+					 struct bt_acs_key_desc_runtime **exchange_key)
 {
 	int err;
 
@@ -400,11 +347,10 @@ void acs_session_store(const struct bt_conn *conn, const struct bt_acs_conn *acs
 	struct bt_acs_key_desc_runtime *parent_key;
 	const bt_addr_le_t *addr = bt_conn_get_dst(conn);
 	struct bt_conn_info info;
-	psa_key_attributes_t parent_attrs = PSA_KEY_ATTRIBUTES_INIT;
 	size_t slot;
 	int err;
 
-	err = acs_session_store_exchange_key(acs_conn, &parent_key);
+	err = acs_session_find_exchange_key(acs_conn, &parent_key);
 	if (err) {
 		LOG_ERR("No exchanged runtime key available to persist");
 		return;
@@ -438,28 +384,14 @@ void acs_session_store(const struct bt_conn *conn, const struct bt_acs_conn *acs
 	acs_slots[slot].meta.parent_key_id = acs_key_desc_runtime_key_id(parent_key);
 	acs_slots[slot].meta.restriction_map_id = acs_conn->restriction_map_id;
 
-	{
-		uint8_t key_buf[CONFIG_BT_ACS_SESSION_KEY_SIZE];
-		size_t key_len;
-
-		err = acs_crypto_export_key(parent_key, key_buf, sizeof(key_buf), &key_len);
-		if (err) {
-			LOG_ERR("Failed to export parent key for persistent store: %d", err);
-			goto err_free_slot;
-		}
-
-		psa_set_key_id(&parent_attrs, acs_psa_key_id(slot));
-		psa_set_key_lifetime(&parent_attrs, PSA_KEY_LIFETIME_PERSISTENT);
-		psa_set_key_type(&parent_attrs, PSA_KEY_TYPE_RAW_DATA);
-		psa_set_key_bits(&parent_attrs, CONFIG_BT_ACS_SESSION_KEY_SIZE * BITS_PER_BYTE);
-		psa_set_key_usage_flags(&parent_attrs, PSA_KEY_USAGE_EXPORT);
-		psa_set_key_algorithm(&parent_attrs, PSA_ALG_NONE);
-
-		err = acs_persistent_import_key(&parent_attrs, key_buf, key_len);
-		mbedtls_platform_zeroize(key_buf, sizeof(key_buf));
-		if (err) {
-			goto err_free_slot;
-		}
+	/*
+	 * Duplicate the parent key into persistent PSA storage in-keystore via
+	 * psa_copy_key(); the raw key material never enters a plaintext buffer.
+	 */
+	err = acs_crypto_copy_key_to_persistent(parent_key, acs_psa_key_id(slot));
+	if (err) {
+		LOG_ERR("Failed to copy parent key to persistent store: %d", err);
+		goto err_free_slot;
 	}
 
 	err = bt_settings_store("acs", info.id, addr, &acs_slots[slot].meta,
@@ -495,30 +427,40 @@ void acs_session_restore(struct bt_conn *conn, struct bt_acs_conn *acs_conn)
 	err = acs_crypto_key_runtime_lookup(acs_conn, acs_slots[slot].meta.parent_key_id,
 					    &parent_key);
 	if (err) {
+		/*
+		 * The stored session names a parent key type that this build
+		 * can no longer instantiate (e.g. the key-exchange method was
+		 * disabled in Kconfig since the session was persisted).  The
+		 * NVS record is therefore permanently unrestorable, so erase it
+		 * instead of leaving an orphaned entry behind.
+		 */
 		LOG_ERR("Stored ACS parent Key_ID 0x%04x has no runtime slot",
 			acs_slots[slot].meta.parent_key_id);
 		acs_session_erase_slot(slot);
 		return;
 	}
 
-	{
-		uint8_t key_buf[CONFIG_BT_ACS_SESSION_KEY_SIZE];
+	/*
+	 * Duplicate the persistent parent key back into a volatile runtime slot
+	 * in-keystore via psa_copy_key(); no plaintext key material is exposed.
+	 * A copy failure means the stored key is missing or unusable, so erase
+	 * the orphaned slot.
+	 */
+	err = acs_crypto_copy_persistent_key_to_runtime(acs_psa_key_id(slot), parent_key);
+	if (err) {
+		LOG_ERR("Failed to restore parent key from persistent store: %d", err);
+		acs_session_erase_slot(slot);
+		return;
+	}
 
-		err = acs_persistent_export_key(acs_psa_key_id(slot), key_buf, sizeof(key_buf));
-		if (err) {
-			acs_session_erase_slot(slot);
-			return;
-		}
+	acs_conn->restriction_map_id = acs_slots[slot].meta.restriction_map_id;
 
-		acs_conn->restriction_map_id = acs_slots[slot].meta.restriction_map_id;
-
-		err = acs_crypto_activate_key(acs_conn, parent_key, key_buf, sizeof(key_buf));
-		mbedtls_platform_zeroize(key_buf, sizeof(key_buf));
-		if (err) {
-			LOG_ERR("Failed to activate restored parent key");
-			acs_crypto_reset(acs_conn);
-			return;
-		}
+	/* Rebind the record keys from the restored parent, again without export. */
+	err = acs_crypto_rebind_algorithm_keys_by_copy(acs_conn);
+	if (err) {
+		LOG_ERR("Failed to rebind restored record keys: %d", err);
+		acs_crypto_reset(acs_conn);
+		return;
 	}
 
 	established_key = acs_restored_established_key(acs_conn);
@@ -576,7 +518,7 @@ void acs_session_clear(const struct bt_conn *conn)
 	LOG_INF("ACS session erased for peer %s", bt_addr_le_str(addr));
 }
 
-void acs_session_clear_all(const struct bt_conn *conn)
+void acs_session_clear_all_except(const struct bt_conn *conn)
 {
 	const bt_addr_le_t *keep_addr = bt_conn_get_dst(conn);
 
@@ -592,7 +534,13 @@ void acs_session_clear_all(const struct bt_conn *conn)
 	}
 }
 
-#define ACS_SETTINGS_ADDR_LEN 13
+/*
+ * Length of the address portion of a settings key as produced by
+ * bt_settings_encode_key(): the 6-byte BD_ADDR rendered as hex (2 chars per
+ * byte) plus one hex char for the address type.  An optional "/<id>" suffix
+ * follows at this offset.
+ */
+#define ACS_SETTINGS_ADDR_LEN (BT_ADDR_SIZE * 2 + 1)
 
 static int acs_settings_set(const char *name, size_t len_rd, settings_read_cb read_cb, void *cb_arg)
 {
