@@ -179,8 +179,6 @@ enum acs_cp_seq_state {
 	ACS_CP_SEQ_INVALIDATE_SELF,
 };
 
-struct bt_acs_kex_ctx;
-
 /**
  * @brief Discriminator for which caller holds a reference on a request context.
  */
@@ -246,8 +244,6 @@ struct bt_acs_crypto_session {
 	 * acs_crypto_key_runtime_lookup().
 	 */
 	struct bt_acs_key_desc_runtime key_runtimes[ACS_KEY_RUNTIME_COUNT];
-	/** Transient key-exchange scratch state, if a handshake is active. */
-	struct bt_acs_kex_ctx *kex;
 };
 
 /**
@@ -277,7 +273,7 @@ struct bt_acs_kdf_params {
  * @brief Transient key-exchange context.
  */
 struct bt_acs_kex_ctx {
-	bool in_use; /**< Pool-allocation flag */
+	bool active; /**< True while a key exchange is in progress on this connection. */
 	/** Next legal inbound KEX opcode, or 0 when no further inbound step is accepted. */
 	uint8_t next_expected_opcode;
 	/** Key material buffer — raw ECDH shared secret initially, overwritten
@@ -293,12 +289,9 @@ struct bt_acs_kex_ctx {
 	struct acs_ecdh_pubkey server_pubkey; /**< Server ephemeral public key */
 	struct acs_ecdh_pubkey client_pubkey; /**< Client public key */
 	psa_key_id_t ecdh_key_id; /**< PSA key identifier for the server ephemeral private key */
-	psa_key_id_t shared_secret_id; /**< Derivation-capable shared secret handle */
 	struct acs_cp_start_key_exchange_req start_kex; /**< Cached START_KEY_EXCHANGE operand */
 	uint8_t auth_value[ACS_CONFIRM_VALUE_SIZE];     /**< AuthValue (OOB number / static key) */
 	uint8_t server_random[ACS_CONFIRM_VALUE_SIZE];  /**< Server random nonce */
-	uint8_t client_random[ACS_CONFIRM_VALUE_SIZE];  /**< Client random nonce */
-	uint8_t server_confirm[ACS_CONFIRM_VALUE_SIZE]; /**< Server confirmation code */
 	uint8_t client_confirm[ACS_CONFIRM_VALUE_SIZE]; /**< Client confirmation code */
 };
 
@@ -367,6 +360,7 @@ struct bt_acs_conn {
 	uint8_t status_flags;                /**< Status flags */
 	uint16_t restriction_map_id;         /**< Restriction map ID */
 	struct bt_acs_crypto_session crypto; /**< Persistent crypto session */
+	struct bt_acs_kex_ctx kex;           /**< Embedded key-exchange transcript state */
 	uint8_t status_data[3];              /**< Embedded status indication payload */
 	struct bt_gatt_indicate_params status_indicate_params; /**< Status indication params */
 	struct acs_procedure plain_cp_proc;                    /**< Singleton plain-CP procedure

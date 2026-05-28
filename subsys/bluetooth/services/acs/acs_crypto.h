@@ -86,9 +86,13 @@ int acs_crypto_get_server_nonce_fixed(struct bt_acs_conn *acs_conn, uint16_t key
 /**
  * @brief Derive the session key from the completed key exchange.
  *
+ * @param acs_conn        ACS connection context.
+ * @param client_random   Client random number in wire order (LSO first).
+ *
  * @return 0 on success, negative errno on failure.
  */
-int acs_crypto_derive_session_key(struct bt_acs_conn *acs_conn);
+int acs_crypto_derive_session_key(struct bt_acs_conn *acs_conn,
+				  const uint8_t client_random[ACS_CONFIRM_VALUE_SIZE]);
 
 /**
  * @brief Import an exchange key into the PSA keystore.
@@ -193,12 +197,6 @@ int acs_crypto_encrypt(struct bt_acs_key_desc_runtime *key_desc_runtime, const u
 int acs_crypto_decrypt(struct bt_acs_key_desc_runtime *key_desc_runtime, const uint8_t *ciphertext,
 		       uint16_t cipher_len, uint8_t *plaintext, uint16_t *plain_len,
 		       const uint8_t *aad, uint16_t aad_len);
-
-/** @brief Allocate a transient key-exchange context. Returns NULL if pool exhausted. */
-int acs_kex_alloc(struct bt_acs_conn *acs_conn);
-
-/** @brief Return a key-exchange context to the pool. */
-void acs_kex_free(struct bt_acs_kex_ctx *kex);
 
 #ifdef __cplusplus
 }

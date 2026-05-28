@@ -88,19 +88,20 @@ int acs_key_exchange_ecdh_confirm_code(struct bt_acs_conn *acs_conn,
 /**
  * @brief Verify the client's confirmation code and send the server's random number.
  *
- * acs_conn->client_random must already be set by handle_ecdh_confirm_rand.
  * Verifies HMAC(ConfirmationKey, client_random) == client_confirm, then appends
  * server_random to rsp_buf. Session key derivation and callbacks are handled
  * by the caller after this function returns successfully.
  *
- * @param acs_conn ACS connection context.
- * @param rsp_buf  Buffer to append the server random number into.
+ * @param acs_conn        ACS connection context.
+ * @param client_random   Client random number in wire order (LSO first).
+ * @param rsp_buf         Buffer to append the server random number into.
  *
  * @return 0 on success.
  * @return -EAGAIN if called out of order.
  * @return -EACCES if the client's confirmation code fails verification.
  */
 int acs_key_exchange_ecdh_confirm_rand(struct bt_acs_conn *acs_conn,
+				       const uint8_t client_random[ACS_CONFIRM_VALUE_SIZE],
 				       struct net_buf_simple *rsp_buf);
 
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)

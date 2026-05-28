@@ -61,13 +61,12 @@ static inline bool acs_session_established(const struct bt_acs_conn *acs_conn)
 
 static inline bool acs_kex_in_progress(const struct bt_acs_conn *acs_conn)
 {
-	return acs_conn && acs_conn->crypto.kex != NULL;
+	return acs_conn && acs_conn->kex.active;
 }
 
 static inline bool acs_kex_expects(const struct bt_acs_conn *acs_conn, uint8_t opcode)
 {
-	return acs_kex_in_progress(acs_conn) &&
-	       acs_conn->crypto.kex->next_expected_opcode == opcode;
+	return acs_kex_in_progress(acs_conn) && acs_conn->kex.next_expected_opcode == opcode;
 }
 
 static inline bool acs_kex_accepts_opcode(const struct bt_acs_conn *acs_conn, uint8_t opcode)
@@ -76,12 +75,12 @@ static inline bool acs_kex_accepts_opcode(const struct bt_acs_conn *acs_conn, ui
 		return false;
 	}
 
-	if (acs_conn->crypto.kex->next_expected_opcode == opcode) {
+	if (acs_conn->kex.next_expected_opcode == opcode) {
 		return true;
 	}
 
 	return opcode == BT_ACS_CP_OPCODE_ECDH_CONFIRM_CODE &&
-	       acs_conn->crypto.kex->next_expected_opcode == BT_ACS_CP_OPCODE_KEY_EXCHANGE_KDF;
+	       acs_conn->kex.next_expected_opcode == BT_ACS_CP_OPCODE_KEY_EXCHANGE_KDF;
 }
 
 #ifdef __cplusplus

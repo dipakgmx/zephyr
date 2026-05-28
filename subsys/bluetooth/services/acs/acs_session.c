@@ -91,7 +91,6 @@ void acs_session_cache_save(const bt_addr_le_t *addr, const struct bt_acs_conn *
 	entry->restriction_map_id = acs_conn->restriction_map_id;
 	entry->status_flags = acs_conn->status_flags;
 
-	entry->crypto.kex = NULL;
 	for (size_t i = ACS_KEY_ID_COUNT; i < ACS_KEY_RUNTIME_COUNT; i++) {
 		entry->crypto.key_runtimes[i].psa_key_id = 0U;
 	}

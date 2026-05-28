@@ -26,8 +26,6 @@ LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
 NET_BUF_POOL_FIXED_DEFINE(acs_buf_pool, ACS_BUF_COUNT, ACS_BUF_SIZE, 0, NULL);
 /** Per-connection ACS persistent state, indexed by connection slot. */
 static struct bt_acs_conn acs_conn_state[CONFIG_BT_MAX_CONN];
-/** Pool of transient key-exchange contexts (released on handshake completion) */
-static struct bt_acs_kex_ctx acs_kex_pool[CONFIG_BT_MAX_CONN];
 
 struct net_buf *acs_buf_alloc(k_timeout_t timeout)
 {
@@ -54,29 +52,6 @@ struct bt_acs_conn *acs_conn_by_index(uint8_t index)
 	}
 
 	return &acs_conn_state[index];
-}
-
-int acs_kex_alloc(struct bt_acs_conn *acs_conn)
-{
-	uint8_t idx = bt_conn_index(acs_conn->conn);
-	struct bt_acs_kex_ctx *kex = &acs_kex_pool[idx];
-
-	if (kex->in_use) {
-		return -EBUSY;
-	}
-	memset(kex, 0, sizeof(*kex));
-	kex->in_use = true;
-	acs_conn->crypto.kex = kex;
-	return 0;
-}
-
-void acs_kex_free(struct bt_acs_kex_ctx *kex)
-{
-	if (!kex) {
-		return;
-	}
-	memset(kex, 0, sizeof(*kex));
-	kex->in_use = false;
 }
 
 struct bt_acs_conn *acs_conn_lookup(struct bt_conn *conn)

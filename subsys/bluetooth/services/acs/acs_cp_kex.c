@@ -89,10 +89,10 @@ int acs_cp_kex_exchange_kdf(struct acs_procedure *proc, struct net_buf_simple *b
 	 */
 
 	if (!acs_kex_in_progress(acs_conn) ||
-	    key_id != sys_le16_to_cpu(acs_conn->crypto.kex->start_kex.key_id)) {
+	    key_id != sys_le16_to_cpu(acs_conn->kex.start_kex.key_id)) {
 		LOG_WRN("Key exchange KDF operand invalid Key_ID: 0x%04x, expected 0x%04x", key_id,
-			acs_conn->crypto.kex
-				? sys_le16_to_cpu(acs_conn->crypto.kex->start_kex.key_id)
+			acs_kex_in_progress(acs_conn)
+				? sys_le16_to_cpu(acs_conn->kex.start_kex.key_id)
 				: 0);
 		acs_key_exchange_abort(acs_conn);
 		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_KEY_EXCHANGE_KDF,
@@ -311,15 +311,6 @@ int acs_cp_kex_start(struct acs_procedure *proc, struct net_buf_simple *buf)
 	} else
 #endif /* CONFIG_BT_ACS_KEY_EXCHANGE_KDF */
 	{
-		if (!acs_conn->crypto.kex) {
-			if (acs_kex_alloc(acs_conn) != 0) {
-				LOG_ERR("No free KEX context");
-				return acs_cp_rsp_status(
-					proc, BT_ACS_CP_OPCODE_START_KEY_EXCHANGE,
-					BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
-			}
-		}
-
 		err = acs_key_exchange_ecdh_start(acs_conn, key_id);
 	}
 
@@ -329,22 +320,19 @@ int acs_cp_kex_start(struct acs_procedure *proc, struct net_buf_simple *buf)
 					 errno_to_acs_status(err));
 	}
 
-	if (!acs_conn->crypto.kex) {
-		if (acs_kex_alloc(acs_conn) != 0) {
-			LOG_ERR("No free KEX context");
-			return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_START_KEY_EXCHANGE,
-						 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
-		}
+	if (!acs_kex_in_progress(acs_conn)) {
+		memset(&acs_conn->kex, 0, sizeof(acs_conn->kex));
+		acs_conn->kex.active = true;
 	}
 
 	/* Store request data before callbacks so bt_acs_set_oob_number() can
 	 * validate the confirmation method.  If OOB processing fails below the
 	 * kex context is aborted, making the cached value irrelevant.
 	 */
-	acs_conn->crypto.kex->start_kex = req_data;
+	acs_conn->kex.start_kex = req_data;
 
 	/* Clear auth_value before populating it in the switch cases below */
-	memset(acs_conn->crypto.kex->auth_value, 0, sizeof(acs_conn->crypto.kex->auth_value));
+	memset(acs_conn->kex.auth_value, 0, sizeof(acs_conn->kex.auth_value));
 
 	switch (method) {
 	case BT_ACS_CONFIRM_METHOD_OUTPUT_OOB:
@@ -356,8 +344,7 @@ int acs_cp_kex_start(struct acs_procedure *proc, struct net_buf_simple *buf)
 		oob_num = (oob_num % ACS_OUTPUT_NUMERIC_BUCKET_COUNT) + 1;
 #endif
 		sys_put_be32(oob_num,
-			     &acs_conn->crypto.kex
-				      ->auth_value[ACS_CONFIRM_VALUE_SIZE - sizeof(oob_num)]);
+			     &acs_conn->kex.auth_value[ACS_CONFIRM_VALUE_SIZE - sizeof(oob_num)]);
 		if (cb && cb->output_oob_number) {
 			cb->output_oob_number(proc->acs_conn->conn, action, oob_num);
 		}
@@ -379,17 +366,17 @@ int acs_cp_kex_start(struct acs_procedure *proc, struct net_buf_simple *buf)
 					BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 			}
 			/* Right-align big-endian in the 256-bit auth_value. */
-			memcpy(&acs_conn->crypto.kex->auth_value[ACS_CONFIRM_VALUE_SIZE - oob_len],
-			       oob_buf, oob_len);
+			memcpy(&acs_conn->kex.auth_value[ACS_CONFIRM_VALUE_SIZE - oob_len], oob_buf,
+			       oob_len);
 		}
 		break;
 	default:
 		break;
 	}
 
-	acs_conn->crypto.kex->next_expected_opcode = (key_id == ACS_KEY_ID_KDF)
-							     ? BT_ACS_CP_OPCODE_KEY_EXCHANGE_KDF
-							     : BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH;
+	acs_conn->kex.next_expected_opcode = (key_id == ACS_KEY_ID_KDF)
+						     ? BT_ACS_CP_OPCODE_KEY_EXCHANGE_KDF
+						     : BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH;
 
 	return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_START_KEY_EXCHANGE,
 				 BT_ACS_CP_RESPONSE_SUCCESS);
@@ -412,7 +399,7 @@ int acs_cp_kex_exchange_ecdh(struct acs_procedure *proc, struct net_buf_simple *
 
 	/* Key_ID must match the one negotiated during Start Key Exchange. */
 	if (!acs_kex_in_progress(acs_conn) ||
-	    key_id != sys_le16_to_cpu(acs_conn->crypto.kex->start_kex.key_id)) {
+	    key_id != sys_le16_to_cpu(acs_conn->kex.start_kex.key_id)) {
 		LOG_WRN("ECDH key exchange with invalid Key_ID: 0x%04X", key_id);
 		acs_key_exchange_abort(acs_conn);
 		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH,
@@ -429,21 +416,21 @@ int acs_cp_kex_exchange_ecdh(struct acs_procedure *proc, struct net_buf_simple *
 			return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH,
 						 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 		}
-		err = cb->oob_key_get(proc->acs_conn->conn, acs_conn->crypto.kex->key_material,
-				      &acs_conn->crypto.kex->key_mat_len);
-		if (err || acs_conn->crypto.kex->key_mat_len == 0) {
+		err = cb->oob_key_get(proc->acs_conn->conn, acs_conn->kex.key_material,
+				      &acs_conn->kex.key_mat_len);
+		if (err || acs_conn->kex.key_mat_len == 0) {
 			LOG_ERR("OOB key_get failed: %d", err);
 			acs_key_exchange_abort(acs_conn);
 			return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH,
 						 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 		}
-		acs_conn->crypto.kex->next_expected_opcode = BT_ACS_CP_OPCODE_ECDH_CONFIRM_CODE;
+		acs_conn->kex.next_expected_opcode = BT_ACS_CP_OPCODE_ECDH_CONFIRM_CODE;
 		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH,
 					 BT_ACS_CP_RESPONSE_SUCCESS);
 	}
 #endif /* CONFIG_BT_ACS_KEY_EXCHANGE_OOB */
 
-	if (buf->len != sizeof(acs_conn->crypto.kex->client_pubkey)) {
+	if (buf->len != sizeof(acs_conn->kex.client_pubkey)) {
 		LOG_WRN("ECDH key exchange operand invalid length: %u", buf->len);
 		acs_key_exchange_abort(acs_conn);
 		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH,
@@ -451,8 +438,8 @@ int acs_cp_kex_exchange_ecdh(struct acs_procedure *proc, struct net_buf_simple *
 	}
 
 	/* Pull all operand data before response buffer init to avoid aliasing. */
-	memcpy(&acs_conn->crypto.kex->client_pubkey, net_buf_simple_pull_mem(buf, buf->len),
-	       sizeof(acs_conn->crypto.kex->client_pubkey));
+	memcpy(&acs_conn->kex.client_pubkey, net_buf_simple_pull_mem(buf, buf->len),
+	       sizeof(acs_conn->kex.client_pubkey));
 
 	{
 		struct acs_reply_mode reply_mode = acs_proc_reply_mode(proc);
@@ -518,8 +505,7 @@ int acs_cp_kex_ecdh_confirm_code(struct acs_procedure *proc, struct net_buf_simp
 	memcpy(&req_data, net_buf_simple_pull_mem(buf, sizeof(req_data)), sizeof(req_data));
 
 	if (!acs_kex_in_progress(acs_conn) ||
-	    sys_le16_to_cpu(req_data.key_id) !=
-		    sys_le16_to_cpu(acs_conn->crypto.kex->start_kex.key_id)) {
+	    sys_le16_to_cpu(req_data.key_id) != sys_le16_to_cpu(acs_conn->kex.start_kex.key_id)) {
 		acs_key_exchange_abort(acs_conn);
 		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_ECDH_CONFIRM_CODE,
 					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE);
@@ -529,7 +515,7 @@ int acs_cp_kex_ecdh_confirm_code(struct acs_procedure *proc, struct net_buf_simp
 	key_id = sys_le16_to_cpu(req_data.key_id);
 	ARG_UNUSED(key_id); /* used only for log; kex stays alive */
 
-	memcpy(acs_conn->crypto.kex->client_confirm, req_data.confirm_code, ACS_CONFIRM_VALUE_SIZE);
+	memcpy(acs_conn->kex.client_confirm, req_data.confirm_code, ACS_CONFIRM_VALUE_SIZE);
 
 	rsp_buf = acs_prepare_reply_buf(proc, reply_mode.encrypted);
 	if (!rsp_buf) {
@@ -580,21 +566,17 @@ int acs_cp_kex_ecdh_confirm_rand(struct acs_procedure *proc, struct net_buf_simp
 	memcpy(&req_data, net_buf_simple_pull_mem(buf, sizeof(req_data)), sizeof(req_data));
 
 	if (!acs_kex_in_progress(acs_conn) ||
-	    sys_le16_to_cpu(req_data.key_id) !=
-		    sys_le16_to_cpu(acs_conn->crypto.kex->start_kex.key_id)) {
+	    sys_le16_to_cpu(req_data.key_id) != sys_le16_to_cpu(acs_conn->kex.start_kex.key_id)) {
 		acs_key_exchange_abort(acs_conn);
 		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_ECDH_CONFIRM_RAND,
 					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE);
 	}
 
-	if (memcmp(req_data.random, acs_conn->crypto.kex->server_random, ACS_CONFIRM_VALUE_SIZE) ==
-	    0) {
+	if (memcmp(req_data.random, acs_conn->kex.server_random, ACS_CONFIRM_VALUE_SIZE) == 0) {
 		acs_key_exchange_abort(acs_conn);
 		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_ECDH_CONFIRM_RAND,
 					 BT_ACS_CP_RESPONSE_INVALID_OPERAND);
 	}
-
-	memcpy(acs_conn->crypto.kex->client_random, req_data.random, ACS_CONFIRM_VALUE_SIZE);
 
 	rsp_buf = acs_prepare_reply_buf(proc, reply_mode.encrypted);
 	if (!rsp_buf) {
@@ -605,7 +587,7 @@ int acs_cp_kex_ecdh_confirm_rand(struct acs_procedure *proc, struct net_buf_simp
 	net_buf_add_u8(rsp_buf,
 		       BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH_CONFIRMATION_RANDOM_NUMBER_RESPONSE);
 
-	err = acs_key_exchange_ecdh_confirm_rand(acs_conn, &rsp_buf->b);
+	err = acs_key_exchange_ecdh_confirm_rand(acs_conn, req_data.random, &rsp_buf->b);
 
 	if (err == -EACCES) {
 		/* Confirmation code mismatch: chain KEX_RESPONSE(failed). */
@@ -618,7 +600,7 @@ int acs_cp_kex_ecdh_confirm_rand(struct acs_procedure *proc, struct net_buf_simp
 					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 	}
 
-	if (acs_conn->crypto.kex->kdf_applied) {
+	if (acs_conn->kex.kdf_applied) {
 		struct bt_acs_key_desc_runtime *exchange_key;
 
 		if (acs_crypto_key_runtime_lookup(acs_conn, ACS_KEY_ID_ECDH, &exchange_key) != 0) {
@@ -628,11 +610,10 @@ int acs_cp_kex_ecdh_confirm_rand(struct acs_procedure *proc, struct net_buf_simp
 						 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 		}
 
-		err = acs_crypto_activate_key(acs_conn, exchange_key,
-					      acs_conn->crypto.kex->key_material,
+		err = acs_crypto_activate_key(acs_conn, exchange_key, acs_conn->kex.key_material,
 					      CONFIG_BT_ACS_SESSION_KEY_SIZE);
 	} else {
-		err = acs_crypto_derive_session_key(acs_conn);
+		err = acs_crypto_derive_session_key(acs_conn, req_data.random);
 	}
 
 	if (err) {
@@ -642,8 +623,7 @@ int acs_cp_kex_ecdh_confirm_rand(struct acs_procedure *proc, struct net_buf_simp
 					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 	}
 
-	mbedtls_platform_zeroize(acs_conn->crypto.kex->key_material,
-				 sizeof(acs_conn->crypto.kex->key_material));
+	mbedtls_platform_zeroize(acs_conn->kex.key_material, sizeof(acs_conn->kex.key_material));
 
 	proc->seq_state = ACS_CP_SEQ_KEX_SUCCESS_RSP;
 
