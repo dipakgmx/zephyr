@@ -133,26 +133,40 @@ void acs_crypto_destroy_exchange_keys(struct bt_acs_conn *acs_conn);
 int acs_crypto_import_record_key(struct bt_acs_key_desc_runtime *key_desc_runtime,
 				 const uint8_t *key_material, size_t key_len);
 
-/** @brief Destroy one key-descriptor runtime key from the PSA keystore. */
-void acs_crypto_destroy_record_key(struct bt_acs_key_desc_runtime *key_desc_runtime);
-
 /** @brief Destroy every imported key-descriptor runtime key on @p acs_conn. */
 void acs_crypto_destroy_connection_record_keys(struct bt_acs_conn *acs_conn);
 
-/** @brief Refresh algorithm-record PSA keys from the exchange-key slots. */
-int acs_crypto_rebind_algorithm_keys(struct bt_acs_conn *acs_conn);
+/**
+ * @brief Mint algorithm-record children of @p parent on @p acs_conn.
+ *
+ * For each algorithm record whose declared parent matches @p parent's Key_ID,
+ * destroy any stale PSA key on its slot, then psa_copy_key from @p parent
+ * under the record's algorithm-specific policy, then reset nonce counters to
+ * the fresh-session initial state.  Records pointing at a different parent
+ * are untouched.
+ *
+ * @param acs_conn  Per-connection ACS state.
+ * @param parent    Exchange-key runtime with a live PSA key (asserts).
+ * @return 0 on success, negative errno on policy/copy failure.
+ */
+int acs_crypto_bind_algorithm_keys(struct bt_acs_conn *acs_conn,
+				   struct bt_acs_key_desc_runtime *parent);
+
+/**
+ * @brief Destroy every algorithm-record PSA key and clear their nonce state.
+ *
+ * Use after tearing down a parent exchange key (CP Invalidate Key for the KDF
+ * child, KDF arm of acs_key_exchange_abort, or any full-teardown path).  In
+ * current ACS builds all algorithm records share one parent, so the no-filter
+ * form is equivalent to per-parent invalidation; introduce a filtered variant
+ * if a future descriptor set declares algorithm records with distinct parents.
+ */
+void acs_crypto_invalidate_algorithm_keys(struct bt_acs_conn *acs_conn);
 
 /**
  * @brief Import an exchange key, rebind algorithm records, and derive nonce state.
  *
- * Single entry point that replaces the three-call pattern of import + rebind +
- * nonce-derive.  Any existing PSA key on @p exchange_key is destroyed first.
- *
- * @param acs_conn      Per-connection ACS state.
- * @param exchange_key  Runtime slot for the exchange key to populate.
- * @param key_material  Raw key bytes (caller-owned, typically on the stack).
- * @param key_len       Length of @p key_material.
- * @return 0 on success, negative errno on failure.
+ * Destroys any existing PSA key on @p exchange_key before importing.
  */
 int acs_crypto_activate_key(struct bt_acs_conn *acs_conn,
 			    struct bt_acs_key_desc_runtime *exchange_key,
@@ -160,14 +174,6 @@ int acs_crypto_activate_key(struct bt_acs_conn *acs_conn,
 
 /** @brief Reset per-connection crypto runtime state and rebind static slots. */
 void acs_crypto_reset(struct bt_acs_conn *acs_conn);
-
-/**
- * @brief Reset crypto runtime state while preserving algorithm-record nonce data.
- *
- * Preserves the algorithm-record slots so fixed nonce values, client-nonce
- * state, and nonce counters survive the reset.
- */
-void acs_crypto_reset_preserve_record_states(struct bt_acs_conn *acs_conn);
 
 /**
  * @brief Encrypt @p plaintext using the resolved key-descriptor runtime key.

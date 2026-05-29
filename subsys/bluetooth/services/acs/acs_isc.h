@@ -104,16 +104,7 @@ struct bt_acs_isc_record {
 #define BT_ACS_ISC_DEFINE(_name, ...)                                                              \
 	STRUCT_SECTION_ITERABLE(bt_acs_isc_record, _name) = {__VA_ARGS__}
 
-/**
- * @brief Look up an ISC record by ISC ID.
- *
- * Scans the bt_acs_isc_record iterable section for a record whose
- * @c isc_id equals @p isc_id.
- *
- * @param isc_id  ISC ID to search for.
- *
- * @retval pointer to the matching record, or NULL if not found.
- */
+/** @brief Look up an ISC record by ISC ID. */
 const struct bt_acs_isc_record *acs_isc_lookup(uint16_t isc_id);
 
 /**

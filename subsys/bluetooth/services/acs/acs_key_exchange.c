@@ -21,6 +21,39 @@
 
 LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
 
+/* PSA key bit sizes for supported ECDH curves */
+#define ACS_PSA_KEY_BITS_P521   521U
+#define ACS_PSA_KEY_BITS_P384   384U
+#define ACS_PSA_KEY_BITS_C25519 255U
+#define ACS_PSA_KEY_BITS_P256   256U
+
+/* Uncompressed point prefix for NIST curves ([0x04][X_BE][Y_BE]) */
+#define ACS_ECDH_UNCOMPRESSED_POINT 0x04U
+
+/* Compile-time curve selection - all Kconfig-determined, no runtime branch needed */
+#if IS_ENABLED(CONFIG_BT_ACS_ECDH_CURVE_CURVE25519)
+#define ACS_PSA_ECC_FAMILY PSA_ECC_FAMILY_MONTGOMERY
+#define ACS_PSA_KEY_BITS   ACS_PSA_KEY_BITS_C25519
+#elif IS_ENABLED(CONFIG_BT_ACS_ECDH_CURVE_P521)
+#define ACS_PSA_ECC_FAMILY PSA_ECC_FAMILY_SECP_R1
+#define ACS_PSA_KEY_BITS   ACS_PSA_KEY_BITS_P521
+#elif IS_ENABLED(CONFIG_BT_ACS_ECDH_CURVE_P384)
+#define ACS_PSA_ECC_FAMILY PSA_ECC_FAMILY_SECP_R1
+#define ACS_PSA_KEY_BITS   ACS_PSA_KEY_BITS_P384
+#else
+#define ACS_PSA_ECC_FAMILY PSA_ECC_FAMILY_SECP_R1
+#define ACS_PSA_KEY_BITS   ACS_PSA_KEY_BITS_P256
+#endif
+
+#if IS_ENABLED(CONFIG_BT_ACS_KDF_HKDF_SHA384) || IS_ENABLED(CONFIG_BT_ACS_KDF_HKDF_SHA384_WITH_INFO)
+#define ACS_PSA_HKDF_ALG PSA_ALG_HKDF(PSA_ALG_SHA_384)
+#elif IS_ENABLED(CONFIG_BT_ACS_KDF_HKDF_SHA512) ||                                                 \
+	IS_ENABLED(CONFIG_BT_ACS_KDF_HKDF_SHA512_WITH_INFO)
+#define ACS_PSA_HKDF_ALG PSA_ALG_HKDF(PSA_ALG_SHA_512)
+#else
+#define ACS_PSA_HKDF_ALG PSA_ALG_HKDF(PSA_ALG_SHA_256)
+#endif
+
 struct bt_acs_key_desc_runtime *acs_key_exchange_established_key(struct bt_acs_conn *acs_conn)
 {
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
@@ -143,55 +176,27 @@ void acs_key_exchange_abort(struct bt_acs_conn *acs_conn)
 
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
 	if (key_id == ACS_KEY_ID_KDF) {
+		/* Spec §4.4.3.17.2: error during KDF kex restarts at Start Key
+		 * Exchange (KDF), which §4.4.3.17.2.1 requires a live parent for.
+		 * Tear down only the in-progress KDF child + its algorithm
+		 * children; leave the ECDH parent so the peer can retry KDF.
+		 */
 		struct bt_acs_key_desc_runtime *kdf_key;
 
 		if (acs_crypto_key_runtime_lookup(acs_conn, ACS_KEY_ID_KDF, &kdf_key) == 0) {
 			acs_crypto_destroy_key(kdf_key);
 		}
 
-		acs_crypto_rebind_algorithm_keys(acs_conn);
+		acs_crypto_invalidate_algorithm_keys(acs_conn);
 		acs_key_exchange_free_ctx(acs_conn);
 		return;
 	}
 #endif
 
 	acs_crypto_destroy_exchange_keys(acs_conn);
-	acs_crypto_rebind_algorithm_keys(acs_conn);
+	acs_crypto_invalidate_algorithm_keys(acs_conn);
 	acs_key_exchange_free_ctx(acs_conn);
 }
-
-/* PSA key bit sizes for supported ECDH curves */
-#define ACS_PSA_KEY_BITS_P521   521U
-#define ACS_PSA_KEY_BITS_P384   384U
-#define ACS_PSA_KEY_BITS_C25519 255U
-#define ACS_PSA_KEY_BITS_P256   256U
-
-/* Uncompressed point prefix for NIST curves ([0x04][X_BE][Y_BE]) */
-#define ACS_ECDH_UNCOMPRESSED_POINT 0x04U
-
-/* Compile-time curve selection - all Kconfig-determined, no runtime branch needed */
-#if IS_ENABLED(CONFIG_BT_ACS_ECDH_CURVE_CURVE25519)
-#define ACS_PSA_ECC_FAMILY PSA_ECC_FAMILY_MONTGOMERY
-#define ACS_PSA_KEY_BITS   ACS_PSA_KEY_BITS_C25519
-#elif IS_ENABLED(CONFIG_BT_ACS_ECDH_CURVE_P521)
-#define ACS_PSA_ECC_FAMILY PSA_ECC_FAMILY_SECP_R1
-#define ACS_PSA_KEY_BITS   ACS_PSA_KEY_BITS_P521
-#elif IS_ENABLED(CONFIG_BT_ACS_ECDH_CURVE_P384)
-#define ACS_PSA_ECC_FAMILY PSA_ECC_FAMILY_SECP_R1
-#define ACS_PSA_KEY_BITS   ACS_PSA_KEY_BITS_P384
-#else
-#define ACS_PSA_ECC_FAMILY PSA_ECC_FAMILY_SECP_R1
-#define ACS_PSA_KEY_BITS   ACS_PSA_KEY_BITS_P256
-#endif
-
-#if IS_ENABLED(CONFIG_BT_ACS_KDF_HKDF_SHA384) || IS_ENABLED(CONFIG_BT_ACS_KDF_HKDF_SHA384_WITH_INFO)
-#define ACS_PSA_HKDF_ALG PSA_ALG_HKDF(PSA_ALG_SHA_384)
-#elif IS_ENABLED(CONFIG_BT_ACS_KDF_HKDF_SHA512) ||                                                 \
-	IS_ENABLED(CONFIG_BT_ACS_KDF_HKDF_SHA512_WITH_INFO)
-#define ACS_PSA_HKDF_ALG PSA_ALG_HKDF(PSA_ALG_SHA_512)
-#else
-#define ACS_PSA_HKDF_ALG PSA_ALG_HKDF(PSA_ALG_SHA_256)
-#endif
 
 static int acs_hmac_sha256(const uint8_t *key, size_t key_len, const uint8_t *msg, size_t msg_len,
 			   uint8_t out[PSA_HASH_LENGTH(PSA_ALG_SHA_256)])
@@ -224,116 +229,132 @@ static int acs_hmac_sha256(const uint8_t *key, size_t key_len, const uint8_t *ms
 	return 0;
 }
 
-static int acs_hkdf(psa_algorithm_t hkdf_alg, const uint8_t *salt, size_t salt_len,
-		    const uint8_t *ikm, size_t ikm_len, const uint8_t *info, size_t info_len,
-		    uint8_t *out, size_t out_len)
-{
-	psa_key_derivation_operation_t op = PSA_KEY_DERIVATION_OPERATION_INIT;
-	psa_status_t status;
-	int ret = 0;
+/*
+ * IKM source for an HKDF op.  Setting key_id != 0 selects the PSA derive-key
+ * path (input_key); otherwise the bytes/bytes_len path (input_bytes) is used.
+ * The two paths are otherwise identical, which is why every HKDF helper below
+ * threads this struct through instead of duplicating its logic.
+ */
+struct acs_hkdf_ikm {
+	psa_key_id_t key_id;
+	const uint8_t *bytes;
+	size_t bytes_len;
+};
 
-	status = psa_key_derivation_setup(&op, hkdf_alg);
+static int acs_hkdf_op_setup(psa_key_derivation_operation_t *op, psa_algorithm_t alg,
+			     const uint8_t *salt, size_t salt_len, const struct acs_hkdf_ikm *ikm,
+			     const uint8_t *info, size_t info_len)
+{
+	psa_status_t status;
+
+	status = psa_key_derivation_setup(op, alg);
 	if (status != PSA_SUCCESS) {
-		LOG_ERR("HKDF setup failed: status=%d, alg=0x%08x", status, hkdf_alg);
-		ret = -EIO;
-		goto cleanup;
+		LOG_ERR("HKDF setup failed: status=%d, alg=0x%08x", status, alg);
+		return -EIO;
 	}
 
 	if (salt_len > 0U) {
-		status = psa_key_derivation_input_bytes(&op, PSA_KEY_DERIVATION_INPUT_SALT, salt,
+		status = psa_key_derivation_input_bytes(op, PSA_KEY_DERIVATION_INPUT_SALT, salt,
 							salt_len);
 		if (status != PSA_SUCCESS) {
 			LOG_ERR("HKDF salt input failed: status=%d, salt_len=%zu", status,
 				salt_len);
-			ret = -EIO;
-			goto cleanup;
+			return -EIO;
 		}
 	}
 
-	status = psa_key_derivation_input_bytes(&op, PSA_KEY_DERIVATION_INPUT_SECRET, ikm, ikm_len);
+	if (ikm->key_id != 0U) {
+		status = psa_key_derivation_input_key(op, PSA_KEY_DERIVATION_INPUT_SECRET,
+						      ikm->key_id);
+	} else {
+		status = psa_key_derivation_input_bytes(op, PSA_KEY_DERIVATION_INPUT_SECRET,
+							ikm->bytes, ikm->bytes_len);
+	}
 	if (status != PSA_SUCCESS) {
-		LOG_ERR("HKDF IKM input failed: status=%d, ikm_len=%zu", status, ikm_len);
-		ret = -EIO;
-		goto cleanup;
+		LOG_ERR("HKDF secret input failed: status=%d", status);
+		return -EIO;
 	}
 
-	status = psa_key_derivation_input_bytes(&op, PSA_KEY_DERIVATION_INPUT_INFO, info, info_len);
+	status = psa_key_derivation_input_bytes(op, PSA_KEY_DERIVATION_INPUT_INFO, info, info_len);
 	if (status != PSA_SUCCESS) {
 		LOG_ERR("HKDF info input failed: status=%d, info_len=%zu", status, info_len);
-		ret = -EIO;
-		goto cleanup;
+		return -EIO;
 	}
 
-	status = psa_key_derivation_output_bytes(&op, out, out_len);
-	if (status != PSA_SUCCESS) {
-		LOG_ERR("HKDF output failed: status=%d, out_len=%zu", status, out_len);
-		ret = -EIO;
-	}
+	return 0;
+}
 
-cleanup:
-	status = psa_key_derivation_abort(&op);
-	if (status != PSA_SUCCESS) {
+static int acs_hkdf_op_abort(psa_key_derivation_operation_t *op, int prior_ret)
+{
+	psa_status_t status = psa_key_derivation_abort(op);
+
+	if (status != PSA_SUCCESS && prior_ret == 0) {
 		LOG_ERR("Failed to abort key derivation operation: %d", status);
 		return -EIO;
 	}
-	return ret;
+	return prior_ret;
 }
 
-static int acs_hkdf_from_key(psa_algorithm_t hkdf_alg, const uint8_t *salt, size_t salt_len,
-			     psa_key_id_t ikm_key_id, const uint8_t *info, size_t info_len,
-			     uint8_t *out, size_t out_len)
+static int acs_hkdf_output_bytes(psa_algorithm_t alg, const uint8_t *salt, size_t salt_len,
+				 const struct acs_hkdf_ikm *ikm, const uint8_t *info,
+				 size_t info_len, uint8_t *out, size_t out_len)
 {
 	psa_key_derivation_operation_t op = PSA_KEY_DERIVATION_OPERATION_INIT;
-	psa_status_t status;
-	int ret = 0;
+	int ret = acs_hkdf_op_setup(&op, alg, salt, salt_len, ikm, info, info_len);
 
-	status = psa_key_derivation_setup(&op, hkdf_alg);
-	if (status != PSA_SUCCESS) {
-		LOG_ERR("HKDF(key) setup failed: status=%d, alg=0x%08x", status, hkdf_alg);
-		ret = -EIO;
-		goto cleanup;
-	}
+	if (ret == 0) {
+		psa_status_t status = psa_key_derivation_output_bytes(&op, out, out_len);
 
-	if (salt_len > 0U) {
-		status = psa_key_derivation_input_bytes(&op, PSA_KEY_DERIVATION_INPUT_SALT, salt,
-							salt_len);
 		if (status != PSA_SUCCESS) {
-			LOG_ERR("HKDF(key) salt input failed: status=%d, salt_len=%zu", status,
-				salt_len);
+			LOG_ERR("HKDF output failed: status=%d, out_len=%zu", status, out_len);
 			ret = -EIO;
-			goto cleanup;
 		}
 	}
 
-	status = psa_key_derivation_input_key(&op, PSA_KEY_DERIVATION_INPUT_SECRET, ikm_key_id);
-	if (status != PSA_SUCCESS) {
-		LOG_ERR("HKDF(key) secret input failed: status=%d", status);
-		ret = -EIO;
+	return acs_hkdf_op_abort(&op, ret);
+}
+
+/*
+ * Materialise an exchange-key pair (operational AES + derive twin) into
+ * @p key_runtime.  Two parallel derivation ops are required because
+ * psa_key_derivation_output_key advances the stream - a single op outputting
+ * two keys would produce two distinct secrets, but the AEAD key and its derive
+ * twin must hold the same underlying material so the peer's KDF / nonce
+ * derivations stay in lock-step.  Both ops are aborted before return.
+ *
+ * Any prior PSA keys on @p key_runtime are destroyed first.
+ */
+static int acs_crypto_derive_exchange_key_pair(struct bt_acs_key_desc_runtime *key_runtime,
+					       psa_algorithm_t alg, const uint8_t *salt,
+					       size_t salt_len, const struct acs_hkdf_ikm *ikm,
+					       const uint8_t *info, size_t info_len, size_t key_len)
+{
+	psa_key_derivation_operation_t op_key = PSA_KEY_DERIVATION_OPERATION_INIT;
+	psa_key_derivation_operation_t op_derive = PSA_KEY_DERIVATION_OPERATION_INIT;
+	int ret;
+
+	ret = acs_hkdf_op_setup(&op_key, alg, salt, salt_len, ikm, info, info_len);
+	if (ret) {
 		goto cleanup;
 	}
 
-	status = psa_key_derivation_input_bytes(&op, PSA_KEY_DERIVATION_INPUT_INFO, info, info_len);
-	if (status != PSA_SUCCESS) {
-		LOG_ERR("HKDF(key) info input failed: status=%d, info_len=%zu", status, info_len);
-		ret = -EIO;
+	ret = acs_hkdf_op_setup(&op_derive, alg, salt, salt_len, ikm, info, info_len);
+	if (ret) {
 		goto cleanup;
 	}
 
-	status = psa_key_derivation_output_bytes(&op, out, out_len);
-	if (status != PSA_SUCCESS) {
-		LOG_ERR("HKDF(key) output failed: status=%d, out_len=%zu", status, out_len);
-		ret = -EIO;
-	} else {
-		ret = 0;
+	acs_crypto_destroy_key(key_runtime);
+
+	ret = acs_crypto_output_exchange_key(key_runtime, &op_key, key_len);
+	if (ret) {
+		goto cleanup;
 	}
+
+	ret = acs_crypto_output_exchange_derive_key(key_runtime, &op_derive, key_len);
 
 cleanup:
-	status = psa_key_derivation_abort(&op);
-	if (status != PSA_SUCCESS) {
-		LOG_ERR("Failed to abort key derivation operation: %d", status);
-		return -EIO;
-	}
-
+	ret = acs_hkdf_op_abort(&op_key, ret);
+	ret = acs_hkdf_op_abort(&op_derive, ret);
 	return ret;
 }
 
@@ -350,179 +371,59 @@ static size_t acs_nonce_label_build(uint16_t key_id, uint8_t kind, uint8_t *labe
 	return sizeof(prefix) + sizeof(key_id);
 }
 
-static int acs_key_desc_runtime_derive_nonce_state(struct bt_acs_key_desc_runtime *key_desc_runtime,
-						   const uint8_t *key_material,
-						   size_t key_material_len)
+int acs_derive_nonce_state(struct bt_acs_key_desc_runtime *runtime,
+			   const struct bt_acs_key_desc_runtime *parent)
 {
-	const struct bt_acs_key_desc_record *key_desc = key_desc_runtime->key_desc;
+	const struct bt_acs_key_desc_record *key_desc = runtime->key_desc;
 	uint8_t prefix_size = acs_key_desc_nonce_prefix_size(key_desc);
-	uint16_t key_id = acs_key_desc_runtime_key_id(key_desc_runtime);
+	struct acs_hkdf_ikm ikm;
 	uint8_t label[sizeof("ACS:nonce:") + sizeof(uint8_t) + sizeof(uint16_t)];
 	size_t label_len;
 	int ret;
 
-	key_desc_runtime->tx_nonce_counter = 0U;
-	key_desc_runtime->rx_nonce_counter =
-		key_desc->aes.nonce_type == ACS_NONCE_SEQ_EVEN_ODD ? 1U : 0U;
+	runtime->tx_nonce_counter = 0U;
+	runtime->rx_nonce_counter = key_desc->aes.nonce_type == ACS_NONCE_SEQ_EVEN_ODD ? 1U : 0U;
 
 	if (prefix_size == 0U) {
 		return 0;
 	}
 
-	switch (key_desc->aes.nonce_type) {
-	case ACS_NONCE_SEQ_DIFF_FIXED: {
-		bool nonce_unset = true;
-
-		for (uint8_t i = 0U; i < prefix_size; i++) {
-			if (key_desc_runtime->server_nonce_fixed[i] != 0U) {
-				nonce_unset = false;
-				break;
-			}
-		}
-		if (nonce_unset) {
-			sys_rand_get(key_desc_runtime->server_nonce_fixed, prefix_size);
-			sys_mem_swap(key_desc_runtime->server_nonce_fixed, prefix_size);
-		}
-		return 0;
-	}
-
-	case ACS_NONCE_SEQ_EVEN_ODD:
-		memset(key_desc_runtime->server_nonce_fixed, 0,
-		       sizeof(key_desc_runtime->server_nonce_fixed));
-		memset(key_desc_runtime->client_nonce_fixed, 0,
-		       sizeof(key_desc_runtime->client_nonce_fixed));
-		key_desc_runtime->client_nonce_set = false;
-
-		label_len = acs_nonce_label_build(key_id, 'e', label, sizeof(label));
-		ret = acs_hkdf(ACS_PSA_HKDF_ALG, NULL, 0U, key_material, key_material_len, label,
-			       label_len, key_desc_runtime->server_nonce_fixed, prefix_size);
-		if (ret != 0) {
-			return ret;
-		}
-		memcpy(key_desc_runtime->client_nonce_fixed, key_desc_runtime->server_nonce_fixed,
-		       prefix_size);
-		break;
-
-	default:
-		return 0;
-	}
-
-	key_desc_runtime->client_nonce_set = true;
-
-	return 0;
-}
-
-static int acs_key_desc_runtime_derive_nonce_state_from_runtime(
-	struct bt_acs_key_desc_runtime *key_desc_runtime,
-	const struct bt_acs_key_desc_runtime *current_key_runtime)
-{
-	const struct bt_acs_key_desc_record *key_desc = key_desc_runtime->key_desc;
-	uint8_t prefix_size = acs_key_desc_nonce_prefix_size(key_desc);
-	uint16_t key_id = acs_key_desc_runtime_key_id(key_desc_runtime);
-	uint8_t label[sizeof("ACS:nonce:") + sizeof(uint8_t) + sizeof(uint16_t)];
-	size_t label_len;
-	int ret;
-
-	key_desc_runtime->tx_nonce_counter = 0U;
-	key_desc_runtime->rx_nonce_counter =
-		key_desc->aes.nonce_type == ACS_NONCE_SEQ_EVEN_ODD ? 1U : 0U;
-
-	if (prefix_size == 0U) {
-		return 0;
-	}
-
-	switch (key_desc->aes.nonce_type) {
-	case ACS_NONCE_SEQ_DIFF_FIXED: {
-		bool nonce_unset = true;
-
-		for (uint8_t i = 0U; i < prefix_size; i++) {
-			if (key_desc_runtime->server_nonce_fixed[i] != 0U) {
-				nonce_unset = false;
-				break;
-			}
-		}
-		if (nonce_unset) {
-			sys_rand_get(key_desc_runtime->server_nonce_fixed, prefix_size);
-			sys_mem_swap(key_desc_runtime->server_nonce_fixed, prefix_size);
-		}
-		return 0;
-	}
-
-	case ACS_NONCE_SEQ_EVEN_ODD:
-		if (!current_key_runtime || current_key_runtime->derive_key_id == 0U) {
+#if IS_ENABLED(CONFIG_BT_ACS_CCM_NONCE_SEQ_EVEN_ODD)
+	if (key_desc->aes.nonce_type == ACS_NONCE_SEQ_EVEN_ODD) {
+		if (!parent || parent->derive_key_id == 0U) {
 			return -EINVAL;
 		}
 
-		memset(key_desc_runtime->server_nonce_fixed, 0,
-		       sizeof(key_desc_runtime->server_nonce_fixed));
-		memset(key_desc_runtime->client_nonce_fixed, 0,
-		       sizeof(key_desc_runtime->client_nonce_fixed));
-		key_desc_runtime->client_nonce_set = false;
+		memset(runtime->server_nonce_fixed, 0, sizeof(runtime->server_nonce_fixed));
+		memset(runtime->client_nonce_fixed, 0, sizeof(runtime->client_nonce_fixed));
+		runtime->client_nonce_set = false;
 
-		label_len = acs_nonce_label_build(key_id, 'e', label, sizeof(label));
-		ret = acs_hkdf_from_key(ACS_PSA_HKDF_ALG, NULL, 0U,
-					current_key_runtime->derive_key_id, label, label_len,
-					key_desc_runtime->server_nonce_fixed, prefix_size);
+		label_len = acs_nonce_label_build(acs_key_desc_runtime_key_id(runtime), 'e', label,
+						  sizeof(label));
+		ikm = (struct acs_hkdf_ikm){.key_id = parent->derive_key_id};
+		ret = acs_hkdf_output_bytes(ACS_PSA_HKDF_ALG, NULL, 0U, &ikm, label, label_len,
+					    runtime->server_nonce_fixed, prefix_size);
 		if (ret != 0) {
 			return ret;
 		}
-		memcpy(key_desc_runtime->client_nonce_fixed, key_desc_runtime->server_nonce_fixed,
-		       prefix_size);
-		break;
-
-	default:
+		memcpy(runtime->client_nonce_fixed, runtime->server_nonce_fixed, prefix_size);
+		runtime->client_nonce_set = true;
 		return 0;
 	}
+#endif
 
-	key_desc_runtime->client_nonce_set = true;
+	{
+		bool nonce_unset = true;
 
-	return 0;
-}
-
-static int acs_derive_nonce_state_for_current_key(struct bt_acs_conn *acs_conn,
-						  uint16_t current_key_id,
-						  const uint8_t *key_material,
-						  size_t key_material_len)
-{
-	for (size_t i = ACS_KEY_ID_COUNT; i < ACS_KEY_RUNTIME_COUNT; i++) {
-		struct bt_acs_key_desc_runtime *key_desc_runtime =
-			&acs_conn->crypto.key_runtimes[i];
-		int ret;
-
-		if (!key_desc_runtime->key_desc ||
-		    key_desc_runtime->current_key_id != current_key_id) {
-			continue;
+		for (uint8_t i = 0U; i < prefix_size; i++) {
+			if (runtime->server_nonce_fixed[i] != 0U) {
+				nonce_unset = false;
+				break;
+			}
 		}
-
-		ret = acs_key_desc_runtime_derive_nonce_state(key_desc_runtime, key_material,
-							      key_material_len);
-		if (ret != 0) {
-			return ret;
-		}
-	}
-
-	return 0;
-}
-
-static int acs_derive_nonce_state_for_current_key_runtime(
-	struct bt_acs_conn *acs_conn, const struct bt_acs_key_desc_runtime *current_key_runtime)
-{
-	uint16_t current_key_id = acs_key_desc_runtime_key_id(current_key_runtime);
-
-	for (size_t i = ACS_KEY_ID_COUNT; i < ACS_KEY_RUNTIME_COUNT; i++) {
-		struct bt_acs_key_desc_runtime *key_desc_runtime =
-			&acs_conn->crypto.key_runtimes[i];
-		int ret;
-
-		if (!key_desc_runtime->key_desc ||
-		    key_desc_runtime->current_key_id != current_key_id) {
-			continue;
-		}
-
-		ret = acs_key_desc_runtime_derive_nonce_state_from_runtime(key_desc_runtime,
-									   current_key_runtime);
-		if (ret != 0) {
-			return ret;
+		if (nonce_unset) {
+			sys_rand_get(runtime->server_nonce_fixed, prefix_size);
+			sys_mem_swap(runtime->server_nonce_fixed, prefix_size);
 		}
 	}
 
@@ -533,7 +434,6 @@ int acs_crypto_activate_key(struct bt_acs_conn *acs_conn,
 			    struct bt_acs_key_desc_runtime *exchange_key,
 			    const uint8_t *key_material, size_t key_len)
 {
-	uint16_t key_id = acs_key_desc_runtime_key_id(exchange_key);
 	int err;
 
 	acs_crypto_destroy_key(exchange_key);
@@ -543,12 +443,10 @@ int acs_crypto_activate_key(struct bt_acs_conn *acs_conn,
 		return err;
 	}
 
-	err = acs_crypto_rebind_algorithm_keys(acs_conn);
-	if (err) {
-		return err;
-	}
-
-	return acs_derive_nonce_state_for_current_key(acs_conn, key_id, key_material, key_len);
+	/* bind_algorithm_keys handles per-record nonce state setup (counters +
+	 * fixed prefix) as part of the same loop that mints the child keys.
+	 */
+	return acs_crypto_bind_algorithm_keys(acs_conn, exchange_key);
 }
 
 /* §4.4.3.17.1.2: Salt=HMAC(Zero,PKs||PKc), ConfKey=HMAC(Salt,ECDHKey||Auth),
@@ -619,7 +517,7 @@ cleanup:
 	return ret;
 }
 
-static int bt_acs_crypto_generate_keypair(struct bt_acs_conn *acs_conn)
+static int acs_crypto_generate_keypair(struct bt_acs_conn *acs_conn)
 {
 	struct acs_ecdh_pubkey *pk = &acs_conn->kex.server_pubkey;
 	psa_key_attributes_t attrs = PSA_KEY_ATTRIBUTES_INIT;
@@ -682,7 +580,7 @@ static int bt_acs_crypto_generate_keypair(struct bt_acs_conn *acs_conn)
 	return 0;
 }
 
-static int bt_acs_crypto_compute_shared_secret(struct bt_acs_conn *acs_conn)
+static int acs_crypto_compute_shared_secret(struct bt_acs_conn *acs_conn)
 {
 	const struct acs_ecdh_pubkey *cpk = &acs_conn->kex.client_pubkey;
 	uint8_t x_size = cpk->x_size;
@@ -757,9 +655,12 @@ int acs_crypto_derive_session_key(struct bt_acs_conn *acs_conn,
 	static const uint8_t info[] = "ACS";
 	uint16_t key_id = sys_le16_to_cpu(acs_conn->kex.start_kex.key_id);
 	struct bt_acs_key_desc_runtime *exchange_key;
+	struct acs_hkdf_ikm ikm = {
+		.bytes = acs_conn->kex.key_material,
+		.bytes_len = acs_conn->kex.key_mat_len,
+	};
 	uint8_t salt[2 * ACS_CONFIRM_VALUE_SIZE];
 	uint8_t client_random_be[ACS_CONFIRM_VALUE_SIZE];
-	uint8_t session_key[CONFIG_BT_ACS_SESSION_KEY_SIZE];
 	int ret;
 
 	ret = acs_crypto_key_runtime_lookup(acs_conn, key_id, &exchange_key);
@@ -773,31 +674,29 @@ int acs_crypto_derive_session_key(struct bt_acs_conn *acs_conn,
 	memcpy(salt, acs_conn->kex.server_random, ACS_CONFIRM_VALUE_SIZE);
 	memcpy(salt + ACS_CONFIRM_VALUE_SIZE, client_random_be, ACS_CONFIRM_VALUE_SIZE);
 
-	ret = acs_hkdf(ACS_PSA_HKDF_ALG, salt, sizeof(salt), acs_conn->kex.key_material,
-		       acs_conn->kex.key_mat_len, info, sizeof(info) - 1, session_key,
-		       CONFIG_BT_ACS_SESSION_KEY_SIZE);
-	if (ret != 0) {
+	ret = acs_crypto_derive_exchange_key_pair(exchange_key, ACS_PSA_HKDF_ALG, salt,
+						  sizeof(salt), &ikm, info, sizeof(info) - 1,
+						  CONFIG_BT_ACS_SESSION_KEY_SIZE);
+	if (ret) {
 		LOG_ERR("HKDF session key derivation failed: %d", ret);
 		return ret;
 	}
 
-	ret = acs_crypto_activate_key(acs_conn, exchange_key, session_key,
-				      CONFIG_BT_ACS_SESSION_KEY_SIZE);
-	mbedtls_platform_zeroize(session_key, sizeof(session_key));
-	return ret;
+	return acs_crypto_bind_algorithm_keys(acs_conn, exchange_key);
 }
 
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
-/* §4.4.3.17.2.1: Derive child key from the ECDH session key via HKDF. */
-static int bt_acs_crypto_derive_kdf_child_key(struct bt_acs_conn *acs_conn)
+/* §4.4.3.17.2.1: Derive the KDF child from the parent's derive-key via HKDF.
+ * Both the operational AES child and its derive twin are materialised directly
+ * in the PSA keystore via output_key - no plaintext key material at any step.
+ */
+static int acs_crypto_derive_kdf_child_key(struct bt_acs_conn *acs_conn)
 {
 	struct bt_acs_key_desc_runtime *parent_key;
 	struct bt_acs_key_desc_runtime *kdf_key;
 	uint8_t salt_be[CONFIG_BT_ACS_KDF_SALT_MAX_SIZE];
 	uint8_t info_be[CONFIG_BT_ACS_KDF_INFO_MAX_SIZE];
-	psa_key_derivation_operation_t op_key = PSA_KEY_DERIVATION_OPERATION_INIT;
-	psa_key_derivation_operation_t op_derive = PSA_KEY_DERIVATION_OPERATION_INIT;
-	psa_status_t status;
+	struct acs_hkdf_ikm ikm;
 	int ret;
 
 	ret = acs_crypto_key_runtime_lookup(acs_conn, ACS_KEY_ID_ECDH, &parent_key);
@@ -817,109 +716,20 @@ static int bt_acs_crypto_derive_kdf_child_key(struct bt_acs_conn *acs_conn)
 		return -ENOENT;
 	}
 
-	/* Salt and info are stored in wire order (LSO) but HKDF requires big-endian input. */
+	/* Salt and info are stored in wire order (LSO) but HKDF requires BE input. */
 	sys_memcpy_swap(salt_be, acs_conn->kex.kdf.salt, acs_conn->kex.kdf.salt_size);
 	sys_memcpy_swap(info_be, acs_conn->kex.kdf.info, acs_conn->kex.kdf.info_size);
 
-	status = psa_key_derivation_setup(&op_key, ACS_PSA_HKDF_ALG);
-	if (status != PSA_SUCCESS) {
-		LOG_ERR("KDF child key setup failed: %d", status);
-		ret = -EIO;
-		goto cleanup;
+	ikm = (struct acs_hkdf_ikm){.key_id = parent_key->derive_key_id};
+
+	ret = acs_crypto_derive_exchange_key_pair(
+		kdf_key, ACS_PSA_HKDF_ALG, salt_be, acs_conn->kex.kdf.salt_size, &ikm, info_be,
+		acs_conn->kex.kdf.info_size, CONFIG_BT_ACS_SESSION_KEY_SIZE);
+	if (ret) {
+		return ret;
 	}
 
-	status = psa_key_derivation_input_bytes(&op_key, PSA_KEY_DERIVATION_INPUT_SALT, salt_be,
-						acs_conn->kex.kdf.salt_size);
-	if (status != PSA_SUCCESS) {
-		LOG_ERR("KDF child key salt input failed: %d", status);
-		ret = -EIO;
-		goto cleanup;
-	}
-
-	status = psa_key_derivation_input_key(&op_key, PSA_KEY_DERIVATION_INPUT_SECRET,
-					      parent_key->derive_key_id);
-	if (status != PSA_SUCCESS) {
-		LOG_ERR("KDF child key secret input failed: %d", status);
-		ret = -EIO;
-		goto cleanup;
-	}
-
-	status = psa_key_derivation_input_bytes(&op_key, PSA_KEY_DERIVATION_INPUT_INFO, info_be,
-						acs_conn->kex.kdf.info_size);
-	if (status != PSA_SUCCESS) {
-		LOG_ERR("KDF child key info input failed: %d", status);
-		ret = -EIO;
-		goto cleanup;
-	}
-
-	status = psa_key_derivation_setup(&op_derive, ACS_PSA_HKDF_ALG);
-	if (status != PSA_SUCCESS) {
-		LOG_ERR("KDF child derive-key setup failed: %d", status);
-		ret = -EIO;
-		goto cleanup;
-	}
-
-	status = psa_key_derivation_input_bytes(&op_derive, PSA_KEY_DERIVATION_INPUT_SALT, salt_be,
-						acs_conn->kex.kdf.salt_size);
-	if (status != PSA_SUCCESS) {
-		LOG_ERR("KDF child derive-key salt input failed: %d", status);
-		ret = -EIO;
-		goto cleanup;
-	}
-
-	status = psa_key_derivation_input_key(&op_derive, PSA_KEY_DERIVATION_INPUT_SECRET,
-					      parent_key->derive_key_id);
-	if (status != PSA_SUCCESS) {
-		LOG_ERR("KDF child derive-key secret input failed: %d", status);
-		ret = -EIO;
-		goto cleanup;
-	}
-
-	status = psa_key_derivation_input_bytes(&op_derive, PSA_KEY_DERIVATION_INPUT_INFO, info_be,
-						acs_conn->kex.kdf.info_size);
-	if (status != PSA_SUCCESS) {
-		LOG_ERR("KDF child derive-key info input failed: %d", status);
-		ret = -EIO;
-		goto cleanup;
-	}
-
-	acs_crypto_destroy_key(kdf_key);
-
-	ret = acs_crypto_output_exchange_key(kdf_key, &op_key, CONFIG_BT_ACS_SESSION_KEY_SIZE);
-	if (ret != 0) {
-		goto cleanup;
-	}
-
-	ret = acs_crypto_output_exchange_derive_key(kdf_key, &op_derive,
-						    CONFIG_BT_ACS_SESSION_KEY_SIZE);
-	if (ret != 0) {
-		goto cleanup;
-	}
-
-	ret = acs_crypto_rebind_algorithm_keys(acs_conn);
-	if (ret != 0) {
-		goto cleanup;
-	}
-
-	ret = acs_derive_nonce_state_for_current_key_runtime(acs_conn, kdf_key);
-
-cleanup:
-	status = psa_key_derivation_abort(&op_key);
-	if (status != PSA_SUCCESS) {
-		LOG_ERR("KDF child key-derivation abort failed: %d", status);
-		if (ret == 0) {
-			ret = -EIO;
-		}
-	}
-	status = psa_key_derivation_abort(&op_derive);
-	if (status != PSA_SUCCESS) {
-		LOG_ERR("KDF child derive-key abort failed: %d", status);
-		if (ret == 0) {
-			ret = -EIO;
-		}
-	}
-
-	return ret;
+	return acs_crypto_bind_algorithm_keys(acs_conn, kdf_key);
 }
 #endif /* CONFIG_BT_ACS_KEY_EXCHANGE_KDF */
 
@@ -980,17 +790,19 @@ int acs_key_exchange_ecdh_start(struct bt_acs_conn *acs_conn, uint16_t key_id)
 		acs_psa_destroy_key(&acs_conn->kex.ecdh_key_id);
 	}
 
-	/* Reset live crypto state while keeping the descriptor runtime slots bound.
-	 * Fresh session or KDF key material will repopulate the nonce prefixes.
+	/* Tear down any prior exchange keys and their algorithm-record children;
+	 * the fresh key exchange about to start will repopulate everything.
+	 * Algorithm-record nonce_fixed values carry over - either lazily
+	 * regenerated by acs_derive_nonce_state on first use (DIFF_FIXED with
+	 * all-zero state) or re-derived from the new parent (EVEN_ODD).
 	 */
 	acs_crypto_destroy_exchange_keys(acs_conn);
 	acs_crypto_destroy_connection_record_keys(acs_conn);
-	acs_crypto_reset_preserve_record_states(acs_conn);
 	memset(&acs_conn->kex, 0, sizeof(acs_conn->kex));
 	acs_conn->kex.active = true;
 
 	if (key_id == ACS_KEY_ID_ECDH) {
-		int err = bt_acs_crypto_generate_keypair(acs_conn);
+		int err = acs_crypto_generate_keypair(acs_conn);
 
 		if (err) {
 			return -EIO;
@@ -1009,7 +821,7 @@ int acs_key_exchange_ecdh_pubkey(struct bt_acs_conn *acs_conn, struct net_buf_si
 		return err;
 	}
 
-	err = bt_acs_crypto_compute_shared_secret(acs_conn);
+	err = acs_crypto_compute_shared_secret(acs_conn);
 	if (err) {
 		return err;
 	}
@@ -1050,14 +862,19 @@ int acs_key_exchange_ecdh_kdf(struct bt_acs_conn *acs_conn, struct net_buf_simpl
 	}
 
 	/* HKDF overwrites key_material in-place (safe: PSA reads IKM fully
-	 * during extract before writing during expand). */
+	 * during extract before writing during expand).
+	 */
 	sys_memcpy_swap(salt_be, acs_conn->kex.kdf.salt, acs_conn->kex.kdf.salt_size);
 	sys_memcpy_swap(info_be, acs_conn->kex.kdf.info, acs_conn->kex.kdf.info_size);
 
-	err = acs_hkdf(ACS_PSA_HKDF_ALG, salt_be, acs_conn->kex.kdf.salt_size,
-		       acs_conn->kex.key_material, acs_conn->kex.key_mat_len, info_be,
-		       acs_conn->kex.kdf.info_size, acs_conn->kex.key_material,
-		       CONFIG_BT_ACS_SESSION_KEY_SIZE);
+	struct acs_hkdf_ikm ikm = {
+		.bytes = acs_conn->kex.key_material,
+		.bytes_len = acs_conn->kex.key_mat_len,
+	};
+
+	err = acs_hkdf_output_bytes(ACS_PSA_HKDF_ALG, salt_be, acs_conn->kex.kdf.salt_size, &ikm,
+				    info_be, acs_conn->kex.kdf.info_size,
+				    acs_conn->kex.key_material, CONFIG_BT_ACS_SESSION_KEY_SIZE);
 	if (err != 0) {
 		LOG_ERR("HKDF ECDHKey derivation failed: %d", err);
 		return err;
@@ -1227,7 +1044,7 @@ int acs_key_exchange_kdf(struct bt_acs_conn *acs_conn, struct net_buf_simple *rs
 	}
 
 	/* Derive child key: HKDF(salt, ikm=parent_key, info) → child replaces parent_key */
-	err = bt_acs_crypto_derive_kdf_child_key(acs_conn);
+	err = acs_crypto_derive_kdf_child_key(acs_conn);
 	if (err) {
 		LOG_ERR("KDF child key derivation failed: %d", err);
 		return -EIO;

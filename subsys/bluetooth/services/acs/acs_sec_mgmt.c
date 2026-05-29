@@ -102,22 +102,14 @@ int acs_sec_mgmt_invalidate_all(struct acs_procedure *proc)
 static void invalidate_kdf_child(struct bt_acs_conn *acs_conn)
 {
 	struct bt_acs_key_desc_runtime *kdf_key;
-	int err;
 
-	err = acs_crypto_key_runtime_lookup(acs_conn, ACS_KEY_ID_KDF, &kdf_key);
-
-	if (err) {
+	if (acs_crypto_key_runtime_lookup(acs_conn, ACS_KEY_ID_KDF, &kdf_key) != 0) {
 		LOG_ERR("Missing KDF runtime key state");
 		return;
 	}
 
 	acs_crypto_destroy_key(kdf_key);
-	err = acs_crypto_rebind_algorithm_keys(acs_conn);
-	if (err) {
-		LOG_ERR("Re-import record keys failed: %d", err);
-		return;
-	}
-
+	acs_crypto_invalidate_algorithm_keys(acs_conn);
 	acs_conn->status_flags &= ~BT_ACS_STATUS_SECURITY_ESTABLISHED;
 }
 #endif

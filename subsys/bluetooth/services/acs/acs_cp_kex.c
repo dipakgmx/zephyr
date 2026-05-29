@@ -125,7 +125,7 @@ int acs_cp_kex_exchange_kdf(struct acs_procedure *proc, struct net_buf_simple *b
 						 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 		}
 
-		/* Nonce counters are reset inside bt_acs_crypto_derive_kdf_child_key()
+		/* Nonce counters are reset inside acs_crypto_derive_kdf_child_key()
 		 * with the correct SEQ_EVEN_ODD logic - no separate reset needed here.
 		 *
 		 * SECURITY_ESTABLISHED flag and the security_established callback are

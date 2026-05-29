@@ -55,27 +55,10 @@ ssize_t acs_cp_write(struct bt_conn *conn, const struct bt_gatt_attr *attr, cons
 ssize_t acs_data_in_write(struct bt_conn *conn, const struct bt_gatt_attr *attr, const void *buf,
 			  uint16_t len, uint16_t offset, uint8_t flags);
 
-/**
- * @brief Unwrap a complete reassembled Data In payload and route it.
- *
- * Validates the ISC_ID/nonce header, decrypts the payload in place, builds a
- * normalized @ref acs_frame, then hands it to @ref acs_runtime_dispatch_frame.
- *
- * @return 0 on success, or one of @ref ACS_DATA_ERR_* on failure.
- */
+/** @brief Unwrap a complete reassembled Data In payload and route it. */
 int acs_data_in_unwrap_and_route(struct bt_acs_conn *acs_conn, struct net_buf_simple *buf);
 
-/**
- * @brief Dispatch a reassembled ACS frame to the appropriate handler.
- *
- * Classifies @p frame by route (CP, protected characteristic, or protected service CP) and calls
- * the matching dispatch helper.
- *
- * @param frame    Reassembled frame to dispatch.
- * @param acs_conn Connection state for the originating connection.
- *
- * @return 0 on success, negative errno on failure.
- */
+/** @brief Dispatch a reassembled ACS frame to the appropriate handler. */
 int acs_runtime_dispatch_frame(const struct acs_frame *frame, struct bt_acs_conn *acs_conn);
 
 /**

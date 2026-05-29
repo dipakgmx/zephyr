@@ -68,7 +68,7 @@ struct bt_acs_conn *acs_conn_alloc(struct bt_conn *conn)
 	struct bt_acs_conn *acs_conn = &acs_conn_state[bt_conn_index(conn)];
 
 	memset(acs_conn, 0, sizeof(*acs_conn));
-	acs_crypto_reset_preserve_record_states(acs_conn);
+	acs_crypto_init_slots(acs_conn);
 	acs_conn->conn = conn;
 	acs_conn->attr_cp = acs_attr_cp();
 	acs_conn->attr_status = acs_attr_status();
@@ -125,11 +125,11 @@ void acs_conn_cleanup(struct bt_acs_conn *acs_conn)
 
 	acs_crypto_release_exchange_keys(acs_conn);
 	acs_crypto_destroy_connection_record_keys(acs_conn);
-	/* Preserve nonce fixed parts across disconnect - they are set once per
-	 * device pair and reused on reconnect (§3.6.4: "does not change for
-	 * the life of the key").  Session key and counters are wiped.
+	/* No need to wipe or rebind the runtime slots here.  The session cache
+	 * already memcpy'd the live nonce state out before this runs (§3.6.4
+	 * preservation), and the next acs_conn_alloc on this index memsets the
+	 * whole conn before rebinding slots.
 	 */
-	acs_crypto_reset_preserve_record_states(acs_conn);
 	/* Abort request contexts before freeing the shared I/O slot so queued/in-flight
 	 * ACS Data Out activity cannot outlive the buffers it references.
 	 */
@@ -240,7 +240,6 @@ int bt_acs_invalidate_security(struct bt_conn *conn)
 	if (!conn) {
 		return -EINVAL;
 	}
-	__ASSERT(conn != NULL, "conn must not be NULL");
 
 	if (!acs_is_initialized()) {
 		return -EINVAL;
@@ -254,9 +253,12 @@ int bt_acs_invalidate_security(struct bt_conn *conn)
 	was_established = acs_session_established(acs_conn);
 
 	acs_conn->status_flags &= ~BT_ACS_STATUS_SECURITY_ESTABLISHED;
+	/* acs_key_exchange_abort tears down the transient kex context (and any
+	 * partial keys an in-progress exchange held).  acs_crypto_reset then
+	 * destroys both the exchange and algorithm-record PSA keys and reinits
+	 * the runtime slots, so explicit destroys here would be redundant.
+	 */
 	acs_key_exchange_abort(acs_conn);
-	acs_crypto_destroy_exchange_keys(acs_conn);
-	acs_crypto_destroy_connection_record_keys(acs_conn);
 	acs_crypto_reset(acs_conn);
 
 	acs_session_cache_clear_peer(bt_conn_get_dst(conn));

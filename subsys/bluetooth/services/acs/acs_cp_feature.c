@@ -179,7 +179,7 @@ int acs_cp_handle_att_mtu(struct acs_procedure *proc)
 
 #if IS_ENABLED(CONFIG_BT_ACS_HAS_NONCE_FIXED)
 static bool acs_client_nonce_fixed_is_unique(struct bt_acs_conn *acs_conn,
-					     const struct bt_acs_key_desc_runtime *kdr,
+					     const struct bt_acs_key_desc_runtime *runtime,
 					     uint8_t fixed_size)
 {
 	for (size_t i = ACS_KEY_ID_COUNT; i < ACS_KEY_RUNTIME_COUNT; i++) {
@@ -189,12 +189,14 @@ static bool acs_client_nonce_fixed_is_unique(struct bt_acs_conn *acs_conn,
 			continue;
 		}
 
-		if (memcmp(kdr->client_nonce_fixed, other->server_nonce_fixed, fixed_size) == 0) {
+		if (memcmp(runtime->client_nonce_fixed, other->server_nonce_fixed, fixed_size) ==
+		    0) {
 			return false;
 		}
 
-		if (other != kdr && other->client_nonce_set &&
-		    memcmp(kdr->client_nonce_fixed, other->client_nonce_fixed, fixed_size) == 0) {
+		if (other != runtime && other->client_nonce_set &&
+		    memcmp(runtime->client_nonce_fixed, other->client_nonce_fixed, fixed_size) ==
+			    0) {
 			return false;
 		}
 	}
@@ -206,7 +208,7 @@ int acs_cp_handle_set_client_nonce_fixed(struct acs_procedure *proc, struct net_
 {
 	struct bt_acs_conn *acs_conn = proc->acs_conn;
 	const struct bt_acs_key_desc_record *key_desc;
-	struct bt_acs_key_desc_runtime *kdr;
+	struct bt_acs_key_desc_runtime *runtime;
 	uint16_t key_id;
 	uint8_t fixed_size;
 
@@ -239,7 +241,7 @@ int acs_cp_handle_set_client_nonce_fixed(struct acs_procedure *proc, struct net_
 					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE);
 	}
 
-	if (acs_crypto_key_runtime_lookup(acs_conn, key_id, &kdr) != 0) {
+	if (acs_crypto_key_runtime_lookup(acs_conn, key_id, &runtime) != 0) {
 		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_SET_CLIENT_NONCE_FIXED,
 					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 	}
@@ -252,17 +254,17 @@ int acs_cp_handle_set_client_nonce_fixed(struct acs_procedure *proc, struct net_
 					 BT_ACS_CP_RESPONSE_INVALID_OPERAND);
 	}
 
-	memcpy(kdr->client_nonce_fixed, buf->data + sizeof(uint16_t), fixed_size);
-	sys_mem_swap(kdr->client_nonce_fixed, fixed_size);
+	memcpy(runtime->client_nonce_fixed, buf->data + sizeof(uint16_t), fixed_size);
+	sys_mem_swap(runtime->client_nonce_fixed, fixed_size);
 
-	if (!acs_client_nonce_fixed_is_unique(acs_conn, kdr, fixed_size)) {
+	if (!acs_client_nonce_fixed_is_unique(acs_conn, runtime, fixed_size)) {
 		LOG_WRN("Set client nonce fixed: value collides with existing nonce fixed");
-		memset(kdr->client_nonce_fixed, 0, sizeof(kdr->client_nonce_fixed));
+		memset(runtime->client_nonce_fixed, 0, sizeof(runtime->client_nonce_fixed));
 		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_SET_CLIENT_NONCE_FIXED,
 					 BT_ACS_CP_RESPONSE_INVALID_OPERAND);
 	}
 
-	kdr->client_nonce_set = true;
+	runtime->client_nonce_set = true;
 	LOG_DBG("Stored client nonce fixed for Key_ID 0x%04x (%u bytes)", key_id, fixed_size);
 
 	return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_SET_CLIENT_NONCE_FIXED,

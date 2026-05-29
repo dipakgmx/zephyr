@@ -18,6 +18,7 @@
 
 #include "common/bt_str.h"
 #include "acs_internal.h"
+#include "acs_key_exchange.h"
 
 #if defined(CONFIG_BT_SETTINGS)
 #include <zephyr/psa/key_ids.h>
@@ -141,10 +142,19 @@ int acs_session_cache_restore(const bt_addr_le_t *addr, struct bt_acs_conn *acs_
 		entry->crypto.key_runtimes[i].derive_key_id = 0U;
 	}
 
-	err = acs_crypto_rebind_algorithm_keys(acs_conn);
-	if (err) {
-		LOG_ERR("Re-import record keys failed: %d", err);
-		goto reimport_failed;
+	/* Find whichever exchange key the cached session left behind as the
+	 * active parent for algorithm records; bind its children back.  If the
+	 * cache held no established parent (security never reached ESTABLISHED
+	 * before disconnect), there's nothing to bind.
+	 */
+	struct bt_acs_key_desc_runtime *parent = acs_key_exchange_established_key(acs_conn);
+
+	if (parent != NULL) {
+		err = acs_crypto_bind_algorithm_keys(acs_conn, parent);
+		if (err) {
+			LOG_ERR("Re-bind record keys failed: %d", err);
+			goto reimport_failed;
+		}
 	}
 
 	goto reimport_ok;
@@ -175,12 +185,7 @@ reimport_ok:
 static void session_cache_destroy_entry(struct acs_session_cache_entry *entry)
 {
 	for (size_t i = 0; i < ACS_KEY_ID_COUNT; i++) {
-		if (entry->crypto.key_runtimes[i].psa_key_id != 0U) {
-			psa_destroy_key(entry->crypto.key_runtimes[i].psa_key_id);
-		}
-		if (entry->crypto.key_runtimes[i].derive_key_id != 0U) {
-			psa_destroy_key(entry->crypto.key_runtimes[i].derive_key_id);
-		}
+		acs_crypto_destroy_key(&entry->crypto.key_runtimes[i]);
 	}
 	memset(entry, 0, sizeof(*entry));
 }
@@ -205,6 +210,8 @@ void acs_session_cache_clear_all_except(const bt_addr_le_t *keep_addr)
 }
 
 #if defined(CONFIG_BT_SETTINGS)
+
+#define ACS_SETTINGS_ADDR_LEN (BT_ADDR_SIZE * 2 + 1)
 
 struct acs_persistent_meta {
 	uint16_t parent_key_id;
@@ -314,59 +321,24 @@ static void acs_session_erase_slot(size_t slot)
 	acs_slot_free_idx(slot);
 }
 
-static struct bt_acs_key_desc_runtime *acs_restored_established_key(struct bt_acs_conn *acs_conn)
-{
-#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
-	struct bt_acs_key_desc_runtime *kdf_key;
-
-	if (acs_crypto_key_runtime_lookup(acs_conn, ACS_KEY_ID_KDF, &kdf_key) == 0 &&
-	    acs_current_key_installed(kdf_key)) {
-		return kdf_key;
-	}
-
-	return NULL;
-#elif IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_ECDH)
-	struct bt_acs_key_desc_runtime *ecdh_key;
-
-	if (acs_crypto_key_runtime_lookup(acs_conn, ACS_KEY_ID_ECDH, &ecdh_key) == 0 &&
-	    acs_current_key_installed(ecdh_key)) {
-		return ecdh_key;
-	}
-
-	return NULL;
-#elif IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_OOB)
-	struct bt_acs_key_desc_runtime *oob_key;
-
-	if (acs_crypto_key_runtime_lookup(acs_conn, ACS_KEY_ID_OOB, &oob_key) == 0 &&
-	    acs_current_key_installed(oob_key)) {
-		return oob_key;
-	}
-
-	return NULL;
-#else
-	ARG_UNUSED(acs_conn);
-	return NULL;
-#endif
-}
-
 /*
- * Persist the long-lived parent exchange key, not the derived KDF child. A
- * restored session can rebuild child/materialized record keys from that parent
- * without storing every transient layer.
+ * Find the long-lived parent exchange key (ECDH or OOB) on @p acs_conn.
+ *
+ * Distinct from acs_key_exchange_established_key() in that the KDF child is
+ * deliberately excluded: only the parent is persisted, and the child gets
+ * re-derived from it via psa_copy_key/HKDF on each session.
  */
-static int acs_session_parent_key(const struct bt_acs_conn *acs_conn,
-				  struct bt_acs_key_desc_runtime **exchange_key)
+static int acs_session_find_parent_key(const struct bt_acs_conn *acs_conn,
+				       struct bt_acs_key_desc_runtime **exchange_key)
 {
-	int err;
-
 	__ASSERT_NO_MSG(acs_conn != NULL);
 	__ASSERT_NO_MSG(exchange_key != NULL);
 
 	{
 		struct bt_acs_key_desc_runtime *ecdh_key;
 
-		err = acs_crypto_key_runtime_lookup(acs_conn, ACS_KEY_ID_ECDH, &ecdh_key);
-		if (!err && ecdh_key->psa_key_id != 0U) {
+		if (acs_crypto_key_runtime_lookup(acs_conn, ACS_KEY_ID_ECDH, &ecdh_key) == 0 &&
+		    ecdh_key->psa_key_id != 0U) {
 			*exchange_key = ecdh_key;
 			return 0;
 		}
@@ -376,8 +348,8 @@ static int acs_session_parent_key(const struct bt_acs_conn *acs_conn,
 	{
 		struct bt_acs_key_desc_runtime *oob_key;
 
-		err = acs_crypto_key_runtime_lookup(acs_conn, ACS_KEY_ID_OOB, &oob_key);
-		if (!err && oob_key->psa_key_id != 0U) {
+		if (acs_crypto_key_runtime_lookup(acs_conn, ACS_KEY_ID_OOB, &oob_key) == 0 &&
+		    oob_key->psa_key_id != 0U) {
 			*exchange_key = oob_key;
 			return 0;
 		}
@@ -395,7 +367,7 @@ void acs_session_store(const struct bt_conn *conn, const struct bt_acs_conn *acs
 	size_t slot;
 	int err;
 
-	err = acs_session_parent_key(acs_conn, &parent_key);
+	err = acs_session_find_parent_key(acs_conn, &parent_key);
 	if (err) {
 		LOG_ERR("No exchanged runtime key available to persist");
 		return;
@@ -497,15 +469,21 @@ void acs_session_restore(struct bt_conn *conn, struct bt_acs_conn *acs_conn)
 
 	acs_conn->restriction_map_id = acs_slots[slot].meta.restriction_map_id;
 
-	/* Rebind the record keys from the restored parent, again without export. */
-	err = acs_crypto_rebind_algorithm_keys(acs_conn);
+	/* Bind algorithm-record children from the restored parent, again without
+	 * export - psa_copy_key clones the parent's bits inside the keystore.
+	 */
+	err = acs_crypto_bind_algorithm_keys(acs_conn, parent_key);
 	if (err) {
-		LOG_ERR("Failed to rebind restored record keys: %d", err);
+		LOG_ERR("Failed to bind restored record keys: %d", err);
 		acs_crypto_reset(acs_conn);
 		return;
 	}
 
-	established_key = acs_restored_established_key(acs_conn);
+	/* acs_key_exchange_established_key falls through to whichever exchange
+	 * key was restored (ECDH or OOB).  The KDF child is never persisted, so
+	 * the lookup will skip it.
+	 */
+	established_key = acs_key_exchange_established_key(acs_conn);
 	if (established_key != NULL) {
 		acs_conn->status_flags |= BT_ACS_STATUS_SECURITY_ESTABLISHED;
 	} else {
@@ -575,14 +553,6 @@ void acs_session_clear_all_except(const struct bt_conn *conn)
 		acs_session_erase_slot(i);
 	}
 }
-
-/*
- * Length of the address portion of a settings key as produced by
- * bt_settings_encode_key(): the 6-byte BD_ADDR rendered as hex (2 chars per
- * byte) plus one hex char for the address type.  An optional "/<id>" suffix
- * follows at this offset.
- */
-#define ACS_SETTINGS_ADDR_LEN (BT_ADDR_SIZE * 2 + 1)
 
 static int acs_settings_set(const char *name, size_t len_rd, settings_read_cb read_cb, void *cb_arg)
 {

@@ -83,6 +83,18 @@ int acs_crypto_copy_persistent_key_to_runtime(psa_key_id_t src_id, psa_key_id_t 
 					      struct bt_acs_key_desc_runtime *parent);
 
 /**
+ * @brief Initialise per-record nonce state from @p parent.
+ *
+ * Resets TX/RX counters to fresh-session state and seeds the fixed nonce part:
+ * SEQ_DIFF_FIXED lazily generates random server_nonce_fixed bytes when none
+ * are set; SEQ_EVEN_ODD HKDF-derives a shared prefix from parent->derive_key_id
+ * (no plaintext IKM).  Called from acs_crypto_bind_algorithm_keys per record;
+ * exposed here because the HKDF helpers live in acs_key_exchange.c.
+ */
+int acs_derive_nonce_state(struct bt_acs_key_desc_runtime *runtime,
+			   const struct bt_acs_key_desc_runtime *parent);
+
+/**
  * @brief Allocate a buffer from the shared ACS net_buf pool.
  *
  * Uses reference counting for automatic lifetime management. Call net_buf_unref()

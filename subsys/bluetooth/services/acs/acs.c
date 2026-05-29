@@ -36,6 +36,34 @@ static const struct k_work_queue_config acs_work_q_config = {
 	.name = "BT_ACS_WQ",
 };
 
+#if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_WRITE) ||                                          \
+	IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_READ)
+#define ACS_DATA_IN_ATTRS                                                                          \
+	BT_GATT_CHARACTERISTIC(BT_UUID_GATT_ACS_DI, BT_GATT_CHRC_WRITE, BT_GATT_PERM_WRITE, NULL,  \
+			       acs_data_in_write, NULL),
+#else
+#define ACS_DATA_IN_ATTRS
+#endif
+
+#if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_NOTIFICATION) ||                                   \
+	IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_READ)
+#define ACS_DON_ATTRS                                                                              \
+	BT_GATT_CHARACTERISTIC(BT_UUID_GATT_ACS_DON, BT_GATT_CHRC_NOTIFY, BT_GATT_PERM_NONE, NULL, \
+			       NULL, NULL),                                                        \
+		BT_GATT_CCC(acs_don_ccc_changed, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
+#else
+#define ACS_DON_ATTRS
+#endif
+
+#if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION)
+#define ACS_DOI_ATTRS                                                                              \
+	BT_GATT_CHARACTERISTIC(BT_UUID_GATT_ACS_DOI, BT_GATT_CHRC_INDICATE, BT_GATT_PERM_NONE,     \
+			       NULL, NULL, NULL),                                                  \
+		BT_GATT_CCC(acs_doi_ccc_changed, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
+#else
+#define ACS_DOI_ATTRS
+#endif
+
 bool acs_is_initialized(void)
 {
 	return acs_initialized;
@@ -95,34 +123,6 @@ static void acs_cp_ccc_changed(const struct bt_gatt_attr *attr, uint16_t value)
 {
 	LOG_DBG("control-point CCC %s", (value == BT_GATT_CCC_INDICATE) ? "enabled" : "disabled");
 }
-
-#if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_WRITE) ||                                          \
-	IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_READ)
-#define ACS_DATA_IN_ATTRS                                                                          \
-	BT_GATT_CHARACTERISTIC(BT_UUID_GATT_ACS_DI, BT_GATT_CHRC_WRITE, BT_GATT_PERM_WRITE, NULL,  \
-			       acs_data_in_write, NULL),
-#else
-#define ACS_DATA_IN_ATTRS
-#endif
-
-#if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_NOTIFICATION) ||                                   \
-	IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_READ)
-#define ACS_DON_ATTRS                                                                              \
-	BT_GATT_CHARACTERISTIC(BT_UUID_GATT_ACS_DON, BT_GATT_CHRC_NOTIFY, BT_GATT_PERM_NONE, NULL, \
-			       NULL, NULL),                                                        \
-		BT_GATT_CCC(acs_don_ccc_changed, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
-#else
-#define ACS_DON_ATTRS
-#endif
-
-#if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION)
-#define ACS_DOI_ATTRS                                                                              \
-	BT_GATT_CHARACTERISTIC(BT_UUID_GATT_ACS_DOI, BT_GATT_CHRC_INDICATE, BT_GATT_PERM_NONE,     \
-			       NULL, NULL, NULL),                                                  \
-		BT_GATT_CCC(acs_doi_ccc_changed, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
-#else
-#define ACS_DOI_ATTRS
-#endif
 
 /* clang-format off */
 BT_GATT_SERVICE_DEFINE(

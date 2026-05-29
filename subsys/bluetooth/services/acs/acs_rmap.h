@@ -76,69 +76,19 @@ struct acs_rmap_cccd_gate {
 	bool indicate_protected;
 };
 
-/**
- * @brief Look up a restriction map by ID.
- *
- * Scans the bt_acs_restriction_map iterable section for a map whose
- * @c map_id equals @p map_id and copies it to @p out.
- *
- * @param map_id  Restriction_Map_ID to search for.
- * @param out     Destination for the found map (must not be NULL).
- *
- * @retval 0        Found; @p out has been populated.
- * @retval -ENOENT  No map with @p map_id is registered.
- */
+/** @brief Look up a restriction map by ID. */
 int acs_rmap_lookup(uint16_t map_id, struct bt_acs_restriction_map *out);
 
-/**
- * @brief Find a protected resource entry in a restriction map by handle.
- *
- * Looks for a registered protected characteristic or protected Control Point
- * entry in @p map_id whose resource handle matches @p resource_handle.
- *
- * @param map_id            Restriction map ID to search in.
- * @param resource_handle   Resource handle to match.
- * @param kind              Filled with the matching resource kind on success.
- * @param entry             Filled with the matching protected entry on success.
- *
- * @retval 0        Matching entry found.
- * @retval -ENOENT  No matching entry found in the map.
- */
+/** @brief Find a protected resource entry in a restriction map by handle. */
 int acs_rmap_find_protected(uint16_t map_id, uint16_t resource_handle,
 			    enum acs_rmap_resource_kind *kind,
 			    const struct bt_acs_rmap_protected **entry);
 
-/**
- * @brief Check whether a characteristic operation requires ACS security.
- *
- * Resolves the protected characteristic entry for @p att_handle in the
- * specified restriction map and checks whether the ATT operations matching
- * @p direction map to a non-zero ISC ID.
- *
- * @param map_id      Restriction map ID to search in.
- * @param att_handle  Characteristic value handle to check.
- * @param direction   ATT direction to test.
- *
- * @retval true   The operation is protected by ACS security.
- * @retval false  The handle is not present in the map, or the matching
- *                operation is unprotected.
- */
+/** @brief Check whether a characteristic operation requires ACS security. */
 bool acs_rmap_char_is_protected(uint16_t map_id, uint16_t att_handle,
 				enum bt_acs_direction direction);
 
-/**
- * @brief Check whether a Control Point opcode requires ACS security.
- *
- * Looks up the CP entry for @p cp_handle in the given restriction map and
- * checks whether @p opcode maps to a non-zero ISC ID.
- *
- * @param map_id     Restriction map ID to search in.
- * @param cp_handle  Resource handle of the Control Point.
- * @param opcode     CP procedure opcode to test.
- *
- * @retval true   The opcode on this CP is protected by ACS security.
- * @retval false  The CP or opcode is not present in the map, or unprotected.
- */
+/** @brief Check whether a Control Point opcode requires ACS security. */
 bool acs_rmap_cp_opcode_is_protected(uint16_t map_id, uint16_t cp_handle, uint8_t opcode);
 
 /**
