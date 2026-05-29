@@ -108,44 +108,30 @@ static int write_char_record(struct rhandle_build_ctx *ctx, uint16_t handle,
 static uint8_t rhandle_build_cb(const struct bt_gatt_attr *attr, uint16_t handle, void *user_data)
 {
 	struct rhandle_build_ctx *ctx = user_data;
+	char uuid_str[BT_UUID_STR_LEN];
 
 	if (ctx->err) {
 		return BT_GATT_ITER_STOP;
 	}
 
-	if (!bt_uuid_cmp(attr->uuid, BT_UUID_GATT_PRIMARY)) {
+	if (!bt_uuid_cmp(attr->uuid, BT_UUID_GATT_PRIMARY) ||
+	    !bt_uuid_cmp(attr->uuid, BT_UUID_GATT_SECONDARY)) {
 		const struct bt_uuid *svc_uuid = (const struct bt_uuid *)attr->user_data;
+		uint8_t attr_type = !bt_uuid_cmp(attr->uuid, BT_UUID_GATT_PRIMARY)
+					    ? ACS_RHANDLE_ATTR_PRIMARY_SVC
+					    : ACS_RHANDLE_ATTR_SECONDARY_SVC;
 
 		ctx->prev_was_chrc = false;
-		ctx->err =
-			write_service_record(ctx, ACS_RHANDLE_ATTR_PRIMARY_SVC, handle, svc_uuid);
+		ctx->err = write_service_record(ctx, attr_type, handle, svc_uuid);
 		if (ctx->err) {
 			return BT_GATT_ITER_STOP;
 		}
 
-		char uuid_str[BT_UUID_STR_LEN];
-
 		bt_uuid_to_str(svc_uuid, uuid_str, sizeof(uuid_str));
-		LOG_DBG("RH map: Primary Service handle=0x%04x uuid=%s", handle, uuid_str);
-	} else if (!bt_uuid_cmp(attr->uuid, BT_UUID_GATT_SECONDARY)) {
-		const struct bt_uuid *svc_uuid = (const struct bt_uuid *)attr->user_data;
-
-		ctx->prev_was_chrc = false;
-		ctx->err =
-			write_service_record(ctx, ACS_RHANDLE_ATTR_SECONDARY_SVC, handle, svc_uuid);
-		if (ctx->err) {
-			return BT_GATT_ITER_STOP;
-		}
-
-		char uuid_str[BT_UUID_STR_LEN];
-
-		bt_uuid_to_str(svc_uuid, uuid_str, sizeof(uuid_str));
-		LOG_DBG("RH map: Secondary Service handle=0x%04x uuid=%s", handle, uuid_str);
+		LOG_DBG("Service %s (handle=0x%04x)", uuid_str, handle);
 	} else if (!bt_uuid_cmp(attr->uuid, BT_UUID_GATT_CHRC)) {
-		const struct bt_gatt_chrc *chrc = (const struct bt_gatt_chrc *)attr->user_data;
-
 		ctx->prev_was_chrc = true;
-		ctx->char_uuid = chrc->uuid;
+		ctx->char_uuid = ((const struct bt_gatt_chrc *)attr->user_data)->uuid;
 	} else {
 		if (ctx->prev_was_chrc) {
 			ctx->err = write_char_record(ctx, handle, ctx->char_uuid);
@@ -153,10 +139,8 @@ static uint8_t rhandle_build_cb(const struct bt_gatt_attr *attr, uint16_t handle
 				return BT_GATT_ITER_STOP;
 			}
 
-			char uuid_str[BT_UUID_STR_LEN];
-
 			bt_uuid_to_str(ctx->char_uuid, uuid_str, sizeof(uuid_str));
-			LOG_DBG("RH map: Char Value handle=0x%04x uuid=%s", handle, uuid_str);
+			LOG_DBG("  Char %s (handle=0x%04x)", uuid_str, handle);
 		}
 		ctx->prev_was_chrc = false;
 	}
@@ -300,16 +284,10 @@ static uint8_t rhandle_lookup_cb(const struct bt_gatt_attr *attr, uint16_t handl
 
 int acs_rhandle_lookup_svc_char(uint16_t resource_handle, struct net_buf_simple *buf)
 {
-	struct rhandle_lookup_ctx ctx;
+	struct rhandle_lookup_ctx ctx = {
+		.target_handle = resource_handle,
+	};
 	int err;
-
-	ctx.target_handle = resource_handle;
-	ctx.current_svc_uuid = NULL;
-	ctx.found_svc_uuid = NULL;
-	ctx.found_char_uuid = NULL;
-	ctx.prev_was_chrc = false;
-	ctx.char_uuid = NULL;
-	ctx.found = false;
 
 	bt_gatt_foreach_attr(0x0001, 0xFFFF, rhandle_lookup_cb, &ctx);
 
