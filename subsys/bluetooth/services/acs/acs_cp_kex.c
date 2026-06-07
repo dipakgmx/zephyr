@@ -147,6 +147,7 @@ int acs_cp_kex_exchange_kdf(struct acs_procedure *proc, struct net_buf_simple *b
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_ECDH)
 	/* ECDH KDF path: KEY_EXCHANGE_RESPONSE follows after Confirmation Random Number. */
 	if (!acs_kex_expects(acs_conn, BT_ACS_CP_OPCODE_KEY_EXCHANGE_KDF)) {
+		acs_key_exchange_abort(acs_conn);
 		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_KEY_EXCHANGE_KDF,
 					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE);
 	}
@@ -391,6 +392,7 @@ int acs_cp_kex_exchange_ecdh(struct acs_procedure *proc, struct net_buf_simple *
 	int arm_err;
 
 	if (!acs_kex_expects(acs_conn, BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH)) {
+		acs_key_exchange_abort(acs_conn);
 		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH,
 					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE);
 	}
@@ -626,8 +628,7 @@ int acs_cp_kex_ecdh_confirm_rand(struct acs_procedure *proc, struct net_buf_simp
 			}
 
 			acs_psa_destroy_key(&acs_conn->kex.derived_key_id);
-			err = acs_crypto_activate_key(acs_conn, exchange_key, key_buf,
-						      key_buf_len);
+			err = acs_crypto_activate_key(acs_conn, exchange_key, key_buf, key_buf_len);
 			mbedtls_platform_zeroize(key_buf, sizeof(key_buf));
 		} else {
 			err = acs_crypto_derive_session_key(acs_conn, req_data.random);

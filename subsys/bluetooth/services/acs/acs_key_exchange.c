@@ -299,9 +299,10 @@ static int acs_hkdf_op_abort(psa_key_derivation_operation_t *op, int prior_ret)
 	return prior_ret;
 }
 
-static int __maybe_unused acs_hkdf_output_bytes(psa_algorithm_t alg, const uint8_t *salt, size_t salt_len,
-				 const struct acs_hkdf_ikm *ikm, const uint8_t *info,
-				 size_t info_len, uint8_t *out, size_t out_len)
+static int __maybe_unused acs_hkdf_output_bytes(psa_algorithm_t alg, const uint8_t *salt,
+						size_t salt_len, const struct acs_hkdf_ikm *ikm,
+						const uint8_t *info, size_t info_len, uint8_t *out,
+						size_t out_len)
 {
 	psa_key_derivation_operation_t op = PSA_KEY_DERIVATION_OPERATION_INIT;
 	int ret = acs_hkdf_op_setup(&op, alg, salt, salt_len, ikm, info, info_len);
@@ -362,7 +363,8 @@ cleanup:
 	return ret;
 }
 
-__maybe_unused size_t acs_nonce_label_build(uint16_t key_id, uint8_t kind, uint8_t *label, size_t len)
+__maybe_unused size_t acs_nonce_label_build(uint16_t key_id, uint8_t kind, uint8_t *label,
+					    size_t len)
 {
 	static const uint8_t prefix[] = "ACS:nonce:";
 
@@ -754,7 +756,6 @@ static int acs_crypto_derive_kdf_child_key(struct bt_acs_conn *acs_conn)
 }
 #endif /* CONFIG_BT_ACS_KEY_EXCHANGE_KDF */
 
-
 static int acs_kdf_serialize_response(struct bt_acs_kex_ctx const *kex,
 				      struct net_buf_simple *rsp_buf)
 {
@@ -889,9 +890,9 @@ int acs_key_exchange_ecdh_kdf(struct bt_acs_conn *acs_conn, struct net_buf_simpl
 		}
 
 		if (acs_conn->kex.kdf.salt_size > 0U) {
-			status = psa_key_derivation_input_bytes(
-				&op, PSA_KEY_DERIVATION_INPUT_SALT, salt_be,
-				acs_conn->kex.kdf.salt_size);
+			status = psa_key_derivation_input_bytes(&op, PSA_KEY_DERIVATION_INPUT_SALT,
+								salt_be,
+								acs_conn->kex.kdf.salt_size);
 			if (status != PSA_SUCCESS) {
 				LOG_ERR("HKDF salt input failed: %d", status);
 				psa_key_derivation_abort(&op);
@@ -907,8 +908,8 @@ int acs_key_exchange_ecdh_kdf(struct bt_acs_conn *acs_conn, struct net_buf_simpl
 			return -EIO;
 		}
 
-		status = psa_key_derivation_input_bytes(&op, PSA_KEY_DERIVATION_INPUT_INFO,
-							info_be, acs_conn->kex.kdf.info_size);
+		status = psa_key_derivation_input_bytes(&op, PSA_KEY_DERIVATION_INPUT_INFO, info_be,
+							acs_conn->kex.kdf.info_size);
 		if (status != PSA_SUCCESS) {
 			LOG_ERR("HKDF info input failed: %d", status);
 			psa_key_derivation_abort(&op);
@@ -918,7 +919,7 @@ int acs_key_exchange_ecdh_kdf(struct bt_acs_conn *acs_conn, struct net_buf_simpl
 		psa_set_key_type(&attrs, PSA_KEY_TYPE_AES);
 		psa_set_key_bits(&attrs, CONFIG_BT_ACS_SESSION_KEY_SIZE * BITS_PER_BYTE);
 		psa_set_key_usage_flags(&attrs, PSA_KEY_USAGE_ENCRYPT | PSA_KEY_USAGE_DECRYPT |
-						PSA_KEY_USAGE_EXPORT);
+							PSA_KEY_USAGE_EXPORT);
 		psa_set_key_algorithm(&attrs, PSA_ALG_GCM);
 
 		status = psa_key_derivation_output_key(&attrs, &op, &ecdhkey_id);

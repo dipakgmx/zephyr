@@ -75,12 +75,7 @@ static inline bool acs_kex_accepts_opcode(const struct bt_acs_conn *acs_conn, ui
 		return false;
 	}
 
-	if (acs_conn->kex.next_expected_opcode == opcode) {
-		return true;
-	}
-
-	return opcode == BT_ACS_CP_OPCODE_ECDH_CONFIRM_CODE &&
-	       acs_conn->kex.next_expected_opcode == BT_ACS_CP_OPCODE_KEY_EXCHANGE_KDF;
+	return acs_conn->kex.next_expected_opcode == opcode;
 }
 
 #ifdef __cplusplus
