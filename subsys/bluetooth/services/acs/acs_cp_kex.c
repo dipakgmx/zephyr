@@ -600,8 +600,10 @@ int acs_cp_kex_ecdh_confirm_rand(struct acs_procedure *proc, struct net_buf_simp
 					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 	}
 
-	if (acs_conn->kex.kdf_applied) {
+	{
 		struct bt_acs_key_desc_runtime *exchange_key;
+		uint8_t key_buf[CONFIG_BT_ACS_SESSION_KEY_SIZE];
+		size_t key_buf_len;
 
 		if (acs_crypto_key_runtime_lookup(acs_conn, ACS_KEY_ID_ECDH, &exchange_key) != 0) {
 			LOG_ERR("Missing ECDH runtime key state");
@@ -610,20 +612,34 @@ int acs_cp_kex_ecdh_confirm_rand(struct acs_procedure *proc, struct net_buf_simp
 						 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
 		}
 
-		err = acs_crypto_activate_key(acs_conn, exchange_key, acs_conn->kex.key_material,
-					      CONFIG_BT_ACS_SESSION_KEY_SIZE);
-	} else {
-		err = acs_crypto_derive_session_key(acs_conn, req_data.random);
-	}
+		if (acs_conn->kex.kdf_applied) {
+			psa_status_t status;
 
-	if (err) {
-		LOG_ERR("Failed to establish session key: %d", err);
-		proc->seq_state = ACS_CP_SEQ_KEX_FAIL_RSP;
-		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_ECDH_CONFIRM_RAND,
-					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
-	}
+			status = psa_export_key(acs_conn->kex.derived_key_id, key_buf,
+						sizeof(key_buf), &key_buf_len);
+			if (status != PSA_SUCCESS) {
+				LOG_ERR("Failed to export derived key: %d", status);
+				proc->seq_state = ACS_CP_SEQ_KEX_FAIL_RSP;
+				return acs_cp_rsp_status(
+					proc, BT_ACS_CP_OPCODE_ECDH_CONFIRM_RAND,
+					BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
+			}
 
-	mbedtls_platform_zeroize(acs_conn->kex.key_material, sizeof(acs_conn->kex.key_material));
+			acs_psa_destroy_key(&acs_conn->kex.derived_key_id);
+			err = acs_crypto_activate_key(acs_conn, exchange_key, key_buf,
+						      key_buf_len);
+			mbedtls_platform_zeroize(key_buf, sizeof(key_buf));
+		} else {
+			err = acs_crypto_derive_session_key(acs_conn, req_data.random);
+		}
+
+		if (err) {
+			LOG_ERR("Failed to establish session key: %d", err);
+			proc->seq_state = ACS_CP_SEQ_KEX_FAIL_RSP;
+			return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_ECDH_CONFIRM_RAND,
+						 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
+		}
+	}
 
 	proc->seq_state = ACS_CP_SEQ_KEX_SUCCESS_RSP;
 

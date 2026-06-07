@@ -54,7 +54,7 @@ LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
 #define ACS_PSA_HKDF_ALG PSA_ALG_HKDF(PSA_ALG_SHA_256)
 #endif
 
-struct bt_acs_key_desc_runtime *acs_key_exchange_established_key(struct bt_acs_conn *acs_conn)
+struct bt_acs_key_desc_runtime *acs_key_exchange_established_key(struct bt_acs_conn const *acs_conn)
 {
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
 	struct bt_acs_key_desc_runtime *kdf_key;
@@ -92,7 +92,7 @@ struct bt_acs_key_desc_runtime *acs_key_exchange_established_key(struct bt_acs_c
 
 int acs_key_exchange_step_response(struct acs_procedure *proc, uint8_t status)
 {
-	struct bt_acs_conn *acs_conn = proc->acs_conn;
+	struct bt_acs_conn const *acs_conn = proc->acs_conn;
 	struct acs_reply_mode reply_mode = acs_proc_reply_mode(proc);
 	uint8_t payload[3];
 	uint16_t key_id;
@@ -159,6 +159,10 @@ static void acs_key_exchange_free_ctx(struct bt_acs_conn *acs_conn)
 
 	if (acs_conn->kex.ecdh_key_id != 0U) {
 		acs_psa_destroy_key(&acs_conn->kex.ecdh_key_id);
+	}
+
+	if (acs_conn->kex.derived_key_id != 0U) {
+		acs_psa_destroy_key(&acs_conn->kex.derived_key_id);
 	}
 
 	memset(&acs_conn->kex, 0, sizeof(acs_conn->kex));
@@ -295,7 +299,7 @@ static int acs_hkdf_op_abort(psa_key_derivation_operation_t *op, int prior_ret)
 	return prior_ret;
 }
 
-static int acs_hkdf_output_bytes(psa_algorithm_t alg, const uint8_t *salt, size_t salt_len,
+static int __maybe_unused acs_hkdf_output_bytes(psa_algorithm_t alg, const uint8_t *salt, size_t salt_len,
 				 const struct acs_hkdf_ikm *ikm, const uint8_t *info,
 				 size_t info_len, uint8_t *out, size_t out_len)
 {
@@ -358,7 +362,7 @@ cleanup:
 	return ret;
 }
 
-static size_t acs_nonce_label_build(uint16_t key_id, uint8_t kind, uint8_t *label, size_t len)
+__maybe_unused size_t acs_nonce_label_build(uint16_t key_id, uint8_t kind, uint8_t *label, size_t len)
 {
 	static const uint8_t prefix[] = "ACS:nonce:";
 
@@ -372,14 +376,10 @@ static size_t acs_nonce_label_build(uint16_t key_id, uint8_t kind, uint8_t *labe
 }
 
 int acs_derive_nonce_state(struct bt_acs_key_desc_runtime *runtime,
-			   const struct bt_acs_key_desc_runtime *parent)
+			   __maybe_unused const struct bt_acs_key_desc_runtime *parent)
 {
 	const struct bt_acs_key_desc_record *key_desc = runtime->key_desc;
 	uint8_t prefix_size = acs_key_desc_nonce_prefix_size(key_desc);
-	struct acs_hkdf_ikm ikm;
-	uint8_t label[sizeof("ACS:nonce:") + sizeof(uint8_t) + sizeof(uint16_t)];
-	size_t label_len;
-	int ret;
 
 	runtime->tx_nonce_counter = 0U;
 	runtime->rx_nonce_counter = key_desc->aes.nonce_type == ACS_NONCE_SEQ_EVEN_ODD ? 1U : 0U;
@@ -390,6 +390,12 @@ int acs_derive_nonce_state(struct bt_acs_key_desc_runtime *runtime,
 
 #if IS_ENABLED(CONFIG_BT_ACS_CCM_NONCE_SEQ_EVEN_ODD)
 	if (key_desc->aes.nonce_type == ACS_NONCE_SEQ_EVEN_ODD) {
+		struct acs_hkdf_ikm ikm;
+		static const char prefix[] = "ACS:nonce:";
+		uint8_t label[sizeof(prefix) + sizeof(uint8_t) + sizeof(uint16_t)];
+		size_t label_len;
+		int ret;
+
 		if (!parent || parent->derive_key_id == 0U) {
 			return -EINVAL;
 		}
@@ -503,7 +509,7 @@ static int acs_ecdh_confirm_code_compute(const uint8_t *server_x_le, const uint8
 		goto cleanup;
 	}
 
-	/* Step 3: ConfirmationCode = HMAC(ConfirmationKey, RandomNumber) */
+	/** Step 3: ConfirmationCode = HMAC(ConfirmationKey, RandomNumber) **/
 	ret = acs_hmac_sha256(confirmation_key, sizeof(confirmation_key), random,
 			      ACS_CONFIRM_VALUE_SIZE, confirm_out);
 	if (ret != 0) {
@@ -630,21 +636,36 @@ static int acs_crypto_compute_shared_secret(struct bt_acs_conn *acs_conn)
 	psa_pubkey_len = 1U + x_size + y_size;
 #endif
 
-	status = psa_raw_key_agreement(PSA_ALG_ECDH, acs_conn->kex.ecdh_key_id, psa_pubkey,
-				       psa_pubkey_len, acs_conn->kex.key_material,
-				       sizeof(acs_conn->kex.key_material), &olen);
+	{
+		uint8_t raw_secret[CONFIG_BT_ACS_SHARED_SECRET_MAX_SIZE];
+		psa_key_attributes_t attrs = PSA_KEY_ATTRIBUTES_INIT;
 
-	acs_psa_destroy_key(&acs_conn->kex.ecdh_key_id);
+		status = psa_raw_key_agreement(PSA_ALG_ECDH, acs_conn->kex.ecdh_key_id, psa_pubkey,
+					       psa_pubkey_len, raw_secret, sizeof(raw_secret),
+					       &olen);
 
-	if (status != PSA_SUCCESS) {
-		LOG_ERR("psa_raw_key_agreement failed: %d", status);
-		if (status == PSA_ERROR_INVALID_ARGUMENT) {
-			return -EBADMSG;
+		acs_psa_destroy_key(&acs_conn->kex.ecdh_key_id);
+
+		if (status != PSA_SUCCESS) {
+			LOG_ERR("psa_raw_key_agreement failed: %d", status);
+			return (status == PSA_ERROR_INVALID_ARGUMENT) ? -EBADMSG : -EIO;
 		}
-		return -EIO;
-	}
 
-	acs_conn->kex.key_mat_len = (uint16_t)olen;
+		psa_set_key_type(&attrs, PSA_KEY_TYPE_DERIVE);
+		psa_set_key_bits(&attrs, olen * BITS_PER_BYTE);
+		psa_set_key_usage_flags(&attrs, PSA_KEY_USAGE_DERIVE | PSA_KEY_USAGE_EXPORT);
+		psa_set_key_algorithm(&attrs, ACS_PSA_HKDF_ALG);
+
+		status = psa_import_key(&attrs, raw_secret, olen, &acs_conn->kex.derived_key_id);
+		mbedtls_platform_zeroize(raw_secret, sizeof(raw_secret));
+
+		if (status != PSA_SUCCESS) {
+			LOG_ERR("Failed to import shared secret into PSA: %d", status);
+			return -EIO;
+		}
+
+		acs_conn->kex.key_mat_len = (uint16_t)olen;
+	}
 
 	return 0;
 }
@@ -733,33 +754,9 @@ static int acs_crypto_derive_kdf_child_key(struct bt_acs_conn *acs_conn)
 }
 #endif /* CONFIG_BT_ACS_KEY_EXCHANGE_KDF */
 
-static int acs_kdf_generate_params(struct bt_acs_kex_ctx *kex)
-{
-	psa_status_t psa_ret;
 
-	psa_ret = psa_generate_random(kex->kdf.salt, CONFIG_BT_ACS_KDF_SALT_MAX_SIZE);
-	if (psa_ret != PSA_SUCCESS) {
-		LOG_ERR("psa_generate_random failed for KDF salt: %d", psa_ret);
-		return -EIO;
-	}
-	kex->kdf.salt_size = CONFIG_BT_ACS_KDF_SALT_MAX_SIZE;
-
-#if CONFIG_BT_ACS_KDF_INFO_MAX_SIZE > 0
-	{
-		const char *acs_info = "ACS";
-
-		memset(kex->kdf.info, 0, CONFIG_BT_ACS_KDF_INFO_MAX_SIZE);
-		memcpy(kex->kdf.info, acs_info, strlen(acs_info));
-		kex->kdf.info_size = strlen(acs_info);
-	}
-#else
-	kex->kdf.info_size = 0;
-#endif
-
-	return 0;
-}
-
-static int acs_kdf_serialize_response(struct bt_acs_kex_ctx *kex, struct net_buf_simple *rsp_buf)
+static int acs_kdf_serialize_response(struct bt_acs_kex_ctx const *kex,
+				      struct net_buf_simple *rsp_buf)
 {
 	uint8_t needed = ACS_KDF_RSP_FIXED_SIZE + kex->kdf.salt_size + kex->kdf.info_size;
 
@@ -856,28 +853,84 @@ int acs_key_exchange_ecdh_kdf(struct bt_acs_conn *acs_conn, struct net_buf_simpl
 		return err;
 	}
 
-	err = acs_kdf_generate_params(&acs_conn->kex);
-	if (err) {
-		return err;
+	{
+		psa_status_t psa_ret;
+
+		psa_ret = psa_generate_random(acs_conn->kex.kdf.salt,
+					      CONFIG_BT_ACS_KDF_SALT_MAX_SIZE);
+		if (psa_ret != PSA_SUCCESS) {
+			LOG_ERR("psa_generate_random failed for KDF salt: %d", psa_ret);
+			return -EIO;
+		}
+		acs_conn->kex.kdf.salt_size = CONFIG_BT_ACS_KDF_SALT_MAX_SIZE;
+
+#if CONFIG_BT_ACS_KDF_INFO_MAX_SIZE > 0
+		memset(acs_conn->kex.kdf.info, 0, CONFIG_BT_ACS_KDF_INFO_MAX_SIZE);
+		memcpy(acs_conn->kex.kdf.info, "ACS", 3);
+		acs_conn->kex.kdf.info_size = 3;
+#else
+		acs_conn->kex.kdf.info_size = 0;
+#endif
 	}
 
-	/* HKDF overwrites key_material in-place (safe: PSA reads IKM fully
-	 * during extract before writing during expand).
-	 */
 	sys_memcpy_swap(salt_be, acs_conn->kex.kdf.salt, acs_conn->kex.kdf.salt_size);
 	sys_memcpy_swap(info_be, acs_conn->kex.kdf.info, acs_conn->kex.kdf.info_size);
 
-	struct acs_hkdf_ikm ikm = {
-		.bytes = acs_conn->kex.key_material,
-		.bytes_len = acs_conn->kex.key_mat_len,
-	};
+	{
+		psa_key_derivation_operation_t op = PSA_KEY_DERIVATION_OPERATION_INIT;
+		psa_key_attributes_t attrs = PSA_KEY_ATTRIBUTES_INIT;
+		psa_key_id_t ecdhkey_id = 0;
+		psa_status_t status;
 
-	err = acs_hkdf_output_bytes(ACS_PSA_HKDF_ALG, salt_be, acs_conn->kex.kdf.salt_size, &ikm,
-				    info_be, acs_conn->kex.kdf.info_size,
-				    acs_conn->kex.key_material, CONFIG_BT_ACS_SESSION_KEY_SIZE);
-	if (err != 0) {
-		LOG_ERR("HKDF ECDHKey derivation failed: %d", err);
-		return err;
+		status = psa_key_derivation_setup(&op, ACS_PSA_HKDF_ALG);
+		if (status != PSA_SUCCESS) {
+			LOG_ERR("HKDF setup failed: %d", status);
+			return -EIO;
+		}
+
+		if (acs_conn->kex.kdf.salt_size > 0U) {
+			status = psa_key_derivation_input_bytes(
+				&op, PSA_KEY_DERIVATION_INPUT_SALT, salt_be,
+				acs_conn->kex.kdf.salt_size);
+			if (status != PSA_SUCCESS) {
+				LOG_ERR("HKDF salt input failed: %d", status);
+				psa_key_derivation_abort(&op);
+				return -EIO;
+			}
+		}
+
+		status = psa_key_derivation_input_key(&op, PSA_KEY_DERIVATION_INPUT_SECRET,
+						      acs_conn->kex.derived_key_id);
+		if (status != PSA_SUCCESS) {
+			LOG_ERR("HKDF secret input_key failed: %d", status);
+			psa_key_derivation_abort(&op);
+			return -EIO;
+		}
+
+		status = psa_key_derivation_input_bytes(&op, PSA_KEY_DERIVATION_INPUT_INFO,
+							info_be, acs_conn->kex.kdf.info_size);
+		if (status != PSA_SUCCESS) {
+			LOG_ERR("HKDF info input failed: %d", status);
+			psa_key_derivation_abort(&op);
+			return -EIO;
+		}
+
+		psa_set_key_type(&attrs, PSA_KEY_TYPE_AES);
+		psa_set_key_bits(&attrs, CONFIG_BT_ACS_SESSION_KEY_SIZE * BITS_PER_BYTE);
+		psa_set_key_usage_flags(&attrs, PSA_KEY_USAGE_ENCRYPT | PSA_KEY_USAGE_DECRYPT |
+						PSA_KEY_USAGE_EXPORT);
+		psa_set_key_algorithm(&attrs, PSA_ALG_GCM);
+
+		status = psa_key_derivation_output_key(&attrs, &op, &ecdhkey_id);
+		psa_key_derivation_abort(&op);
+
+		if (status != PSA_SUCCESS) {
+			LOG_ERR("HKDF output_key failed: %d", status);
+			return -EIO;
+		}
+
+		acs_psa_destroy_key(&acs_conn->kex.derived_key_id);
+		acs_conn->kex.derived_key_id = ecdhkey_id;
 	}
 
 	acs_conn->kex.key_mat_len = CONFIG_BT_ACS_SESSION_KEY_SIZE;
@@ -896,8 +949,8 @@ int acs_key_exchange_ecdh_kdf(struct bt_acs_conn *acs_conn, struct net_buf_simpl
 
 int acs_key_exchange_ecdh_confirm_code(struct bt_acs_conn *acs_conn, struct net_buf_simple *rsp_buf)
 {
-	const uint8_t *key_mat;
-	uint16_t key_mat_len;
+	uint8_t key_mat[CONFIG_BT_ACS_SESSION_KEY_SIZE];
+	size_t key_mat_len;
 	int err;
 	uint8_t server_confirm[ACS_CONFIRM_VALUE_SIZE];
 	uint8_t server_confirm_le[ACS_CONFIRM_VALUE_SIZE];
@@ -908,11 +961,18 @@ int acs_key_exchange_ecdh_confirm_code(struct bt_acs_conn *acs_conn, struct net_
 		return err;
 	}
 
-	/* Generate fresh server random; client_confirm verification deferred to confirm_rand */
 	sys_rand_get(acs_conn->kex.server_random, sizeof(acs_conn->kex.server_random));
 
-	key_mat = acs_conn->kex.key_material;
-	key_mat_len = acs_conn->kex.key_mat_len;
+	{
+		psa_status_t status;
+
+		status = psa_export_key(acs_conn->kex.derived_key_id, key_mat, sizeof(key_mat),
+					&key_mat_len);
+		if (status != PSA_SUCCESS) {
+			LOG_ERR("Failed to export derived key for confirm: %d", status);
+			return -EIO;
+		}
+	}
 
 	err = acs_ecdh_confirm_code_compute(acs_conn->kex.server_pubkey.x,
 #if CONFIG_BT_ACS_ECDH_HAS_Y
@@ -929,6 +989,8 @@ int acs_key_exchange_ecdh_confirm_code(struct bt_acs_conn *acs_conn, struct net_
 					    CONFIG_BT_ACS_ECDH_COORD_SIZE, key_mat, key_mat_len,
 					    acs_conn->kex.auth_value, acs_conn->kex.server_random,
 					    server_confirm);
+
+	mbedtls_platform_zeroize(key_mat, sizeof(key_mat));
 
 	if (err) {
 		LOG_ERR("confirm code compute failed: %d", err);
@@ -954,8 +1016,8 @@ int acs_key_exchange_ecdh_confirm_rand(struct bt_acs_conn *acs_conn,
 				       const uint8_t client_random[ACS_CONFIRM_VALUE_SIZE],
 				       struct net_buf_simple *rsp_buf)
 {
-	const uint8_t *key_mat;
-	uint16_t key_mat_len;
+	uint8_t key_mat[CONFIG_BT_ACS_SESSION_KEY_SIZE];
+	size_t key_mat_len;
 	uint8_t computed[ACS_CONFIRM_VALUE_SIZE];
 	uint8_t client_random_be[ACS_CONFIRM_VALUE_SIZE];
 	uint8_t client_confirm_be[ACS_CONFIRM_VALUE_SIZE];
@@ -967,16 +1029,22 @@ int acs_key_exchange_ecdh_confirm_rand(struct bt_acs_conn *acs_conn,
 		return err;
 	}
 
-	/* Reject if client random equals server random (spec 4.4.3.17.1.3) */
 	if (memcmp(client_random, acs_conn->kex.server_random, ACS_CONFIRM_VALUE_SIZE) == 0) {
 		LOG_WRN("client random matches server random");
 		return -EINVAL;
 	}
 
-	key_mat = acs_conn->kex.key_material;
-	key_mat_len = acs_conn->kex.key_mat_len;
+	{
+		psa_status_t status;
 
-	/* client_random is wire LE; reverse to BE for HMAC */
+		status = psa_export_key(acs_conn->kex.derived_key_id, key_mat, sizeof(key_mat),
+					&key_mat_len);
+		if (status != PSA_SUCCESS) {
+			LOG_ERR("Failed to export derived key for verify: %d", status);
+			return -EIO;
+		}
+	}
+
 	sys_memcpy_swap(client_random_be, client_random, ACS_CONFIRM_VALUE_SIZE);
 
 	err = acs_ecdh_confirm_code_compute(acs_conn->kex.server_pubkey.x,
@@ -993,6 +1061,8 @@ int acs_key_exchange_ecdh_confirm_rand(struct bt_acs_conn *acs_conn,
 #endif
 					    CONFIG_BT_ACS_ECDH_COORD_SIZE, key_mat, key_mat_len,
 					    acs_conn->kex.auth_value, client_random_be, computed);
+
+	mbedtls_platform_zeroize(key_mat, sizeof(key_mat));
 
 	if (err) {
 		LOG_ERR("confirm code compute failed during verify: %d", err);
@@ -1038,9 +1108,24 @@ int acs_key_exchange_kdf(struct bt_acs_conn *acs_conn, struct net_buf_simple *rs
 		return err;
 	}
 
-	err = acs_kdf_generate_params(&acs_conn->kex);
-	if (err) {
-		return err;
+	{
+		psa_status_t psa_ret;
+
+		psa_ret = psa_generate_random(acs_conn->kex.kdf.salt,
+					      CONFIG_BT_ACS_KDF_SALT_MAX_SIZE);
+		if (psa_ret != PSA_SUCCESS) {
+			LOG_ERR("psa_generate_random failed for KDF salt: %d", psa_ret);
+			return -EIO;
+		}
+		acs_conn->kex.kdf.salt_size = CONFIG_BT_ACS_KDF_SALT_MAX_SIZE;
+
+#if CONFIG_BT_ACS_KDF_INFO_MAX_SIZE > 0
+		memset(acs_conn->kex.kdf.info, 0, CONFIG_BT_ACS_KDF_INFO_MAX_SIZE);
+		memcpy(acs_conn->kex.kdf.info, "ACS", 3);
+		acs_conn->kex.kdf.info_size = 3;
+#else
+		acs_conn->kex.kdf.info_size = 0;
+#endif
 	}
 
 	/* Derive child key: HKDF(salt, ikm=parent_key, info) → child replaces parent_key */

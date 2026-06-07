@@ -41,7 +41,7 @@ int acs_key_exchange_ecdh_confirm_rand(struct bt_acs_conn *acs_conn,
 int acs_key_exchange_kdf(struct bt_acs_conn *acs_conn, struct net_buf_simple *rsp_buf);
 #endif /* CONFIG_BT_ACS_KEY_EXCHANGE_KDF */
 
-struct bt_acs_key_desc_runtime *acs_key_exchange_established_key(struct bt_acs_conn *acs_conn);
+struct bt_acs_key_desc_runtime *acs_key_exchange_established_key(struct bt_acs_conn const *acs_conn);
 
 int acs_key_exchange_step_response(struct acs_procedure *proc, uint8_t status);
 int acs_key_exchange_step_success_status(struct acs_procedure *proc);

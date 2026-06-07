@@ -382,7 +382,7 @@ ssize_t acs_data_in_write(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 		return BT_GATT_ERR(BT_ATT_ERR_INVALID_OFFSET);
 	}
 
-	if (len < 1) {
+	if (len < ACS_SEG_HDR_SIZE + 1) {
 		LOG_ERR("data-in write with invalid length: %u", len);
 		return BT_GATT_ERR(BT_ATT_ERR_INVALID_ATTRIBUTE_LEN);
 	}
