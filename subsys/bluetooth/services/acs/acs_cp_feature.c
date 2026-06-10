@@ -132,48 +132,24 @@ static const struct bt_acs_feature_rsp acs_features = {
 
 int acs_cp_handle_get_feature(struct acs_procedure *proc, struct net_buf_simple *buf)
 {
-	struct net_buf *rsp_buf;
-	struct acs_reply_mode reply_mode = acs_proc_reply_mode(proc);
-	int err;
-
 	if (buf->len != 0) {
-		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_GET_FEATURE,
-					 BT_ACS_CP_RESPONSE_INVALID_OPERAND);
+		return BT_ACS_CP_RESPONSE_INVALID_OPERAND;
 	}
 
 	LOG_DBG("feat=0x%08x prot=0x%04x", acs_features.features, acs_features.protection_methods);
 
-	rsp_buf = acs_prepare_reply_buf(proc, reply_mode.encrypted);
-	if (!rsp_buf) {
-		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_GET_FEATURE,
-					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
-	}
-	net_buf_add_u8(rsp_buf, BT_ACS_CP_OPCODE_ACS_FEATURE_RESPONSE);
-	net_buf_add_mem(rsp_buf, &acs_features, sizeof(acs_features));
+	net_buf_add_mem(proc->buffers.response_buf, &acs_features, sizeof(acs_features));
 
-	err = acs_cp_send_reply(proc);
-	if (err) {
-		LOG_WRN("get_feature: indication arm failed: %d", err);
-	}
-	return err;
+	return ACS_CP_RESULT_STAGED_REPLY;
 }
 
 #if IS_ENABLED(CONFIG_BT_ACS_ATT_MTU)
 int acs_cp_handle_att_mtu(struct acs_procedure *proc)
 {
-	struct net_buf *rsp_buf;
-	struct acs_reply_mode reply_mode = acs_proc_reply_mode(proc);
-	uint16_t mtu;
+	uint16_t mtu = bt_gatt_get_mtu(proc->acs_conn->conn) - 3U;
 
-	rsp_buf = acs_prepare_reply_buf(proc, reply_mode.encrypted);
-	if (!rsp_buf) {
-		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_ATT_MTU,
-					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
-	}
-	mtu = bt_gatt_get_mtu(proc->acs_conn->conn) - 3U;
-	net_buf_add_u8(rsp_buf, BT_ACS_CP_OPCODE_ATT_MTU_RESPONSE);
-	net_buf_add_le16(rsp_buf, mtu);
-	return acs_cp_send_reply(proc);
+	net_buf_add_le16(proc->buffers.response_buf, mtu);
+	return ACS_CP_RESULT_STAGED_REPLY;
 }
 #endif /* CONFIG_BT_ACS_ATT_MTU */
 
@@ -214,44 +190,38 @@ int acs_cp_handle_set_client_nonce_fixed(struct acs_procedure *proc, struct net_
 
 	if (!acs_conn) {
 		LOG_ERR("Request to set client nonce fixed received for unknown connection");
-		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_SET_CLIENT_NONCE_FIXED,
-					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
+		return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED;
 	}
 
 	key_id = sys_get_le16(buf->data);
 	key_desc = acs_key_desc_lookup(key_id);
 	if (!key_desc) {
 		LOG_WRN("Set client nonce fixed: unknown Key_ID 0x%04x", key_id);
-		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_SET_CLIENT_NONCE_FIXED,
-					 BT_ACS_CP_RESPONSE_PARAMETER_OUT_OF_RANGE);
+		return BT_ACS_CP_RESPONSE_PARAMETER_OUT_OF_RANGE;
 	}
 
 	if (!acs_key_desc_has_nonce_record(key_desc) ||
 	    key_desc->aes.nonce_type != ACS_NONCE_SEQ_DIFF_FIXED) {
 		LOG_WRN("Set client nonce fixed: Key_ID 0x%04x does not support SEQ_DIFF_FIXED",
 			key_id);
-		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_SET_CLIENT_NONCE_FIXED,
-					 BT_ACS_CP_RESPONSE_OPCODE_NOT_SUPPORTED);
+		return BT_ACS_CP_RESPONSE_OPCODE_NOT_SUPPORTED;
 	}
 
 	/* §4.4.3.18: reject only while a key exchange procedure is in progress. */
 	if (acs_kex_in_progress(acs_conn)) {
 		LOG_WRN("Set client nonce fixed: key exchange active");
-		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_SET_CLIENT_NONCE_FIXED,
-					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE);
+		return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE;
 	}
 
 	if (acs_crypto_key_runtime_lookup(acs_conn, key_id, &runtime) != 0) {
-		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_SET_CLIENT_NONCE_FIXED,
-					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
+		return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED;
 	}
 
 	fixed_size = acs_key_desc_nonce_fixed_size(key_desc);
 	if (buf->len != sizeof(uint16_t) + fixed_size) {
 		LOG_WRN("Set client nonce fixed: size mismatch (got %u, expected %u)", buf->len,
 			(unsigned int)(sizeof(uint16_t) + fixed_size));
-		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_SET_CLIENT_NONCE_FIXED,
-					 BT_ACS_CP_RESPONSE_INVALID_OPERAND);
+		return BT_ACS_CP_RESPONSE_INVALID_OPERAND;
 	}
 
 	memcpy(runtime->client_nonce_fixed, buf->data + sizeof(uint16_t), fixed_size);
@@ -260,14 +230,12 @@ int acs_cp_handle_set_client_nonce_fixed(struct acs_procedure *proc, struct net_
 	if (!acs_client_nonce_fixed_is_unique(acs_conn, runtime, fixed_size)) {
 		LOG_WRN("Set client nonce fixed: value collides with existing nonce fixed");
 		memset(runtime->client_nonce_fixed, 0, sizeof(runtime->client_nonce_fixed));
-		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_SET_CLIENT_NONCE_FIXED,
-					 BT_ACS_CP_RESPONSE_INVALID_OPERAND);
+		return BT_ACS_CP_RESPONSE_INVALID_OPERAND;
 	}
 
 	runtime->client_nonce_set = true;
 	LOG_DBG("Stored client nonce fixed for Key_ID 0x%04x (%u bytes)", key_id, fixed_size);
 
-	return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_SET_CLIENT_NONCE_FIXED,
-				 BT_ACS_CP_RESPONSE_SUCCESS);
+	return BT_ACS_CP_RESPONSE_SUCCESS;
 }
 #endif /* BT_ACS_HAS_NONCE_FIXED */

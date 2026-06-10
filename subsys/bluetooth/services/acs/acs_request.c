@@ -207,8 +207,7 @@ static int acs_auto_respond(struct acs_procedure *req)
 	{
 		enum acs_reply_channel channel =
 			(props & BT_GATT_CHRC_INDICATE) ? ACS_REPLY_DOI : ACS_REPLY_DON;
-		struct net_buf *rsp_buf = acs_prepare_reply_buf(req, true);
-		struct acs_reply reply;
+		struct net_buf *rsp_buf = acs_prepare_reply_buf(req);
 
 		if (!rsp_buf) {
 			LOG_ERR("auto_respond: response pool exhausted (handle 0x%04x)",
@@ -233,16 +232,11 @@ static int acs_auto_respond(struct acs_procedure *req)
 			net_buf_add(rsp_buf, n);
 		}
 
-		reply = (struct acs_reply){
-			.channel = channel,
-			.plaintext = rsp_buf,
-		};
-
-		return acs_tx_submit(req, &reply);
+		return acs_tx_submit(req, channel);
 	}
 }
 
-void acs_procedure_abort_all(struct bt_acs_conn *acs_conn)
+void acs_procedure_abort_all(struct bt_acs_conn *acs_conn, struct acs_procedure *except)
 {
 	struct acs_procedure *req;
 	uint16_t req_count = 0U;
@@ -296,8 +290,15 @@ void acs_procedure_abort_all(struct bt_acs_conn *acs_conn)
 	}
 #endif /* CONFIG_BT_ACS_PROTECTED_RESOURCE_NOTIFICATION */
 
-	/* Atomically detach each request and drop held references. */
+	/* Atomically detach each request and drop held references. The Abort
+	 * request itself (when it arrived via a protected CP) must survive so
+	 * its own ABORT SUCCESS reply can still be built and sent.
+	 */
 	for (uint8_t i = 0; i < CONFIG_BT_ACS_MAX_INFLIGHT_REQ_PER_CONN; i++) {
+		if (atomic_ptr_get(&acs_conn->inflight_reqs[i]) == except) {
+			continue;
+		}
+
 		req = atomic_ptr_set(&acs_conn->inflight_reqs[i], NULL);
 		if (!req) {
 			continue;

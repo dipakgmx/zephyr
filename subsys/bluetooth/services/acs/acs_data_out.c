@@ -201,7 +201,7 @@ static void data_tx_drain_don_queue(struct bt_acs_conn *acs_conn)
 		}
 
 		err = acs_seg_notify_async_send(&acs_conn->notify_tx, acs_conn->conn,
-						acs_conn->attr_don, req->buffers.response_buf,
+						acs_attr_don(), req->buffers.response_buf,
 						data_tx_notify_completion_cb, req);
 		if (!err) {
 			return;
@@ -302,7 +302,7 @@ static void data_tx_drain_doi_queue(struct bt_acs_conn *acs_conn)
 		 * but does not own it.  req->buffers.response_buf stays alive for the
 		 * lifetime of the request - multi-step sequences reuse it.
 		 */
-		err = acs_seg_tx_send(&acs_conn->indicate_tx, acs_conn->conn, acs_conn->attr_doi,
+		err = acs_seg_tx_send(&acs_conn->indicate_tx, acs_conn->conn, acs_attr_doi(),
 				      req->buffers.response_buf, data_tx_completion_cb, req);
 		if (!err) {
 			return;
@@ -448,18 +448,12 @@ static int data_tx_send_notify(struct acs_procedure *req)
 }
 #endif /* CONFIG_BT_ACS_PROTECTED_RESOURCE_NOTIFICATION */
 
-struct net_buf *acs_prepare_reply_buf(struct acs_procedure *proc, bool encrypted)
+struct net_buf *acs_prepare_reply_buf(struct acs_procedure *proc)
 {
 	struct net_buf *buf;
 
 	__ASSERT_NO_MSG(proc != NULL);
 	__ASSERT_NO_MSG(proc->acs_conn != NULL);
-
-	if (proc->kind == ACS_PROC_KIND_PLAIN_CP) {
-		__ASSERT_NO_MSG(!encrypted);
-	} else {
-		__ASSERT_NO_MSG(encrypted);
-	}
 
 	buf = proc->buffers.response_buf;
 	if (!buf) {
@@ -472,11 +466,11 @@ struct net_buf *acs_prepare_reply_buf(struct acs_procedure *proc, bool encrypted
 	}
 	net_buf_reset(buf);
 
-	if (encrypted) {
-		net_buf_reserve(buf, ACS_CRYPTO_HEADROOM);
-	}
-
+	/* Protected replies are AEAD-encrypted in place and carry the inner
+	 * resource-handle prefix; plain CP replies go out as-is.
+	 */
 	if (proc->kind == ACS_PROC_KIND_PROTECTED_REQ) {
+		net_buf_reserve(buf, ACS_CRYPTO_HEADROOM);
 		net_buf_add_le16(buf, proc->route.resource_handle);
 	}
 
@@ -501,7 +495,7 @@ static int acs_tx_submit_plain_cp(struct acs_procedure *proc)
 	/* Pass the buffer via user_data so the completion callback can free
 	 * it.  The seg-TX engine borrows the buffer but does not own it.
 	 */
-	err = acs_seg_tx_send(&acs_conn->cp_tx, acs_conn->conn, acs_conn->attr_cp, rsp_buf,
+	err = acs_seg_tx_send(&acs_conn->cp_tx, acs_conn->conn, acs_attr_cp(), rsp_buf,
 			      acs_cp_completion_cb, rsp_buf);
 	if (err) {
 		atomic_set(&acs_conn->plain_cp_proc.plain_cp.locked, 0);
@@ -510,45 +504,35 @@ static int acs_tx_submit_plain_cp(struct acs_procedure *proc)
 	return err;
 }
 
-int acs_tx_submit(struct acs_procedure *proc, const struct acs_reply *reply)
+int acs_tx_submit(struct acs_procedure *proc, enum acs_reply_channel channel)
 {
-	if (!proc || !reply || !reply->plaintext) {
+	if (!proc || !proc->buffers.response_buf) {
 		return -EINVAL;
 	}
 
-	/* Contract assertions - keep callers honest about every reply field, so
-	 * future call sites cannot drift channel/proc ownership out of sync
+	/* Contract assertions - keep callers honest about channel/proc
+	 * pairing, so future call sites cannot drift them out of sync
 	 * without immediately tripping a debug build.
 	 */
-	switch (reply->channel) {
+	switch (channel) {
 	case ACS_REPLY_CP:
 		__ASSERT(proc->kind == ACS_PROC_KIND_PLAIN_CP,
 			 "ACS_REPLY_CP requires plain-CP proc");
-		__ASSERT(proc != NULL, "plain-CP proc missing procedure");
-		__ASSERT(reply->plaintext == proc->buffers.response_buf,
-			 "ACS_REPLY_CP plaintext must be the staged "
-			 "plain_cp_proc.buffers.response_buf");
 		return acs_tx_submit_plain_cp(proc);
 #if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_NOTIFICATION)
 	case ACS_REPLY_DON:
 		__ASSERT(proc->kind == ACS_PROC_KIND_PROTECTED_REQ,
 			 "ACS_REPLY_DON requires protected-request proc");
-		__ASSERT(proc != NULL, "protected-request proc missing req");
-		__ASSERT(reply->plaintext == proc->buffers.response_buf,
-			 "ACS_REPLY_DON plaintext must be the staged req->buffers.response_buf");
 		return data_tx_send_notify(proc);
 #endif
 #if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION)
 	case ACS_REPLY_DOI:
 		__ASSERT(proc->kind == ACS_PROC_KIND_PROTECTED_REQ,
 			 "ACS_REPLY_DOI requires protected-request proc");
-		__ASSERT(proc != NULL, "protected-request proc missing req");
-		__ASSERT(reply->plaintext == proc->buffers.response_buf,
-			 "ACS_REPLY_DOI plaintext must be the staged req->buffers.response_buf");
 		return data_tx_send_indicate(proc);
 #endif
 	default:
-		LOG_ERR("invalid channel %d", (int)reply->channel);
+		LOG_ERR("invalid channel %d", (int)channel);
 		return -EINVAL;
 	}
 }

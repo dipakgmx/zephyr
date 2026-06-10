@@ -451,87 +451,70 @@ config BT_ACS_SESSION_KEY_SIZE
 	int
 	default 16
 
-menu "Data Protection Algorithms"
+choice BT_ACS_DATA_PROTECTION_ALGORITHM
+	prompt "Data protection algorithm"
 	depends on BT_ACS_FEAT_AUTHENTICATION
+	default BT_ACS_DATA_PROTECTION_AES_GCM if BT_ACS_FEAT_CONFIDENTIALITY
+	default BT_ACS_DATA_PROTECTION_AES_GMAC if BT_ACS_FEAT_INTEGRITY
+	default BT_ACS_DATA_PROTECTION_AES_CMAC
+	help
+	  Select the data protection algorithm for this ACS build.
+	  Exactly one algorithm is active per build. Each algorithm
+	  is available only when its required protection tier is
+	  enabled.
 
-comment "AEAD - Authenticated Encryption with Associated Data"
+	  To support multiple algorithms simultaneously (different
+	  algorithms for different ISC configurations), convert this
+	  choice to individual bool options and resolve the per-key
+	  algorithm dispatch in acs_crypto_alg.c and the exchange-key
+	  PSA policy in acs_crypto.c.
 
 config BT_ACS_DATA_PROTECTION_AES_GCM
-	bool "AES-128-GCM"
-	default y if BT_ACS_FEAT_CONFIDENTIALITY
+	bool "AES-128-GCM (AEAD)"
 	depends on BT_ACS_FEAT_CONFIDENTIALITY
 	help
-	  Enable AES-128-GCM data protection for this ACS
-	  implementation.
-
 	  AES-128-GCM provides authenticated encryption with associated
 	  data (AEAD) and can be used when protected resources require
 	  confidentiality, integrity, and authentication.
 
-	  In this implementation, AES-128-GCM uses a 12-octet IV
-	  composed of a fixed part and a variable invocation part.
-	  The nonce parameters are reported through the ACS key
-	  descriptor fields.
+	  Uses a 12-octet IV: 4-octet fixed part and 8-octet variable
+	  invocation part, as recommended by the ACS specification.
 
-	  For interoperability, AES-128-GCM is the baseline
-	  authenticated-encryption algorithm associated with ACS
-	  confidentiality support.
+	  This is the baseline authenticated-encryption algorithm for
+	  ACS confidentiality support.
 
 config BT_ACS_DATA_PROTECTION_AES_CCM
-	bool "AES-128-CCM"
+	bool "AES-128-CCM (AEAD)"
 	depends on BT_ACS_FEAT_CONFIDENTIALITY
 	help
-	  Enable AES-128-CCM data protection for this ACS
-	  implementation.
-
 	  AES-128-CCM is an authenticated-encryption with associated
 	  data (AEAD) algorithm. This implementation supports
 	  configurable MAC size and nonce format through the
 	  associated Kconfig options.
 
-	  In this implementation, nonce state is maintained per key
-	  descriptor record.
-
-comment "Integrity - authentication without confidentiality"
+	  Nonce state is maintained per key descriptor record.
 
 config BT_ACS_DATA_PROTECTION_AES_GMAC
-	bool "AES-128-GMAC"
-	default y if BT_ACS_FEAT_INTEGRITY && !BT_ACS_FEAT_CONFIDENTIALITY
+	bool "AES-128-GMAC (integrity)"
 	depends on BT_ACS_FEAT_INTEGRITY
 	help
-	  Enable AES-128-GMAC data protection for this ACS
-	  implementation.
-
 	  AES-128-GMAC provides authentication and integrity without
 	  confidentiality and can be used when protected resources do
 	  not require encryption.
 
-	  In this implementation, AES-128-GMAC uses the same IV
-	  structure as AES-128-GCM and can be enabled alongside other
-	  ACS data-protection algorithms for different security
-	  configurations.
-
-comment "Authentication only"
+	  Uses the same 12-octet IV structure as AES-128-GCM.
 
 config BT_ACS_DATA_PROTECTION_AES_CMAC
-	bool "AES-128-CMAC"
-	depends on BT_ACS_FEAT_AUTHENTICATION
+	bool "AES-128-CMAC (authentication)"
 	depends on !BT_ACS_FEAT_INTEGRITY
-	depends on !BT_ACS_DATA_PROTECTION_AES_GCM
-	depends on !BT_ACS_DATA_PROTECTION_AES_GMAC
-	depends on !BT_ACS_DATA_PROTECTION_AES_CCM
 	help
-	  Enable AES-128-CMAC data protection for this ACS
-	  implementation.
-
 	  AES-128-CMAC provides authentication without nonce-based
-	  integrity or confidentiality protection and is intended for
-	  configurations that use authentication only.
+	  integrity or confidentiality protection. It is therefore only
+	  selectable in authentication-only builds - a build advertising
+	  the integrity or confidentiality tier must use an algorithm
+	  that actually provides it.
 
-	  In this implementation, AES-128-CMAC is mutually exclusive
-	  with the enabled AEAD algorithm selections in this build.
-
-endmenu
+endchoice
 
 config BT_ACS_CCM_MAC_SIZE
 	int "AES-CCM MAC tag size in bytes"
@@ -602,12 +585,12 @@ endchoice
 
 config BT_ACS_MAX_NONCE_RECORDS
 	int
-	default 3 if BT_ACS_DATA_PROTECTION_AES_CCM && BT_ACS_DATA_PROTECTION_AES_GCM && \
-		     BT_ACS_DATA_PROTECTION_AES_GMAC
-	default 2 if BT_ACS_DATA_PROTECTION_AES_CCM && BT_ACS_DATA_PROTECTION_AES_GCM
-	default 2 if BT_ACS_DATA_PROTECTION_AES_CCM && BT_ACS_DATA_PROTECTION_AES_GMAC
-	default 2 if BT_ACS_DATA_PROTECTION_AES_GCM && BT_ACS_DATA_PROTECTION_AES_GMAC
 	default 1
+	help
+	  Number of algorithm-record runtime slots per connection.
+	  With the single-algorithm choice model this is always 1.
+	  When converting to multi-algorithm bool options, expand
+	  this to count each enabled algorithm.
 
 # Hidden helpers - derived from active selections, used for CMakeLists gating.
 config BT_ACS_ANY_KEY_EXCHANGE

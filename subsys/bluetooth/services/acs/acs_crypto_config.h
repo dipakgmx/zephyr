@@ -7,10 +7,22 @@
 #ifndef BT_GATT_ACS_CRYPTO_CONFIG_H_
 #define BT_GATT_ACS_CRYPTO_CONFIG_H_
 
+#include <zephyr/sys/util.h>
+
 #include <psa/crypto_sizes.h>
 
 #ifdef __cplusplus
 extern "C" {
+#endif
+
+/** @brief HKDF algorithm matching the configured KDF hash (defaults to SHA-256). */
+#if IS_ENABLED(CONFIG_BT_ACS_KDF_HKDF_SHA384) || IS_ENABLED(CONFIG_BT_ACS_KDF_HKDF_SHA384_WITH_INFO)
+#define ACS_PSA_HKDF_ALG PSA_ALG_HKDF(PSA_ALG_SHA_384)
+#elif IS_ENABLED(CONFIG_BT_ACS_KDF_HKDF_SHA512) ||                                                 \
+	IS_ENABLED(CONFIG_BT_ACS_KDF_HKDF_SHA512_WITH_INFO)
+#define ACS_PSA_HKDF_ALG PSA_ALG_HKDF(PSA_ALG_SHA_512)
+#else
+#define ACS_PSA_HKDF_ALG PSA_ALG_HKDF(PSA_ALG_SHA_256)
 #endif
 
 /** @brief Maximum nonce-variable size supported by the current runtime model. */
@@ -119,33 +131,17 @@ extern "C" {
 
 /** @brief Largest nonce size used by any enabled data-protection algorithm. */
 #define ACS_MAX_NONCE_SIZE                                                                         \
-	((ACS_CCM_NONCE_SIZE_OR_0 > ACS_GCM_NONCE_SIZE_OR_0)                                       \
-		 ? ((ACS_CCM_NONCE_SIZE_OR_0 > ACS_GMAC_NONCE_SIZE_OR_0)                           \
-			    ? ACS_CCM_NONCE_SIZE_OR_0                                              \
-			    : ACS_GMAC_NONCE_SIZE_OR_0)                                            \
-		 : ((ACS_GCM_NONCE_SIZE_OR_0 > ACS_GMAC_NONCE_SIZE_OR_0)                           \
-			    ? ACS_GCM_NONCE_SIZE_OR_0                                              \
-			    : ACS_GMAC_NONCE_SIZE_OR_0))
+	MAX(ACS_CCM_NONCE_SIZE_OR_0, MAX(ACS_GCM_NONCE_SIZE_OR_0, ACS_GMAC_NONCE_SIZE_OR_0))
 
 /** @brief Largest nonce-variable size used by any enabled data-protection algorithm. */
 #define ACS_MAX_NONCE_VAR_SIZE                                                                     \
-	((ACS_CCM_NONCE_VAR_SIZE_OR_0 > ACS_GCM_NONCE_VAR_SIZE_OR_0)                               \
-		 ? ((ACS_CCM_NONCE_VAR_SIZE_OR_0 > ACS_GMAC_NONCE_VAR_SIZE_OR_0)                   \
-			    ? ACS_CCM_NONCE_VAR_SIZE_OR_0                                          \
-			    : ACS_GMAC_NONCE_VAR_SIZE_OR_0)                                        \
-		 : ((ACS_GCM_NONCE_VAR_SIZE_OR_0 > ACS_GMAC_NONCE_VAR_SIZE_OR_0)                   \
-			    ? ACS_GCM_NONCE_VAR_SIZE_OR_0                                          \
-			    : ACS_GMAC_NONCE_VAR_SIZE_OR_0))
+	MAX(ACS_CCM_NONCE_VAR_SIZE_OR_0,                                                           \
+	    MAX(ACS_GCM_NONCE_VAR_SIZE_OR_0, ACS_GMAC_NONCE_VAR_SIZE_OR_0))
 
 /** @brief Largest nonce-fixed size used by any enabled data-protection algorithm. */
 #define ACS_MAX_NONCE_FIXED_SIZE                                                                   \
-	((ACS_CCM_NONCE_FIXED_SIZE_OR_0 > ACS_GCM_NONCE_FIXED_SIZE_OR_0)                           \
-		 ? ((ACS_CCM_NONCE_FIXED_SIZE_OR_0 > ACS_GMAC_NONCE_FIXED_SIZE_OR_0)               \
-			    ? ACS_CCM_NONCE_FIXED_SIZE_OR_0                                        \
-			    : ACS_GMAC_NONCE_FIXED_SIZE_OR_0)                                      \
-		 : ((ACS_GCM_NONCE_FIXED_SIZE_OR_0 > ACS_GMAC_NONCE_FIXED_SIZE_OR_0)               \
-			    ? ACS_GCM_NONCE_FIXED_SIZE_OR_0                                        \
-			    : ACS_GMAC_NONCE_FIXED_SIZE_OR_0))
+	MAX(ACS_CCM_NONCE_FIXED_SIZE_OR_0,                                                         \
+	    MAX(ACS_GCM_NONCE_FIXED_SIZE_OR_0, ACS_GMAC_NONCE_FIXED_SIZE_OR_0))
 
 /** @brief Largest authentication tag size used by any enabled data-protection algorithm. */
 #define ACS_MAX_AUTH_TAG_SIZE ACS_CRYPTO_AUTH_TAG_SIZE

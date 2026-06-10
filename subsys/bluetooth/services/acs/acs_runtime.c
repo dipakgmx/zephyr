@@ -23,13 +23,13 @@
 LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
 
 static int acs_runtime_classify_frame(const struct acs_frame *frame, uint16_t map_id,
-				      struct acs_route *route)
+				      enum acs_route_kind *kind)
 {
 	__ASSERT_NO_MSG(frame != NULL);
-	__ASSERT_NO_MSG(route != NULL);
+	__ASSERT_NO_MSG(kind != NULL);
 
 	if (frame->source_channel == ACS_SRC_CP) {
-		route->kind = ACS_ROUTE_ACS_CP;
+		*kind = ACS_ROUTE_ACS_CP;
 		return 0;
 	}
 
@@ -47,22 +47,16 @@ static int acs_runtime_classify_frame(const struct acs_frame *frame, uint16_t ma
 
 		switch (hit) {
 		case ACS_RMAP_RESOURCE_CP:
-			route->kind = ACS_ROUTE_PROTECTED_SERVICE_CP;
-			break;
+			*kind = ACS_ROUTE_PROTECTED_SERVICE_CP;
+			return 0;
 		case ACS_RMAP_RESOURCE_CHAR:
-			route->kind = ACS_ROUTE_PROTECTED_CHAR;
-			break;
+			*kind = ACS_ROUTE_PROTECTED_CHAR;
+			return 0;
 		default:
 			LOG_WRN("handle 0x%04x not in restriction map %u", frame->resource_handle,
 				map_id);
 			return -ENOENT;
 		}
-
-		route->encrypted = true;
-		route->resource_handle = frame->resource_handle;
-		route->isc_id = frame->isc_id;
-
-		return 0;
 	}
 #else
 	ARG_UNUSED(map_id);
@@ -71,14 +65,15 @@ static int acs_runtime_classify_frame(const struct acs_frame *frame, uint16_t ma
 #endif
 }
 
-static void acs_procedure_take_request_buf(struct acs_procedure *proc, struct bt_acs_conn *acs_conn,
-					   const struct acs_frame *frame)
+/*
+ * Transfer the reassembled Data-In buffer from the channel RX context into the
+ * request. The unwrap helper already pulled the transport header and trimmed
+ * the buffer in place, so data/len describe the inner plaintext payload.
+ */
+static void acs_procedure_take_request_buf(struct acs_procedure *proc, struct bt_acs_conn *acs_conn)
 {
 	proc->buffers.request_buf = acs_conn->data_rx.buf;
 	acs_conn->data_rx.buf = NULL;
-	net_buf_pull(proc->buffers.request_buf,
-		     (size_t)(frame->payload - proc->buffers.request_buf->data));
-	proc->buffers.request_buf->len = frame->payload_len;
 }
 
 #if IS_ENABLED(CONFIG_BT_ACS_FEAT_AUTHENTICATION)
@@ -86,6 +81,7 @@ int acs_runtime_dispatch_protected_cp_frame(const struct acs_frame *frame,
 					    struct bt_acs_conn *acs_conn)
 {
 	struct acs_procedure *req_ctx;
+	bool still_inflight;
 	int err;
 
 	__ASSERT_NO_MSG(frame != NULL);
@@ -93,7 +89,7 @@ int acs_runtime_dispatch_protected_cp_frame(const struct acs_frame *frame,
 	__ASSERT_NO_MSG(acs_conn->data_rx.buf != NULL);
 
 	/* Spec-mandated: reject Data In write if DOI CCC not configured. */
-	err = acs_doi_ccc_check(frame->conn);
+	err = acs_doi_ccc_check(acs_conn->conn);
 	if (err) {
 		LOG_WRN("DOI indications not enabled for protected CP handle 0x%04x",
 			frame->resource_handle);
@@ -108,9 +104,24 @@ int acs_runtime_dispatch_protected_cp_frame(const struct acs_frame *frame,
 		return -ENOMEM;
 	}
 
-	acs_procedure_take_request_buf(req_ctx, acs_conn, frame);
+	acs_procedure_take_request_buf(req_ctx, acs_conn);
 
 	err = acs_cp_dispatch(frame, acs_conn, req_ctx);
+
+	/* A send failure inside dispatch can abort an armed reply sequence,
+	 * which drops the ALLOC reference and destroys req_ctx. Only touch it
+	 * if it is still registered on the connection.
+	 */
+	still_inflight = false;
+	for (uint8_t i = 0; i < CONFIG_BT_ACS_MAX_INFLIGHT_REQ_PER_CONN; i++) {
+		if (atomic_ptr_get(&acs_conn->inflight_reqs[i]) == req_ctx) {
+			still_inflight = true;
+			break;
+		}
+	}
+	if (!still_inflight) {
+		return err;
+	}
 
 	/* The CP handler ran synchronously and consumed the input bytes already.
 	 * Drop the decrypted_request buffer now so it returns to the pool while
@@ -194,7 +205,7 @@ int acs_runtime_dispatch_protected_char_frame(const struct acs_frame *frame,
 	__ASSERT_NO_MSG(acs_conn != NULL);
 	__ASSERT_NO_MSG(acs_conn->data_rx.buf != NULL);
 
-	err = acs_require_data_out_subscription(frame->conn, frame->resource_handle,
+	err = acs_require_data_out_subscription(acs_conn->conn, frame->resource_handle,
 						frame->payload_len);
 	if (err == -EINVAL) {
 		LOG_WRN("required data-out CCC not enabled for handle 0x%04x",
@@ -213,7 +224,7 @@ int acs_runtime_dispatch_protected_char_frame(const struct acs_frame *frame,
 		return -ENOMEM;
 	}
 
-	acs_procedure_take_request_buf(req_ctx, acs_conn, frame);
+	acs_procedure_take_request_buf(req_ctx, acs_conn);
 
 #if defined(CONFIG_BT_ACS_FEAT_AUTHORIZATION)
 	req_ctx->route.access = acs_rmap_resolve_request_access(acs_conn->restriction_map_id,
@@ -234,7 +245,7 @@ int acs_runtime_dispatch_protected_char_frame(const struct acs_frame *frame,
 
 int acs_runtime_dispatch_frame(const struct acs_frame *frame, struct bt_acs_conn *acs_conn)
 {
-	struct acs_route route = {0};
+	enum acs_route_kind kind;
 	uint16_t map_id;
 	int err;
 
@@ -245,13 +256,13 @@ int acs_runtime_dispatch_frame(const struct acs_frame *frame, struct bt_acs_conn
 	map_id = (frame->source_channel == ACS_SRC_CP) ? BT_ACS_RMAP_ID_NONE
 						       : acs_conn->restriction_map_id;
 
-	err = acs_runtime_classify_frame(frame, map_id, &route);
+	err = acs_runtime_classify_frame(frame, map_id, &kind);
 	if (err != 0) {
 		LOG_WRN("handle 0x%04x not in restriction map", frame->resource_handle);
 		return ACS_DATA_ERR_RESOURCE_NOT_PROTECTED;
 	}
 
-	switch (route.kind) {
+	switch (kind) {
 	case ACS_ROUTE_ACS_CP:
 		return acs_cp_dispatch(frame, acs_conn, NULL);
 #if IS_ENABLED(CONFIG_BT_ACS_FEAT_AUTHENTICATION)
@@ -262,6 +273,31 @@ int acs_runtime_dispatch_frame(const struct acs_frame *frame, struct bt_acs_conn
 #endif
 	default:
 		return -EINVAL;
+	}
+}
+
+/* Map a segmentation-RX error to the ATT error returned for the failing write. */
+static ssize_t acs_seg_rx_err_to_att(enum acs_seg_rx_result res, const char *channel)
+{
+	switch (res) {
+	case ACS_SEG_RX_ERR_COUNTER:
+		LOG_WRN("%s: invalid segment counter", channel);
+		return BT_GATT_ERR(BT_ACS_ATT_ERR_INVALID_SEG_COUNTER);
+	case ACS_SEG_RX_ERR_OVERFLOW:
+		LOG_WRN("%s: receive overflow: accumulated payload exceeds buffer", channel);
+		return BT_GATT_ERR(BT_ATT_ERR_INSUFFICIENT_RESOURCES);
+	case ACS_SEG_RX_ERR_TIMEOUT:
+		LOG_WRN("%s: inter-segment timeout expired", channel);
+		return BT_GATT_ERR(BT_ATT_ERR_UNLIKELY);
+	case ACS_SEG_RX_ERR_ORPHAN:
+		LOG_WRN("%s: continuation segment without prior first segment", channel);
+		return BT_GATT_ERR(BT_ATT_ERR_UNLIKELY);
+	case ACS_SEG_RX_ERR_LEN:
+		LOG_WRN("%s: invalid segment length", channel);
+		return BT_GATT_ERR(BT_ATT_ERR_UNLIKELY);
+	default:
+		LOG_ERR("%s: unexpected seg_rx result %d", channel, (int)res);
+		return BT_GATT_ERR(BT_ATT_ERR_UNLIKELY);
 	}
 }
 
@@ -309,7 +345,7 @@ ssize_t acs_cp_write(struct bt_conn *conn, const struct bt_gatt_attr *attr, cons
 
 	switch (seg_rx_result) {
 	case ACS_SEG_RX_COMPLETE: {
-		struct acs_frame frame = acs_frame_from_cp_rx(conn, acs_conn->cp_rx.buf);
+		struct acs_frame frame = acs_frame_from_cp_rx(acs_conn->cp_rx.buf);
 		bool is_abort = false;
 
 #if IS_ENABLED(CONFIG_BT_ACS_ABORT)
@@ -342,24 +378,8 @@ ssize_t acs_cp_write(struct bt_conn *conn, const struct bt_gatt_attr *attr, cons
 	}
 	case ACS_SEG_RX_PENDING:
 		break;
-	case ACS_SEG_RX_ERR_COUNTER:
-		LOG_WRN("invalid CP segment counter");
-		return BT_GATT_ERR(BT_ACS_ATT_ERR_INVALID_SEG_COUNTER);
-	case ACS_SEG_RX_ERR_OVERFLOW:
-		LOG_WRN("CP receive overflow: accumulated payload exceeds buffer");
-		return BT_GATT_ERR(BT_ATT_ERR_INSUFFICIENT_RESOURCES);
-	case ACS_SEG_RX_ERR_TIMEOUT:
-		LOG_WRN("CP receive inter-segment timeout expired");
-		return BT_GATT_ERR(BT_ATT_ERR_UNLIKELY);
-	case ACS_SEG_RX_ERR_ORPHAN:
-		LOG_WRN("CP continuation segment without prior first segment");
-		return BT_GATT_ERR(BT_ATT_ERR_UNLIKELY);
-	case ACS_SEG_RX_ERR_LEN:
-		LOG_WRN("invalid CP segment length");
-		return BT_GATT_ERR(BT_ATT_ERR_UNLIKELY);
 	default:
-		LOG_ERR("unexpected CP seg_rx result %d", (int)seg_rx_result);
-		return BT_GATT_ERR(BT_ATT_ERR_UNLIKELY);
+		return acs_seg_rx_err_to_att(seg_rx_result, "CP");
 	}
 
 	return len;
@@ -402,12 +422,11 @@ ssize_t acs_data_in_write(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 
 	switch (res) {
 	case ACS_SEG_RX_COMPLETE: {
-		struct net_buf_simple simple;
-
-		net_buf_simple_init_with_data(&simple, acs_conn->data_rx.buf->data,
-					      acs_conn->data_rx.buf->len);
-
-		err = acs_data_in_unwrap_and_route(acs_conn, &simple);
+		/* Unwrap consumes the transport header and trims to the inner
+		 * plaintext directly on the reassembled buffer, so a later
+		 * ownership transfer into a request context is a plain handoff.
+		 */
+		err = acs_data_in_unwrap_and_route(acs_conn, &acs_conn->data_rx.buf->b);
 
 		/*
 		 * On success the buffer is either owned by the request context
@@ -418,46 +437,40 @@ ssize_t acs_data_in_write(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 			acs_seg_rx_reset(&acs_conn->data_rx);
 		}
 
-		if (err == ACS_DATA_ERR_NOT_AUTHORIZED) {
+		switch (err) {
+		case 0:
+			break;
+		case ACS_DATA_ERR_NOT_AUTHORIZED:
 			LOG_WRN("data-in write to handle 0x%04x rejected: no security established",
 				attr_handle);
 			return BT_GATT_ERR(BT_ATT_ERR_AUTHORIZATION);
-		}
-		if (err == ACS_DATA_ERR_INVALID_KEY) {
+		case ACS_DATA_ERR_INVALID_KEY:
 			LOG_ERR("data-in write to handle 0x%04x failed with invalid key; inner "
 				"protected resource handle is unavailable unless decryption "
 				"succeeds",
 				attr_handle);
 			return BT_GATT_ERR(BT_ACS_ATT_ERR_INVALID_KEY);
-		}
-		if (err == ACS_DATA_ERR_CCC_IMPROPER_CONF) {
+		case ACS_DATA_ERR_CCC_IMPROPER_CONF:
 			LOG_WRN("data-in write to handle 0x%04x rejected: required CCC not "
 				"configured",
 				attr_handle);
 			return BT_GATT_ERR(BT_ATT_ERR_CCC_IMPROPER_CONF);
-		}
-		if (err == ACS_DATA_ERR_RESOURCE_NOT_PROTECTED) {
+		case ACS_DATA_ERR_RESOURCE_NOT_PROTECTED:
 			LOG_WRN("data-in write to handle 0x%04x rejected: resource handle not "
-				"protected "
-				"by active map",
+				"protected by active map",
 				attr_handle);
 			return BT_GATT_ERR(BT_ACS_ATT_ERR_RESOURCE_NOT_PROTECTED);
-		}
-		if (err == ACS_DATA_ERR_INCORRECT_SECURITY_CONFIG) {
+		case ACS_DATA_ERR_INCORRECT_SECURITY_CONFIG:
 			LOG_WRN("data-in write to handle 0x%04x rejected: ISC_ID not found or "
-				"security "
-				"config mismatch",
+				"security config mismatch",
 				attr_handle);
 			return BT_GATT_ERR(BT_ACS_ATT_ERR_INCORRECT_SECURITY_CONFIG);
-		}
-		if (err == -ENOMEM) {
+		case -ENOMEM:
 			LOG_WRN("data-in write to handle 0x%04x rejected: no free request context "
-				"for "
-				"protected resource",
+				"for protected resource",
 				attr_handle);
 			return BT_GATT_ERR(BT_ATT_ERR_INSUFFICIENT_RESOURCES);
-		}
-		if (err) {
+		default:
 			LOG_ERR("data-in processing failed: %d", err);
 			return BT_GATT_ERR(BT_ATT_ERR_UNLIKELY);
 		}
@@ -465,17 +478,8 @@ ssize_t acs_data_in_write(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 	}
 	case ACS_SEG_RX_PENDING:
 		break;
-	case ACS_SEG_RX_ERR_COUNTER:
-		return BT_GATT_ERR(BT_ACS_ATT_ERR_INVALID_SEG_COUNTER);
-	case ACS_SEG_RX_ERR_OVERFLOW:
-		return BT_GATT_ERR(BT_ATT_ERR_INSUFFICIENT_RESOURCES);
-	case ACS_SEG_RX_ERR_TIMEOUT:
-		return BT_GATT_ERR(BT_ATT_ERR_UNLIKELY);
-	case ACS_SEG_RX_ERR_ORPHAN:
-	case ACS_SEG_RX_ERR_LEN:
 	default:
-		LOG_ERR("data-in processing failed");
-		return BT_GATT_ERR(BT_ATT_ERR_UNLIKELY);
+		return acs_seg_rx_err_to_att(res, "data-in");
 	}
 
 	return len;

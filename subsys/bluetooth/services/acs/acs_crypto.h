@@ -84,6 +84,28 @@ int acs_crypto_get_server_nonce_fixed(struct bt_acs_conn *acs_conn, uint16_t key
 				      uint8_t *nonce_buf, size_t len);
 
 /**
+ * @brief Generate the server's ephemeral ECDH key pair for the active exchange.
+ *
+ * Generates the private key in the PSA keystore (kex.ecdh_key_id) and exports
+ * the public coordinates into kex.server_pubkey in ACS wire order (LE).
+ *
+ * @param acs_conn  ACS connection context with an active key exchange.
+ * @return 0 on success, -EIO on PSA failure.
+ */
+int acs_crypto_generate_keypair(struct bt_acs_conn *acs_conn);
+
+/**
+ * @brief Run ECDH key agreement against the client's public key.
+ *
+ * Validates kex.client_pubkey, computes the shared secret, imports it into the
+ * PSA keystore as kex.derived_key_id and destroys the ephemeral private key.
+ *
+ * @param acs_conn  ACS connection context with an active key exchange.
+ * @return 0 on success, -EINVAL/-EBADMSG on bad client key, -EIO on PSA failure.
+ */
+int acs_crypto_compute_shared_secret(struct bt_acs_conn *acs_conn);
+
+/**
  * @brief Derive the session key from the completed key exchange.
  *
  * @param acs_conn        ACS connection context.

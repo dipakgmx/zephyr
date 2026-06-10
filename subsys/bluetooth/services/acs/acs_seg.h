@@ -287,8 +287,8 @@ int acs_seg_tx_send(struct acs_seg_tx_ctx *ctx, struct bt_conn *conn,
  * Allocates a pool buffer on the first segment of a transfer, hands subsequent
  * segments to @ref acs_seg_rx_process, and returns the seg-RX result. On
  * @ref ACS_SEG_RX_COMPLETE the reassembled payload is in @c rx_ctx->buf and the
- * caller is responsible for transferring ownership (typically into an
- * @ref acs_frame::backing_buf) and clearing @c rx_ctx->buf before returning.
+ * caller is responsible for transferring ownership (typically into a request
+ * context) and clearing @c rx_ctx->buf before returning.
  *
  * On any error result the helper resets @c rx_ctx; the caller does not need to.
  *

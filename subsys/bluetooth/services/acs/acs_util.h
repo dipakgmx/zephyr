@@ -69,15 +69,6 @@ static inline bool acs_kex_expects(const struct bt_acs_conn *acs_conn, uint8_t o
 	return acs_kex_in_progress(acs_conn) && acs_conn->kex.next_expected_opcode == opcode;
 }
 
-static inline bool acs_kex_accepts_opcode(const struct bt_acs_conn *acs_conn, uint8_t opcode)
-{
-	if (!acs_kex_in_progress(acs_conn)) {
-		return false;
-	}
-
-	return acs_conn->kex.next_expected_opcode == opcode;
-}
-
 #ifdef __cplusplus
 }
 #endif

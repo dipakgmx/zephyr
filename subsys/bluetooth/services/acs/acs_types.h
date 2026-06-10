@@ -48,53 +48,34 @@ enum acs_source_channel {
 /**
  * @brief Normalized inbound request - handoff object from transport decode into runtime dispatch.
  *
- * Lifecycle:
- * - Built by the GATT entry layer once acs_channel_rx_feed() reports COMPLETE.
- *   At this point @c payload points at the reassembled bytes in @c backing_buf,
- *   @c source_channel is set, @c encrypted is true for Data In and false for CP,
- *   and @c resource_handle / @c isc_id are 0.
- * - For Data In, the runtime then calls the unwrap helper which sets
- *   @c resource_handle, @c isc_id, clears @c encrypted, and replaces @c payload /
- *   @c payload_len with the inner plaintext.
- * - The runtime owns @c backing_buf and is responsible for releasing it on
- *   every terminal path.
+ * Built once acs_channel_rx_feed() reports COMPLETE. @c payload points into
+ * the reassembled channel-RX buffer, whose lifetime the runtime layer owns
+ * through @c cp_rx / @c data_rx. For Data In, the unwrap helper trims the
+ * buffer to the inner plaintext and fills @c resource_handle / @c isc_id
+ * before the frame is built.
  */
 struct acs_frame {
-	struct bt_conn *conn;     /**< Connection that produced the frame */
-	uint16_t resource_handle; /**< Inner resource handle (0 until unwrap for Data In) */
-	uint16_t isc_id;          /**< ISC_ID (0 for plain CP) */
-	const uint8_t *payload;   /**< Pointer to current logical payload */
-	uint16_t payload_len;     /**< Length of @p payload */
+	uint16_t resource_handle;               /**< Inner resource handle (0 for plain CP) */
+	uint16_t isc_id;                        /**< ISC_ID (0 for plain CP) */
+	const uint8_t *payload;                 /**< Pointer to current logical payload */
+	uint16_t payload_len;                   /**< Length of @p payload */
 	enum acs_source_channel source_channel; /**< Originating ACS characteristic */
-	bool encrypted;                         /**< True between channel RX and unwrap */
-	struct net_buf *backing_buf;            /**< Owns request storage; runtime releases */
 };
 
-/**
- * @brief Build a plain-CP frame from a reassembled segmentation buffer.
- *
- * The frame carries @p rx_buf in @c backing_buf - the runtime layer is
- * responsible for releasing the buffer (or transferring ownership) on every
- * terminal path. The Data In equivalent is built post-decrypt inside the
- * unwrap helper and intentionally has @c backing_buf == NULL because the
- * runtime dispatcher transfers ownership directly out of @c data_rx.
- */
-static inline struct acs_frame acs_frame_from_cp_rx(struct bt_conn *conn, struct net_buf *rx_buf)
+/** @brief Build a plain-CP frame from a reassembled segmentation buffer. */
+static inline struct acs_frame acs_frame_from_cp_rx(struct net_buf *rx_buf)
 {
 	return (struct acs_frame){
-		.conn = conn,
 		.resource_handle = 0,
 		.isc_id = 0,
 		.payload = rx_buf->data,
 		.payload_len = rx_buf->len,
 		.source_channel = ACS_SRC_CP,
-		.encrypted = false,
-		.backing_buf = rx_buf,
 	};
 }
 
 /**
- * @brief Result kind from @ref acs_classify_frame.
+ * @brief Result kind from the frame classifier.
  *
  * The classifier answers "what kind of work is this?" - it does not allocate
  * state and does not dispatch.
@@ -104,19 +85,6 @@ enum acs_route_kind {
 	ACS_ROUTE_PROTECTED_CHAR =
 		1, /**< Protected characteristic request (auto-respond / handler) */
 	ACS_ROUTE_PROTECTED_SERVICE_CP = 2, /**< Protected service Control Point request */
-};
-
-/**
- * @brief Classification result for an inbound frame.
- *
- * Built by @ref acs_classify_frame. @c encrypted carries forward whether the
- * eventual reply must be wrapped on the way out.
- */
-struct acs_route {
-	enum acs_route_kind kind;
-	uint16_t resource_handle;
-	uint16_t isc_id;
-	bool encrypted;
 };
 
 /**
@@ -131,34 +99,6 @@ enum acs_reply_channel {
 	ACS_REPLY_CP = 0,
 	ACS_REPLY_DON = 1,
 	ACS_REPLY_DOI = 2,
-};
-
-/**
- * @brief Canonical transport defaults for a logical ACS reply.
- *
- * Derived once from the dispatch path, then reused by handlers when staging
- * and sending replies so call sites do not have to re-encode channel /
- * encryption / confirm policy inline.
- */
-struct acs_reply_mode {
-	enum acs_reply_channel channel;
-	bool encrypted;
-};
-
-/**
- * @brief Logical outbound message produced by a domain handler.
- *
- * Built by the CP-domain or service-adapter handlers and consumed by the
- * data-out channel layer. The data-out layer decides how to transport
- * @c plaintext based on @c channel.
- *
- * @c plaintext lifetime is owned by the caller (typically the in-flight
- * procedure / request context); the data-out layer only borrows it for the
- * send path.
- */
-struct acs_reply {
-	enum acs_reply_channel channel;
-	struct net_buf *plaintext;
 };
 
 /**
@@ -348,16 +288,7 @@ struct acs_procedure {
  * @brief Per-connection ACS state.
  */
 struct bt_acs_conn {
-	struct bt_conn *conn; /**< Connection pointer */
-	/* Cached GATT attrs - populated once in acs_conn_alloc */
-	const struct bt_gatt_attr *attr_cp;
-	const struct bt_gatt_attr *attr_status;
-#if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_NOTIFICATION)
-	const struct bt_gatt_attr *attr_don;
-#endif
-#if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION)
-	const struct bt_gatt_attr *attr_doi;
-#endif
+	struct bt_conn *conn;                /**< Connection pointer */
 	uint8_t status_flags;                /**< Status flags */
 	uint16_t restriction_map_id;         /**< Restriction map ID */
 	struct bt_acs_crypto_session crypto; /**< Persistent crypto session */
@@ -379,8 +310,7 @@ struct bt_acs_conn {
 	struct k_fifo request_fifo;    /**< Pending protected request FIFO */
 	struct k_work request_work;    /**< Protected request dispatch worker */
 	/** In-flight request slots, one per concurrent protected request. */
-	atomic_ptr_t inflight_reqs[CONFIG_BT_ACS_MAX_INFLIGHT_REQ_PER_CONN]; /**< Protected request
-										dispatch worker */
+	atomic_ptr_t inflight_reqs[CONFIG_BT_ACS_MAX_INFLIGHT_REQ_PER_CONN];
 #if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION)
 	struct k_fifo indicate_fifo;       /**< Pending Data Out Indicate response FIFO */
 	struct k_work doi_drain_work;      /**< DOI drain / continuation worker */
@@ -395,19 +325,16 @@ struct bt_acs_conn {
 };
 
 /**
- * @brief Derive the canonical reply transport mode for a procedure.
+ * @brief Reply channel for a procedure's CP responses.
  *
  * Plain CP replies travel as unencrypted CP indications; protected CP replies
  * travel as encrypted DOI indications. Both are confirmed paths.
  */
-static inline struct acs_reply_mode acs_proc_reply_mode(const struct acs_procedure *proc)
+static inline enum acs_reply_channel acs_proc_reply_channel(const struct acs_procedure *proc)
 {
 	__ASSERT_NO_MSG(proc != NULL);
 
-	return (struct acs_reply_mode){
-		.channel = (proc->kind == ACS_PROC_KIND_PLAIN_CP) ? ACS_REPLY_CP : ACS_REPLY_DOI,
-		.encrypted = (proc->kind == ACS_PROC_KIND_PROTECTED_REQ),
-	};
+	return (proc->kind == ACS_PROC_KIND_PLAIN_CP) ? ACS_REPLY_CP : ACS_REPLY_DOI;
 }
 
 #ifdef __cplusplus

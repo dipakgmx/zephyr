@@ -14,7 +14,7 @@
  * Layering (skim top-to-bottom to follow the data flow):
  *
  *   acs_wire_constants.h  - on-the-wire field sizes / opcodes
- *   acs_types.h           - core structs (acs_frame, acs_route, acs_procedure,
+ *   acs_types.h           - core structs (acs_frame, acs_procedure,
  *                           bt_acs_conn) and enumerations shared across layers
  *   acs_util.h            - small inline helpers
  *

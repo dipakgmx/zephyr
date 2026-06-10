@@ -90,8 +90,6 @@ static uint16_t acs_cp_min_operand_size(uint8_t opcode)
 
 int acs_cp_send_reply(struct acs_procedure *proc)
 {
-	struct acs_reply_mode mode;
-	struct acs_reply reply;
 	int err;
 
 	__ASSERT_NO_MSG(proc != NULL);
@@ -99,19 +97,17 @@ int acs_cp_send_reply(struct acs_procedure *proc)
 	__ASSERT_NO_MSG(proc->buffers.response_buf != NULL);
 	__ASSERT_NO_MSG(proc->buffers.response_buf->len > 0);
 
-	mode = acs_proc_reply_mode(proc);
-
-	reply.channel = mode.channel;
-	reply.plaintext = proc->buffers.response_buf;
-
-	err = acs_tx_submit(proc, &reply);
+	err = acs_tx_submit(proc, acs_proc_reply_channel(proc));
 	if (err) {
+		/* The plain-CP busy gate is released inside acs_tx_submit_plain_cp
+		 * on submit failure - only the sequence teardown belongs here.
+		 */
 		acs_seq_abort(proc);
 		if (proc->kind == ACS_PROC_KIND_PROTECTED_REQ) {
-			LOG_WRN("Protected CP DOI queue failed for handle 0x%04x: %d",
+			LOG_WRN("Protected CP indication failed for handle 0x%04x: %d",
 				proc->route.resource_handle, err);
 		} else {
-			LOG_WRN("Plain CP response indication failed: %d", err);
+			LOG_WRN("Plain CP indication failed: %d", err);
 		}
 	}
 	return err;
@@ -120,15 +116,11 @@ int acs_cp_send_reply(struct acs_procedure *proc)
 int acs_cp_rsp_status(struct acs_procedure *proc, uint8_t req_opcode, uint8_t code)
 {
 	struct net_buf *buf;
-	struct acs_reply reply;
-	struct acs_reply_mode mode;
-	int err;
 
 	__ASSERT_NO_MSG(proc != NULL);
 	__ASSERT_NO_MSG(proc->acs_conn != NULL);
 
-	mode = acs_proc_reply_mode(proc);
-	buf = acs_prepare_reply_buf(proc, mode.encrypted);
+	buf = acs_prepare_reply_buf(proc);
 	if (!buf) {
 		acs_seq_abort(proc);
 		if (proc->kind == ACS_PROC_KIND_PLAIN_CP) {
@@ -141,29 +133,7 @@ int acs_cp_rsp_status(struct acs_procedure *proc, uint8_t req_opcode, uint8_t co
 	net_buf_add_u8(buf, req_opcode);
 	net_buf_add_u8(buf, code);
 
-	reply = (struct acs_reply){
-		.channel = mode.channel,
-		.plaintext = buf,
-	};
-
-	err = acs_tx_submit(proc, &reply);
-	if (err) {
-		/* Status replies are still replies - same failure contract as
-		 * acs_cp_send_reply: tear down any active sequence so we don't
-		 * leak deferred ALLOC refs or leave stale step state behind.
-		 * The plain-CP busy-gate release for submit failure is handled
-		 * inside acs_tx_submit_plain_cp itself, so we don't double up.
-		 */
-		acs_seq_abort(proc);
-		if (proc->kind == ACS_PROC_KIND_PROTECTED_REQ) {
-			LOG_WRN("Protected CP status indication failed for handle 0x%04x: %d",
-				proc->route.resource_handle, err);
-		} else {
-			LOG_WRN("Plain CP status indication failed: %d", err);
-		}
-	}
-
-	return err;
+	return acs_cp_send_reply(proc);
 }
 
 /**
@@ -218,7 +188,7 @@ void acs_cp_completion_cb(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 		}
 
 		/* Drain pending protected-resource requests. */
-		acs_procedure_abort_all(acs_conn);
+		acs_procedure_abort_all(acs_conn, NULL);
 
 		LOG_DBG("Deferred abort committed - sending ABORT SUCCESS");
 		/* Lock stays held - ABORT now owns it; released on confirm. */
@@ -237,33 +207,10 @@ void acs_cp_completion_cb(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 	}
 }
 
-/* Dispatch reassembled CP payload: frame->payload[0]=opcode, [1..]=operand. */
-int acs_cp_dispatch(const struct acs_frame *frame, struct bt_acs_conn *acs_conn,
-		    struct acs_procedure *prot_req)
+/* Route one opcode to its handler; results follow the contract in acs_cp.h. */
+static int acs_cp_run_handler(uint8_t opcode, struct acs_procedure *proc,
+			      struct net_buf_simple *payload)
 {
-	struct acs_procedure *proc;
-	struct net_buf_simple payload_simple;
-	struct net_buf_simple *payload = &payload_simple;
-	uint8_t opcode;
-
-	__ASSERT_NO_MSG(frame != NULL);
-	__ASSERT_NO_MSG(frame->payload != NULL);
-	__ASSERT_NO_MSG(acs_conn != NULL);
-	__ASSERT_NO_MSG(acs_conn->conn != NULL);
-
-	net_buf_simple_init_with_data(&payload_simple, (void *)frame->payload, frame->payload_len);
-
-	/* Protected path passes its own context; plain CP uses the one embedded in acs_conn. */
-	proc = (prot_req != NULL) ? prot_req : &acs_conn->plain_cp_proc;
-
-	opcode = net_buf_simple_pull_u8(payload);
-	LOG_DBG("CP dispatch: opcode 0x%02x, operand len %u", opcode, payload->len);
-
-	if (payload->len < acs_cp_min_operand_size(opcode)) {
-		LOG_WRN("CP dispatch: opcode 0x%02x operand too short (%u)", opcode, payload->len);
-		return acs_cp_rsp_status(proc, opcode, BT_ACS_CP_RESPONSE_INVALID_OPERAND);
-	}
-
 	switch (opcode) {
 	case BT_ACS_CP_OPCODE_GET_FEATURE:
 		return acs_cp_handle_get_feature(proc, payload);
@@ -369,8 +316,157 @@ int acs_cp_dispatch(const struct acs_frame *frame, struct bt_acs_conn *acs_conn,
 
 	default:
 		LOG_WRN("Unsupported opcode: 0x%02x", opcode);
-		return acs_cp_rsp_status(proc, opcode, BT_ACS_CP_RESPONSE_OPCODE_NOT_SUPPORTED);
+		return BT_ACS_CP_RESPONSE_OPCODE_NOT_SUPPORTED;
 	}
+}
+
+#if IS_ENABLED(CONFIG_BT_ACS_ANY_KEY_EXCHANGE)
+/* Opcodes that participate in a key-exchange chain. Any failure to progress
+ * one - malformed operand, staging exhaustion, or an undeliverable reply -
+ * leaves the exchange unrecoverable mid-chain, so the dispatcher tears it
+ * down and a fresh Start Key Exchange can retry instead of being rejected
+ * by the in-progress guard. (Handlers abort their own protocol rejects and
+ * acs_seq_abort covers armed reply sequences; the teardown here is
+ * idempotent with both.)
+ */
+static bool acs_cp_opcode_is_kex(uint8_t opcode)
+{
+	switch (opcode) {
+	case BT_ACS_CP_OPCODE_START_KEY_EXCHANGE:
+	case BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH:
+	case BT_ACS_CP_OPCODE_ECDH_CONFIRM_CODE:
+	case BT_ACS_CP_OPCODE_ECDH_CONFIRM_RAND:
+	case BT_ACS_CP_OPCODE_KEY_EXCHANGE_KDF:
+		return true;
+	default:
+		return false;
+	}
+}
+#endif /* CONFIG_BT_ACS_ANY_KEY_EXCHANGE */
+
+/* Response opcode staged for each request's data response; 0 means the
+ * request answers with a Response Code indication only. Indexed by request
+ * opcode over the dense spec range; ATT MTU (0xDD) sits outside it and is
+ * special-cased in acs_cp_response_opcode().
+ */
+static const uint8_t acs_cp_rsp_opcode[BT_ACS_CP_OPCODE_RFU] = {
+	[BT_ACS_CP_OPCODE_GET_ALL_ACTIVE_DESCRIPTORS] =
+		BT_ACS_CP_OPCODE_RESTRICTION_MAP_DESCRIPTOR_RESPONSE,
+	[BT_ACS_CP_OPCODE_GET_RESTRICTION_MAP_DESCRIPTOR] =
+		BT_ACS_CP_OPCODE_RESTRICTION_MAP_DESCRIPTOR_RESPONSE,
+	[BT_ACS_CP_OPCODE_GET_RESTRICTION_MAP_ID_LIST] =
+		BT_ACS_CP_OPCODE_RESTRICTION_MAP_ID_LIST_RESPONSE,
+	[BT_ACS_CP_OPCODE_GET_RESOURCE_HANDLE_UUID_MAP] =
+		BT_ACS_CP_OPCODE_RESOURCE_HANDLE_UUID_MAP_RESPONSE,
+	[BT_ACS_CP_OPCODE_GET_SERVICE_CHARACTERISTIC_UUIDS_CHAR_RESOURCE_HANDLE] =
+		BT_ACS_CP_OPCODE_SERVICE_CHARACTERISTIC_UUIDS_CHAR_RESOURCE_HANDLE_RESPONSE,
+	[BT_ACS_CP_OPCODE_GET_INFORMATION_SECURITY_CONFIGURATION_DESCRIPTOR] =
+		BT_ACS_CP_OPCODE_INFORMATION_SECURITY_CONFIGURATION_DESCRIPTOR_RESPONSE,
+	[BT_ACS_CP_OPCODE_GET_KEY_DESCRIPTOR] = BT_ACS_CP_OPCODE_KEY_DESCRIPTOR_RESPONSE,
+	[BT_ACS_CP_OPCODE_GET_CURRENT_KEY_LIST] = BT_ACS_CP_OPCODE_CURRENT_KEY_LIST_RESPONSE,
+	[BT_ACS_CP_OPCODE_GET_KEY_URI] = BT_ACS_CP_OPCODE_KEY_URI_RESPONSE,
+	[BT_ACS_CP_OPCODE_GET_FEATURE] = BT_ACS_CP_OPCODE_ACS_FEATURE_RESPONSE,
+	[BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH] = BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH_RESPONSE,
+	[BT_ACS_CP_OPCODE_ECDH_CONFIRM_CODE] =
+		BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH_CONFIRMATION_CODE_RESPONSE,
+	[BT_ACS_CP_OPCODE_ECDH_CONFIRM_RAND] =
+		BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH_CONFIRMATION_RANDOM_NUMBER_RESPONSE,
+	[BT_ACS_CP_OPCODE_KEY_EXCHANGE_KDF] = BT_ACS_CP_OPCODE_KEY_EXCHANGE_KDF_RESPONSE,
+};
+
+static uint8_t acs_cp_response_opcode(uint8_t opcode)
+{
+	if (opcode == BT_ACS_CP_OPCODE_ATT_MTU) {
+		return BT_ACS_CP_OPCODE_ATT_MTU_RESPONSE;
+	}
+	if (opcode >= ARRAY_SIZE(acs_cp_rsp_opcode)) {
+		return 0U;
+	}
+	return acs_cp_rsp_opcode[opcode];
+}
+
+/* Stage the response buffer with its response opcode before the handler
+ * runs, so handlers only append their operand bytes. Returns 0, or
+ * PROCEDURE_NOT_COMPLETED on pool exhaustion.
+ */
+static int acs_cp_stage_response(struct acs_procedure *proc, uint8_t opcode)
+{
+	uint8_t rsp_opcode = acs_cp_response_opcode(opcode);
+	struct net_buf *rsp_buf;
+
+	if (rsp_opcode == 0U) {
+		return 0;
+	}
+
+	rsp_buf = acs_prepare_reply_buf(proc);
+	if (!rsp_buf) {
+		return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED;
+	}
+
+	net_buf_add_u8(rsp_buf, rsp_opcode);
+	return 0;
+}
+
+int acs_cp_dispatch(const struct acs_frame *frame, struct bt_acs_conn *acs_conn,
+		    struct acs_procedure *prot_req)
+{
+	struct acs_procedure *proc;
+	struct net_buf_simple payload_simple;
+	struct net_buf_simple *payload = &payload_simple;
+	uint8_t opcode;
+	int ret;
+	int err;
+
+	__ASSERT_NO_MSG(frame != NULL);
+	__ASSERT_NO_MSG(frame->payload != NULL);
+	__ASSERT_NO_MSG(acs_conn != NULL);
+	__ASSERT_NO_MSG(acs_conn->conn != NULL);
+
+	net_buf_simple_init_with_data(&payload_simple, (void *)frame->payload, frame->payload_len);
+
+	/* Protected path passes its own context; plain CP uses the one embedded in acs_conn. */
+	proc = (prot_req != NULL) ? prot_req : &acs_conn->plain_cp_proc;
+
+	opcode = net_buf_simple_pull_u8(payload);
+	LOG_DBG("CP dispatch: opcode 0x%02x, operand len %u", opcode, payload->len);
+
+	if (payload->len < acs_cp_min_operand_size(opcode)) {
+		LOG_WRN("CP dispatch: opcode 0x%02x operand too short (%u)", opcode, payload->len);
+		ret = BT_ACS_CP_RESPONSE_INVALID_OPERAND;
+#if IS_ENABLED(CONFIG_BT_ACS_ANY_KEY_EXCHANGE)
+		if (acs_cp_opcode_is_kex(opcode) && acs_kex_in_progress(acs_conn)) {
+			acs_key_exchange_abort(acs_conn);
+		}
+#endif
+	} else {
+		ret = acs_cp_stage_response(proc, opcode);
+		if (ret == 0) {
+			ret = acs_cp_run_handler(opcode, proc, payload);
+		}
+#if IS_ENABLED(CONFIG_BT_ACS_ANY_KEY_EXCHANGE)
+		else if (acs_cp_opcode_is_kex(opcode) && acs_kex_in_progress(acs_conn)) {
+			acs_key_exchange_abort(acs_conn);
+		}
+#endif
+	}
+
+	if (ret == ACS_CP_RESULT_NO_REPLY) {
+		return 0;
+	}
+
+	if (ret == ACS_CP_RESULT_STAGED_REPLY) {
+		err = acs_cp_send_reply(proc);
+	} else {
+		err = acs_cp_rsp_status(proc, opcode,
+					(ret < 0) ? errno_to_acs_status(ret) : (uint8_t)ret);
+	}
+
+#if IS_ENABLED(CONFIG_BT_ACS_ANY_KEY_EXCHANGE)
+	if (err && acs_cp_opcode_is_kex(opcode) && acs_kex_in_progress(acs_conn)) {
+		acs_key_exchange_abort(acs_conn);
+	}
+#endif
+	return err;
 }
 
 void acs_seq_clear(struct acs_procedure *proc)

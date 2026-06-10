@@ -217,19 +217,22 @@ static int acs_gatt_attrs_cache(void)
 	return 0;
 }
 
-int acs_cp_ccc_check(struct bt_conn *conn)
+static int acs_ccc_check(struct bt_conn *conn, const struct bt_gatt_attr *attr, uint16_t ccc_value)
 {
 	__ASSERT_NO_MSG(conn != NULL);
-	__ASSERT_NO_MSG(acs_attrs.cp != NULL);
-	return bt_gatt_is_subscribed(conn, acs_attrs.cp, BT_GATT_CCC_INDICATE) ? 0 : -EINVAL;
+	__ASSERT_NO_MSG(attr != NULL);
+	return bt_gatt_is_subscribed(conn, attr, ccc_value) ? 0 : -EINVAL;
+}
+
+int acs_cp_ccc_check(struct bt_conn *conn)
+{
+	return acs_ccc_check(conn, acs_attrs.cp, BT_GATT_CCC_INDICATE);
 }
 
 int acs_don_ccc_check(struct bt_conn *conn)
 {
-	__ASSERT_NO_MSG(conn != NULL);
 #if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_NOTIFICATION)
-	__ASSERT_NO_MSG(acs_attrs.don != NULL);
-	return bt_gatt_is_subscribed(conn, acs_attrs.don, BT_GATT_CCC_NOTIFY) ? 0 : -EINVAL;
+	return acs_ccc_check(conn, acs_attrs.don, BT_GATT_CCC_NOTIFY);
 #else
 	return -ENOTSUP;
 #endif
@@ -237,10 +240,8 @@ int acs_don_ccc_check(struct bt_conn *conn)
 
 int acs_doi_ccc_check(struct bt_conn *conn)
 {
-	__ASSERT_NO_MSG(conn != NULL);
 #if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION)
-	__ASSERT_NO_MSG(acs_attrs.doi != NULL);
-	return bt_gatt_is_subscribed(conn, acs_attrs.doi, BT_GATT_CCC_INDICATE) ? 0 : -EINVAL;
+	return acs_ccc_check(conn, acs_attrs.doi, BT_GATT_CCC_INDICATE);
 #else
 	return -ENOTSUP;
 #endif
@@ -277,7 +278,7 @@ void acs_status_indicate(struct bt_conn *conn)
 	sys_put_le16(acs_conn->restriction_map_id, &acs_conn->status_data[1]);
 
 	memset(&acs_conn->status_indicate_params, 0, sizeof(acs_conn->status_indicate_params));
-	acs_conn->status_indicate_params.attr = acs_conn->attr_status;
+	acs_conn->status_indicate_params.attr = acs_attr_status();
 	acs_conn->status_indicate_params.func = acs_status_indicate_cb;
 	acs_conn->status_indicate_params.data = acs_conn->status_data;
 	acs_conn->status_indicate_params.len = ACS_STATUS_SIZE;

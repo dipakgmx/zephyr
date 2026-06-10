@@ -68,8 +68,13 @@ void acs_request_queue_init(struct bt_acs_conn *acs_conn);
 /** @brief Enqueue @p req for deferred protected request handling. */
 void acs_request_queue_submit(struct bt_acs_conn *acs_conn, struct acs_procedure *req);
 
-/** @brief Abort all in-flight protected resource requests on @p acs_conn. */
-void acs_procedure_abort_all(struct bt_acs_conn *acs_conn);
+/**
+ * @brief Abort all in-flight protected resource requests on @p acs_conn.
+ *
+ * @param except  Request to leave registered and referenced (the protected
+ *                Abort request tearing the others down), or NULL.
+ */
+void acs_procedure_abort_all(struct bt_acs_conn *acs_conn, struct acs_procedure *except);
 
 /** @brief Return the connection for @p req, or NULL after disconnect. */
 struct bt_conn *acs_procedure_conn(const struct acs_procedure *req);
@@ -99,22 +104,21 @@ void acs_seq_on_confirm(struct acs_procedure *proc);
  * no payload prefix.
  *
  * Protected CP / characteristic: returns @c req->buffers.response_buf with
- * @ref ACS_CRYPTO_HEADROOM reserved and the protected-resource handle prefix
- * already pushed, so the handler can append its body bytes directly.
+ * @ref ACS_CRYPTO_HEADROOM reserved (the reply will go through AEAD
+ * encryption) and the protected-resource handle prefix already pushed, so the
+ * handler can append its body bytes directly.
  *
- * @param proc     Active proc.
- * @param encrypted True when the reply will go through AEAD encryption (drives
- *                  the headroom requirement).
+ * @param proc  Active proc.
  * @return Buffer to append response bytes into, or NULL on pool exhaustion.
  */
-struct net_buf *acs_prepare_reply_buf(struct acs_procedure *proc, bool encrypted);
+struct net_buf *acs_prepare_reply_buf(struct acs_procedure *proc);
 
 /**
- * @brief Single-seam outbound submission for any reply.
+ * @brief Single-seam outbound submission of the staged response buffer.
  *
- * Decides the transport family from @p reply->channel:
+ * Sends @c proc->buffers.response_buf on @p channel:
  *   - @ref ACS_REPLY_CP  - plain segmented CP indication on @c acs_conn->cp_tx,
- *     completion via @ref acs_cp_ind_cb. @p proc must be the plain-CP
+ *     completion via @ref acs_cp_completion_cb. @p proc must be the plain-CP
  *     singleton.
  *   - @ref ACS_REPLY_DOI - encrypts in place, queues on @c indicate_fifo and
  *     drains it; completion via @c data_tx_completion_cb. @p proc must
@@ -123,23 +127,23 @@ struct net_buf *acs_prepare_reply_buf(struct acs_procedure *proc, bool encrypted
  *     notification. @p proc must be a protected request.
  *
  * Buffer ownership:
- *   - On success, @c reply->plaintext (== @c proc->buffers.response_buf) is borrowed by the
- *     TX layer for the lifetime of the send. The caller must not free it.
+ *   - On success, @c proc->buffers.response_buf is borrowed by the TX layer
+ *     for the lifetime of the send. The caller must not free it.
  *   - On failure, the caller retains ownership of @c proc->buffers.response_buf. Plain CP
  *     frees it internally on send failure; protected paths leave it on the proc
  *     for a subsequent step or teardown to release.
  *
  * @return 0 on success, negative errno on failure.
  */
-int acs_tx_submit(struct acs_procedure *proc, const struct acs_reply *reply);
+int acs_tx_submit(struct acs_procedure *proc, enum acs_reply_channel channel);
 
 /**
  * @brief Send the staged CP reply assembled from @p proc.
  *
- * Reads the active procedure's staged response buffer, builds an @ref acs_reply
- * using @ref acs_proc_reply_mode for the canonical channel/encrypted
- * defaults, and submits via @ref acs_tx_submit. Aborts any active reply
- * sequence on submit failure and logs the failure.
+ * Submits @c proc->buffers.response_buf via @ref acs_tx_submit - as a plain
+ * CP indication for the plain-CP singleton, or an encrypted DOI indication
+ * for a protected request. Aborts any active reply sequence on submit
+ * failure and logs the failure.
  *
  * @return 0 on success, negative errno on failure.
  */
@@ -148,9 +152,8 @@ int acs_cp_send_reply(struct acs_procedure *proc);
 /**
  * @brief Send a 3-byte Response Code indication on the active CP channel.
  *
- * Stages a fresh response buffer for @p proc via @ref acs_prepare_reply_buf
- * with the mode from @ref acs_proc_reply_mode, fills
- * [BT_ACS_CP_OPCODE_RESPONSE_CODE | req_opcode | code], and submits via
+ * Stages a fresh response buffer for @p proc via @ref acs_prepare_reply_buf,
+ * fills [BT_ACS_CP_OPCODE_RESPONSE_CODE | req_opcode | code], and submits via
  * @ref acs_tx_submit. Mirrors @ref acs_cp_send_reply on submit failure
  * (acs_seq_abort + log); on prep failure additionally releases the plain-CP
  * busy gate.
@@ -161,6 +164,10 @@ int acs_cp_rsp_status(struct acs_procedure *proc, uint8_t req_opcode, uint8_t co
 
 /**
  * @brief Dispatch a reassembled CP payload to the opcode handler.
+ *
+ * Stages the response buffer, runs the handler (which only validates and
+ * builds - see the result contract in acs_cp.h), and transmits the reply,
+ * so every opcode shares one flow.
  *
  * @param frame     Normalized inbound frame. @c frame->payload[0] is the opcode.
  *                  For the protected CP path, @p prot_req must be non-NULL and

@@ -70,14 +70,6 @@ struct bt_acs_conn *acs_conn_alloc(struct bt_conn *conn)
 	memset(acs_conn, 0, sizeof(*acs_conn));
 	acs_crypto_init_slots(acs_conn);
 	acs_conn->conn = conn;
-	acs_conn->attr_cp = acs_attr_cp();
-	acs_conn->attr_status = acs_attr_status();
-#if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_NOTIFICATION)
-	acs_conn->attr_don = acs_attr_don();
-#endif
-#if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION)
-	acs_conn->attr_doi = acs_attr_doi();
-#endif
 	acs_conn->status_flags = BT_ACS_STATUS_SECURITY_CONTROLS_ENABLED;
 	acs_conn->restriction_map_id =
 		IS_ENABLED(CONFIG_BT_ACS_FEAT_AUTHORIZATION) ? CONFIG_BT_ACS_ACTIVE_RMAP_ID : 0;
@@ -136,7 +128,7 @@ void acs_conn_cleanup(struct bt_acs_conn *acs_conn)
 #if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_NOTIFICATION)
 	acs_seg_notify_async_reset(&acs_conn->notify_tx);
 #endif
-	acs_procedure_abort_all(acs_conn);
+	acs_procedure_abort_all(acs_conn, NULL);
 
 	/* Reset the plain-CP procedure singleton. */
 	atomic_set(&acs_conn->plain_cp_proc.plain_cp.locked, 0);

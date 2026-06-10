@@ -21,39 +21,6 @@
 
 LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
 
-/* PSA key bit sizes for supported ECDH curves */
-#define ACS_PSA_KEY_BITS_P521   521U
-#define ACS_PSA_KEY_BITS_P384   384U
-#define ACS_PSA_KEY_BITS_C25519 255U
-#define ACS_PSA_KEY_BITS_P256   256U
-
-/* Uncompressed point prefix for NIST curves ([0x04][X_BE][Y_BE]) */
-#define ACS_ECDH_UNCOMPRESSED_POINT 0x04U
-
-/* Compile-time curve selection - all Kconfig-determined, no runtime branch needed */
-#if IS_ENABLED(CONFIG_BT_ACS_ECDH_CURVE_CURVE25519)
-#define ACS_PSA_ECC_FAMILY PSA_ECC_FAMILY_MONTGOMERY
-#define ACS_PSA_KEY_BITS   ACS_PSA_KEY_BITS_C25519
-#elif IS_ENABLED(CONFIG_BT_ACS_ECDH_CURVE_P521)
-#define ACS_PSA_ECC_FAMILY PSA_ECC_FAMILY_SECP_R1
-#define ACS_PSA_KEY_BITS   ACS_PSA_KEY_BITS_P521
-#elif IS_ENABLED(CONFIG_BT_ACS_ECDH_CURVE_P384)
-#define ACS_PSA_ECC_FAMILY PSA_ECC_FAMILY_SECP_R1
-#define ACS_PSA_KEY_BITS   ACS_PSA_KEY_BITS_P384
-#else
-#define ACS_PSA_ECC_FAMILY PSA_ECC_FAMILY_SECP_R1
-#define ACS_PSA_KEY_BITS   ACS_PSA_KEY_BITS_P256
-#endif
-
-#if IS_ENABLED(CONFIG_BT_ACS_KDF_HKDF_SHA384) || IS_ENABLED(CONFIG_BT_ACS_KDF_HKDF_SHA384_WITH_INFO)
-#define ACS_PSA_HKDF_ALG PSA_ALG_HKDF(PSA_ALG_SHA_384)
-#elif IS_ENABLED(CONFIG_BT_ACS_KDF_HKDF_SHA512) ||                                                 \
-	IS_ENABLED(CONFIG_BT_ACS_KDF_HKDF_SHA512_WITH_INFO)
-#define ACS_PSA_HKDF_ALG PSA_ALG_HKDF(PSA_ALG_SHA_512)
-#else
-#define ACS_PSA_HKDF_ALG PSA_ALG_HKDF(PSA_ALG_SHA_256)
-#endif
-
 struct bt_acs_key_desc_runtime *acs_key_exchange_established_key(struct bt_acs_conn const *acs_conn)
 {
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
@@ -93,7 +60,6 @@ struct bt_acs_key_desc_runtime *acs_key_exchange_established_key(struct bt_acs_c
 int acs_key_exchange_step_response(struct acs_procedure *proc, uint8_t status)
 {
 	struct bt_acs_conn const *acs_conn = proc->acs_conn;
-	struct acs_reply_mode reply_mode = acs_proc_reply_mode(proc);
 	uint8_t payload[3];
 	uint16_t key_id;
 	struct net_buf *buf;
@@ -106,7 +72,7 @@ int acs_key_exchange_step_response(struct acs_procedure *proc, uint8_t status)
 	sys_put_le16(key_id, &payload[0]);
 	payload[2] = status;
 
-	buf = acs_prepare_reply_buf(proc, reply_mode.encrypted);
+	buf = acs_prepare_reply_buf(proc);
 	if (!buf) {
 		return -ENOMEM;
 	}
@@ -142,7 +108,7 @@ int acs_key_exchange_step_success_status(struct acs_procedure *proc)
 
 static int check_expected_opcode(struct bt_acs_conn const *acs_conn, uint8_t expected_opcode)
 {
-	if (!acs_kex_accepts_opcode(acs_conn, expected_opcode)) {
+	if (!acs_kex_expects(acs_conn, expected_opcode)) {
 		LOG_WRN("Invalid KEX transition (requested opcode 0x%02x, current next 0x%02x)",
 			expected_opcode,
 			acs_kex_in_progress(acs_conn) ? acs_conn->kex.next_expected_opcode : 0U);
@@ -523,153 +489,6 @@ cleanup:
 	mbedtls_platform_zeroize(confirmation_key, sizeof(confirmation_key));
 	mbedtls_platform_zeroize(ecdh_auth, sizeof(ecdh_auth));
 	return ret;
-}
-
-static int acs_crypto_generate_keypair(struct bt_acs_conn *acs_conn)
-{
-	struct acs_ecdh_pubkey *pk = &acs_conn->kex.server_pubkey;
-	psa_key_attributes_t attrs = PSA_KEY_ATTRIBUTES_INIT;
-	psa_status_t status;
-	uint8_t pub[1U + 2U * CONFIG_BT_ACS_ECDH_COORD_SIZE];
-	size_t pub_len;
-
-	psa_set_key_type(&attrs, PSA_KEY_TYPE_ECC_KEY_PAIR(ACS_PSA_ECC_FAMILY));
-	psa_set_key_bits(&attrs, ACS_PSA_KEY_BITS);
-	psa_set_key_usage_flags(&attrs, PSA_KEY_USAGE_DERIVE);
-	psa_set_key_algorithm(&attrs, PSA_ALG_ECDH);
-
-	status = psa_generate_key(&attrs, &acs_conn->kex.ecdh_key_id);
-	if (status != PSA_SUCCESS) {
-		LOG_ERR("psa_generate_key failed: %d", status);
-		return -EIO;
-	}
-
-	/* Export public key to populate server_pubkey coords */
-	status = psa_export_public_key(acs_conn->kex.ecdh_key_id, pub, sizeof(pub), &pub_len);
-	if (status != PSA_SUCCESS) {
-		LOG_ERR("psa_export_public_key failed: %d", status);
-		acs_psa_destroy_key(&acs_conn->kex.ecdh_key_id);
-		return -EIO;
-	}
-
-	pk->key_id = sys_cpu_to_le16(ACS_KEY_ID_ECDH);
-	pk->x_size = CONFIG_BT_ACS_ECDH_COORD_SIZE;
-	pk->y_size = CONFIG_BT_ACS_ECDH_HAS_Y ? CONFIG_BT_ACS_ECDH_COORD_SIZE : 0;
-
-#if IS_ENABLED(CONFIG_BT_ACS_ECDH_CURVE_CURVE25519)
-	/* Curve25519: PSA exports raw X_LE, no prefix */
-	if (pub_len != (size_t)CONFIG_BT_ACS_ECDH_COORD_SIZE) {
-		LOG_ERR("Unexpected Curve25519 public key size: %zu (expected %u)", pub_len,
-			CONFIG_BT_ACS_ECDH_COORD_SIZE);
-		acs_psa_destroy_key(&acs_conn->kex.ecdh_key_id);
-		return -EIO;
-	}
-	memcpy(pk->x, pub, CONFIG_BT_ACS_ECDH_COORD_SIZE);
-#else
-	/* NIST: PSA exports [0x04][X_BE][Y_BE]; swap to LE for ACS wire format */
-	size_t expected_len = 1U + 2U * CONFIG_BT_ACS_ECDH_COORD_SIZE;
-	const uint8_t *x_be = &pub[1];
-
-	if (pub_len != expected_len) {
-		LOG_ERR("Unexpected NIST public key size: %zu (expected %zu)", pub_len,
-			expected_len);
-		acs_psa_destroy_key(&acs_conn->kex.ecdh_key_id);
-		return -EIO;
-	}
-
-	sys_memcpy_swap(pk->x, x_be, CONFIG_BT_ACS_ECDH_COORD_SIZE); /* X: BE→LE */
-#if CONFIG_BT_ACS_ECDH_HAS_Y
-	const uint8_t *y_be = &pub[1U + CONFIG_BT_ACS_ECDH_COORD_SIZE];
-
-	sys_memcpy_swap(pk->y, y_be, CONFIG_BT_ACS_ECDH_COORD_SIZE); /* Y: BE→LE */
-#endif
-#endif /* IS_ENABLED(CONFIG_BT_ACS_ECDH_CURVE_CURVE25519) */
-
-	return 0;
-}
-
-static int acs_crypto_compute_shared_secret(struct bt_acs_conn *acs_conn)
-{
-	const struct acs_ecdh_pubkey *cpk = &acs_conn->kex.client_pubkey;
-	uint8_t x_size = cpk->x_size;
-	const uint8_t *x_le = cpk->x;
-	uint8_t psa_pubkey[1U + 2U * CONFIG_BT_ACS_ECDH_COORD_SIZE];
-	size_t psa_pubkey_len;
-	size_t olen;
-	psa_status_t status;
-#if CONFIG_BT_ACS_ECDH_HAS_Y
-	uint8_t y_size = cpk->y_size;
-	const uint8_t *y_le = cpk->y;
-#endif
-
-	/* Reject if coord sizes don't match the compiled-in curve */
-	if (x_size != CONFIG_BT_ACS_ECDH_COORD_SIZE
-#if CONFIG_BT_ACS_ECDH_HAS_Y
-	    || y_size != CONFIG_BT_ACS_ECDH_COORD_SIZE
-#endif
-	) {
-		LOG_ERR("Client pubkey coord size mismatch: x=%u (expected %u)", x_size,
-			CONFIG_BT_ACS_ECDH_COORD_SIZE);
-		acs_psa_destroy_key(&acs_conn->kex.ecdh_key_id);
-		return -EINVAL;
-	}
-
-	/* Reject if client public key equals server public key (spec 4.4.3.17.1.1) */
-	if (memcmp(cpk->x, acs_conn->kex.server_pubkey.x, CONFIG_BT_ACS_ECDH_COORD_SIZE) == 0
-#if CONFIG_BT_ACS_ECDH_HAS_Y
-	    && memcmp(cpk->y, acs_conn->kex.server_pubkey.y, CONFIG_BT_ACS_ECDH_COORD_SIZE) == 0
-#endif
-	) {
-		LOG_WRN("client public key matches server public key");
-		acs_psa_destroy_key(&acs_conn->kex.ecdh_key_id);
-		return -EINVAL;
-	}
-
-#if IS_ENABLED(CONFIG_BT_ACS_ECDH_CURVE_CURVE25519)
-	memcpy(psa_pubkey, x_le, x_size);
-	psa_pubkey_len = x_size;
-#else
-	/* NIST: PSA expects [0x04][X_BE][Y_BE] */
-	psa_pubkey[0] = ACS_ECDH_UNCOMPRESSED_POINT;
-	sys_memcpy_swap(&psa_pubkey[1], x_le, x_size);
-	if (y_le != NULL && y_size > 0U) {
-		sys_memcpy_swap(&psa_pubkey[1U + x_size], y_le, y_size);
-	}
-	psa_pubkey_len = 1U + x_size + y_size;
-#endif
-
-	{
-		uint8_t raw_secret[CONFIG_BT_ACS_SHARED_SECRET_MAX_SIZE];
-		psa_key_attributes_t attrs = PSA_KEY_ATTRIBUTES_INIT;
-
-		status = psa_raw_key_agreement(PSA_ALG_ECDH, acs_conn->kex.ecdh_key_id, psa_pubkey,
-					       psa_pubkey_len, raw_secret, sizeof(raw_secret),
-					       &olen);
-
-		acs_psa_destroy_key(&acs_conn->kex.ecdh_key_id);
-
-		if (status != PSA_SUCCESS) {
-			LOG_ERR("psa_raw_key_agreement failed: %d", status);
-			return (status == PSA_ERROR_INVALID_ARGUMENT) ? -EBADMSG : -EIO;
-		}
-
-		psa_set_key_type(&attrs, PSA_KEY_TYPE_DERIVE);
-		psa_set_key_bits(&attrs, olen * BITS_PER_BYTE);
-		psa_set_key_usage_flags(&attrs, PSA_KEY_USAGE_DERIVE | PSA_KEY_USAGE_EXPORT);
-		psa_set_key_algorithm(&attrs, ACS_PSA_HKDF_ALG);
-
-		status = psa_import_key(&attrs, raw_secret, olen, &acs_conn->kex.derived_key_id);
-		mbedtls_platform_zeroize(raw_secret, sizeof(raw_secret));
-
-		if (status != PSA_SUCCESS) {
-			LOG_ERR("Failed to import shared secret into PSA: %d", status);
-			return -EIO;
-		}
-
-		acs_conn->kex.key_mat_len = (uint16_t)olen;
-	}
-
-	return 0;
 }
 
 int acs_crypto_derive_session_key(struct bt_acs_conn *acs_conn,

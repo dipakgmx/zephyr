@@ -24,132 +24,50 @@ LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
 #if IS_ENABLED(CONFIG_BT_ACS_ANY_KEY_EXCHANGE)
 int acs_cp_handle_get_key_descriptor(struct acs_procedure *proc, struct net_buf_simple *buf)
 {
-	struct net_buf *rsp_buf;
-	struct acs_reply_mode reply_mode = acs_proc_reply_mode(proc);
-	int build_err;
+	int err = acs_key_desc_build_response(buf, &proc->buffers.response_buf->b, proc->acs_conn);
 
-	rsp_buf = acs_prepare_reply_buf(proc, reply_mode.encrypted);
-	if (!rsp_buf) {
-		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_GET_KEY_DESCRIPTOR,
-					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
+	if (err) {
+		return errno_to_acs_status(err);
 	}
-
-	net_buf_add_u8(rsp_buf, BT_ACS_CP_OPCODE_KEY_DESCRIPTOR_RESPONSE);
-	build_err = acs_key_desc_build_response(buf, &rsp_buf->b, proc->acs_conn);
-	if (build_err) {
-		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_GET_KEY_DESCRIPTOR,
-					 errno_to_acs_status(build_err));
-	} else {
-		int err = acs_cp_send_reply(proc);
-
-		if (err) {
-			LOG_WRN("CP indicate failed for opcode 0x%02x: %d",
-				BT_ACS_CP_OPCODE_GET_KEY_DESCRIPTOR, err);
-		}
-		return err;
-	}
+	return ACS_CP_RESULT_STAGED_REPLY;
 }
 #endif /* CONFIG_BT_ACS_ANY_KEY_EXCHANGE */
 
 #if IS_ENABLED(CONFIG_BT_ACS_FEAT_AUTHENTICATION)
 int acs_cp_handle_get_isc_descriptor(struct acs_procedure *proc, struct net_buf_simple *buf)
 {
-	struct net_buf *rsp_buf;
-	struct acs_reply_mode reply_mode = acs_proc_reply_mode(proc);
-	int build_err;
+	int err = acs_isc_build_response(buf, &proc->buffers.response_buf->b);
 
-	rsp_buf = acs_prepare_reply_buf(proc, reply_mode.encrypted);
-	if (!rsp_buf) {
-		return acs_cp_rsp_status(
-			proc, BT_ACS_CP_OPCODE_GET_INFORMATION_SECURITY_CONFIGURATION_DESCRIPTOR,
-			BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
+	if (err) {
+		return errno_to_acs_status(err);
 	}
-	net_buf_add_u8(rsp_buf,
-		       BT_ACS_CP_OPCODE_INFORMATION_SECURITY_CONFIGURATION_DESCRIPTOR_RESPONSE);
-	build_err = acs_isc_build_response(buf, &rsp_buf->b);
-	if (build_err) {
-		return acs_cp_rsp_status(
-			proc, BT_ACS_CP_OPCODE_GET_INFORMATION_SECURITY_CONFIGURATION_DESCRIPTOR,
-			errno_to_acs_status(build_err));
-	} else {
-		int err = acs_cp_send_reply(proc);
-
-		if (err) {
-			LOG_WRN("CP indicate failed for opcode 0x%02x: %d",
-				BT_ACS_CP_OPCODE_GET_INFORMATION_SECURITY_CONFIGURATION_DESCRIPTOR,
-				err);
-		}
-		return err;
-	}
+	return ACS_CP_RESULT_STAGED_REPLY;
 }
 #endif /* CONFIG_BT_ACS_FEAT_AUTHENTICATION */
 
 #if IS_ENABLED(CONFIG_BT_ACS_RESOURCE_HANDLE_UUID_MAP)
 int acs_cp_handle_get_resource_handle_uuid_map(struct acs_procedure *proc)
 {
-	struct net_buf *rsp_buf;
-	struct acs_reply_mode reply_mode = acs_proc_reply_mode(proc);
-	int build_err;
+	int err = acs_rhandle_build_map_response(&proc->buffers.response_buf->b);
 
-	rsp_buf = acs_prepare_reply_buf(proc, reply_mode.encrypted);
-	if (!rsp_buf) {
-		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_GET_RESOURCE_HANDLE_UUID_MAP,
-					 BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
+	if (err) {
+		return errno_to_acs_status(err);
 	}
-	net_buf_add_u8(rsp_buf, BT_ACS_CP_OPCODE_RESOURCE_HANDLE_UUID_MAP_RESPONSE);
-	build_err = acs_rhandle_build_map_response(&rsp_buf->b);
-	if (build_err) {
-		return acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_GET_RESOURCE_HANDLE_UUID_MAP,
-					 errno_to_acs_status(build_err));
-	} else {
-		int err = acs_cp_send_reply(proc);
-
-		if (err) {
-			LOG_WRN("CP indicate failed for opcode 0x%02x: %d",
-				BT_ACS_CP_OPCODE_GET_RESOURCE_HANDLE_UUID_MAP, err);
-		}
-		return err;
-	}
+	return ACS_CP_RESULT_STAGED_REPLY;
 }
 #endif /* CONFIG_BT_ACS_RESOURCE_HANDLE_UUID_MAP */
 
 int acs_cp_handle_get_svc_char_uuids(struct acs_procedure *proc, struct net_buf_simple *buf)
 {
-	struct acs_reply_mode reply_mode = acs_proc_reply_mode(proc);
 	uint16_t resource_handle = net_buf_simple_pull_le16(buf);
-	struct net_buf *rsp_buf;
 	int err;
 
-	rsp_buf = acs_prepare_reply_buf(proc, reply_mode.encrypted);
-	if (!rsp_buf) {
-		return acs_cp_rsp_status(
-			proc,
-			BT_ACS_CP_OPCODE_GET_SERVICE_CHARACTERISTIC_UUIDS_CHAR_RESOURCE_HANDLE,
-			BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
-	}
-	net_buf_add_u8(rsp_buf,
-		       BT_ACS_CP_OPCODE_SERVICE_CHARACTERISTIC_UUIDS_CHAR_RESOURCE_HANDLE_RESPONSE);
-
-	err = acs_rhandle_lookup_svc_char(resource_handle, &rsp_buf->b);
+	err = acs_rhandle_lookup_svc_char(resource_handle, &proc->buffers.response_buf->b);
 
 	if (err == -ENOENT) {
-		return acs_cp_rsp_status(
-			proc,
-			BT_ACS_CP_OPCODE_GET_SERVICE_CHARACTERISTIC_UUIDS_CHAR_RESOURCE_HANDLE,
-			BT_ACS_CP_RESPONSE_PARAMETER_OUT_OF_RANGE);
+		return BT_ACS_CP_RESPONSE_PARAMETER_OUT_OF_RANGE;
 	} else if (err) {
-		return acs_cp_rsp_status(
-			proc,
-			BT_ACS_CP_OPCODE_GET_SERVICE_CHARACTERISTIC_UUIDS_CHAR_RESOURCE_HANDLE,
-			errno_to_acs_status(err));
-	} else {
-		err = acs_cp_send_reply(proc);
-
-		if (err) {
-			LOG_WRN("CP indicate failed for opcode 0x%02x: %d",
-				BT_ACS_CP_OPCODE_GET_SERVICE_CHARACTERISTIC_UUIDS_CHAR_RESOURCE_HANDLE,
-				err);
-		}
-		return err;
+		return errno_to_acs_status(err);
 	}
+	return ACS_CP_RESULT_STAGED_REPLY;
 }

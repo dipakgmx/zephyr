@@ -261,14 +261,11 @@ int acs_data_in_unwrap_and_route(struct bt_acs_conn *acs_conn, struct net_buf_si
 	}
 
 	frame = (struct acs_frame){
-		.conn = acs_conn->conn,
 		.resource_handle = resource_handle,
 		.isc_id = isc_id,
 		.payload = buf->data,
 		.payload_len = buf->len,
 		.source_channel = ACS_SRC_DATA_IN,
-		.encrypted = false,
-		.backing_buf = NULL,
 	};
 
 	return acs_runtime_dispatch_frame(&frame, acs_conn);
