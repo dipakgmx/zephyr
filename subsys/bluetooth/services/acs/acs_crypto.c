@@ -270,7 +270,7 @@ void acs_psa_destroy_key(psa_key_id_t *key_id)
 #if IS_ENABLED(CONFIG_BT_ACS_ANY_KEY_EXCHANGE)
 int acs_crypto_generate_keypair(struct bt_acs_conn *acs_conn)
 {
-	struct acs_ecdh_pubkey *pk = &acs_conn->kex.server_pubkey;
+	struct acs_ecdh_pubkey *pk = &acs_conn->kex->server_pubkey;
 	psa_key_attributes_t attrs = PSA_KEY_ATTRIBUTES_INIT;
 	psa_status_t status;
 	uint8_t pub[1U + 2U * CONFIG_BT_ACS_ECDH_COORD_SIZE];
@@ -281,17 +281,17 @@ int acs_crypto_generate_keypair(struct bt_acs_conn *acs_conn)
 	psa_set_key_usage_flags(&attrs, PSA_KEY_USAGE_DERIVE);
 	psa_set_key_algorithm(&attrs, PSA_ALG_ECDH);
 
-	status = psa_generate_key(&attrs, &acs_conn->kex.ecdh_key_id);
+	status = psa_generate_key(&attrs, &acs_conn->kex->ecdh_key_id);
 	if (status != PSA_SUCCESS) {
 		LOG_ERR("psa_generate_key failed: %d", status);
 		return -EIO;
 	}
 
 	/* Export public key to populate server_pubkey coords */
-	status = psa_export_public_key(acs_conn->kex.ecdh_key_id, pub, sizeof(pub), &pub_len);
+	status = psa_export_public_key(acs_conn->kex->ecdh_key_id, pub, sizeof(pub), &pub_len);
 	if (status != PSA_SUCCESS) {
 		LOG_ERR("psa_export_public_key failed: %d", status);
-		acs_psa_destroy_key(&acs_conn->kex.ecdh_key_id);
+		acs_psa_destroy_key(&acs_conn->kex->ecdh_key_id);
 		return -EIO;
 	}
 
@@ -304,7 +304,7 @@ int acs_crypto_generate_keypair(struct bt_acs_conn *acs_conn)
 	if (pub_len != (size_t)CONFIG_BT_ACS_ECDH_COORD_SIZE) {
 		LOG_ERR("Unexpected Curve25519 public key size: %zu (expected %u)", pub_len,
 			CONFIG_BT_ACS_ECDH_COORD_SIZE);
-		acs_psa_destroy_key(&acs_conn->kex.ecdh_key_id);
+		acs_psa_destroy_key(&acs_conn->kex->ecdh_key_id);
 		return -EIO;
 	}
 	memcpy(pk->x, pub, CONFIG_BT_ACS_ECDH_COORD_SIZE);
@@ -316,7 +316,7 @@ int acs_crypto_generate_keypair(struct bt_acs_conn *acs_conn)
 	if (pub_len != expected_len) {
 		LOG_ERR("Unexpected NIST public key size: %zu (expected %zu)", pub_len,
 			expected_len);
-		acs_psa_destroy_key(&acs_conn->kex.ecdh_key_id);
+		acs_psa_destroy_key(&acs_conn->kex->ecdh_key_id);
 		return -EIO;
 	}
 
@@ -333,7 +333,7 @@ int acs_crypto_generate_keypair(struct bt_acs_conn *acs_conn)
 
 int acs_crypto_compute_shared_secret(struct bt_acs_conn *acs_conn)
 {
-	const struct acs_ecdh_pubkey *cpk = &acs_conn->kex.client_pubkey;
+	const struct acs_ecdh_pubkey *cpk = &acs_conn->kex->client_pubkey;
 	uint8_t x_size = cpk->x_size;
 	const uint8_t *x_le = cpk->x;
 	uint8_t psa_pubkey[1U + 2U * CONFIG_BT_ACS_ECDH_COORD_SIZE];
@@ -353,18 +353,18 @@ int acs_crypto_compute_shared_secret(struct bt_acs_conn *acs_conn)
 	) {
 		LOG_ERR("Client pubkey coord size mismatch: x=%u (expected %u)", x_size,
 			CONFIG_BT_ACS_ECDH_COORD_SIZE);
-		acs_psa_destroy_key(&acs_conn->kex.ecdh_key_id);
+		acs_psa_destroy_key(&acs_conn->kex->ecdh_key_id);
 		return -EINVAL;
 	}
 
 	/* Reject if client public key equals server public key (spec 4.4.3.17.1.1) */
-	if (memcmp(cpk->x, acs_conn->kex.server_pubkey.x, CONFIG_BT_ACS_ECDH_COORD_SIZE) == 0
+	if (memcmp(cpk->x, acs_conn->kex->server_pubkey.x, CONFIG_BT_ACS_ECDH_COORD_SIZE) == 0
 #if CONFIG_BT_ACS_ECDH_HAS_Y
-	    && memcmp(cpk->y, acs_conn->kex.server_pubkey.y, CONFIG_BT_ACS_ECDH_COORD_SIZE) == 0
+	    && memcmp(cpk->y, acs_conn->kex->server_pubkey.y, CONFIG_BT_ACS_ECDH_COORD_SIZE) == 0
 #endif
 	) {
 		LOG_WRN("client public key matches server public key");
-		acs_psa_destroy_key(&acs_conn->kex.ecdh_key_id);
+		acs_psa_destroy_key(&acs_conn->kex->ecdh_key_id);
 		return -EINVAL;
 	}
 
@@ -385,11 +385,11 @@ int acs_crypto_compute_shared_secret(struct bt_acs_conn *acs_conn)
 		uint8_t raw_secret[CONFIG_BT_ACS_SHARED_SECRET_MAX_SIZE];
 		psa_key_attributes_t attrs = PSA_KEY_ATTRIBUTES_INIT;
 
-		status = psa_raw_key_agreement(PSA_ALG_ECDH, acs_conn->kex.ecdh_key_id, psa_pubkey,
+		status = psa_raw_key_agreement(PSA_ALG_ECDH, acs_conn->kex->ecdh_key_id, psa_pubkey,
 					       psa_pubkey_len, raw_secret, sizeof(raw_secret),
 					       &olen);
 
-		acs_psa_destroy_key(&acs_conn->kex.ecdh_key_id);
+		acs_psa_destroy_key(&acs_conn->kex->ecdh_key_id);
 
 		if (status != PSA_SUCCESS) {
 			LOG_ERR("psa_raw_key_agreement failed: %d", status);
@@ -401,7 +401,7 @@ int acs_crypto_compute_shared_secret(struct bt_acs_conn *acs_conn)
 		psa_set_key_usage_flags(&attrs, PSA_KEY_USAGE_DERIVE | PSA_KEY_USAGE_EXPORT);
 		psa_set_key_algorithm(&attrs, ACS_PSA_HKDF_ALG);
 
-		status = psa_import_key(&attrs, raw_secret, olen, &acs_conn->kex.derived_key_id);
+		status = psa_import_key(&attrs, raw_secret, olen, &acs_conn->kex->derived_key_id);
 		mbedtls_platform_zeroize(raw_secret, sizeof(raw_secret));
 
 		if (status != PSA_SUCCESS) {
@@ -409,7 +409,7 @@ int acs_crypto_compute_shared_secret(struct bt_acs_conn *acs_conn)
 			return -EIO;
 		}
 
-		acs_conn->kex.key_mat_len = (uint16_t)olen;
+		acs_conn->kex->key_mat_len = (uint16_t)olen;
 	}
 
 	return 0;

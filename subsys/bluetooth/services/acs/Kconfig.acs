@@ -81,6 +81,8 @@ endmenu # ACS Protection Methods
 menuconfig BT_ACS_KEY_EXCHANGE_ECDH
 	bool "ECDH key exchange"
 	depends on PSA_WANT_ALG_ECDH
+	depends on PSA_WANT_ALG_HKDF
+	depends on PSA_WANT_ALG_SHA_256
 	depends on PSA_WANT_KEY_TYPE_DERIVE
 	depends on BT_SETTINGS
 	depends on BT_ACS_FEAT_AUTHENTICATION
@@ -89,9 +91,15 @@ menuconfig BT_ACS_KEY_EXCHANGE_ECDH
 	  Enable Elliptic Curve Diffie-Hellman (ECDH) key exchange for
 	  this ACS implementation.
 
-	  This option enables the ACS ECDH key exchange method used to
-	  establish shared key material between the AC Client and the
-	  AC Server.
+	  Deriving the 128-bit ECDHKey from the ECDH shared secret via a
+	  KDF is an integral part of this method (ACS 1.0 §3.6.4.2), as is
+	  the HMAC-SHA-256 confirmation code - hence the HKDF and SHA-256
+	  dependencies. This is distinct from the standalone KDF Key
+	  Exchange method (BT_ACS_KEY_EXCHANGE_KDF), which is optional.
+
+	  For Authorization Control Profile 1.0 §4.1.1.1 compliance, ECDH
+	  support requires Curve P-256 with HKDF SHA-256 128-bit - the
+	  defaults of this implementation.
 
 	  In this implementation, ECDH key exchange depends on PSA Crypto
 	  ECDH support and BT_SETTINGS for persistent ACS key material.
@@ -107,6 +115,10 @@ choice BT_ACS_ECDH_CURVE
 	help
 	  Select the elliptic curve used by ECDH key exchange in this
 	  implementation.
+
+	  Authorization Control Profile 1.0 §4.1.1.1 requires Curve P-256
+	  for profile-compliant ECDH support; the other curves are
+	  implementation extensions.
 
 	  The available choices depend on the enabled PSA Crypto ECC
 	  capabilities.
@@ -159,26 +171,32 @@ menuconfig BT_ACS_KEY_EXCHANGE_KDF
 	depends on BT_SETTINGS
 	depends on BT_ACS_FEAT_AUTHENTICATION
 	help
-	  Enable Key Derivation Function (KDF) key exchange for this
-	  ACS implementation.
+	  Enable the standalone Key Derivation Function (KDF) key exchange
+	  method (ACS 1.0 §3.6.4.3), which derives a child key from an
+	  already-established ECDH parent key.
 
-	  This option enables the ACS KDF key exchange method used to
-	  derive shared key material between the AC Client and the
-	  AC Server.
+	  This is a separate, optional ACS method - it is not required for
+	  ECDH key exchange, whose own in-method KDF step is always
+	  available with BT_ACS_KEY_EXCHANGE_ECDH.
 
 	  In this implementation, KDF key exchange depends on BT_SETTINGS
 	  for persistent ACS key material. The derived child key is
 	  connection-specific runtime state and is derived again when a
 	  new connection is established.
 
-if BT_ACS_KEY_EXCHANGE_KDF
+if BT_ACS_KEY_EXCHANGE_KDF || BT_ACS_KEY_EXCHANGE_ECDH
 
 choice BT_ACS_KDF_ALGORITHM
 	prompt "Key Derivation Function algorithm"
 	default BT_ACS_KDF_HKDF_SHA256
 	help
-	  Select the KDF algorithm used for ACS session key derivation
-	  in this implementation.
+	  Select the HKDF algorithm used for ACS session key derivation -
+	  both for the KDF step inside ECDH key exchange and for the
+	  standalone KDF Key Exchange method.
+
+	  Authorization Control Profile 1.0 §4.1.1.1 requires HKDF SHA-256
+	  128-bit (the default) for profile-compliant ECDH support; the
+	  other variants are implementation extensions.
 
 config BT_ACS_KDF_HKDF_SHA256
 	bool "HKDF SHA-256 128-bit"
@@ -213,7 +231,7 @@ config BT_ACS_HAS_INFO_FOR_HKDF
 	             BT_ACS_KDF_HKDF_SHA512_WITH_INFO
 	default n
 
-endif # BT_ACS_KEY_EXCHANGE_KDF
+endif # BT_ACS_KEY_EXCHANGE_KDF || BT_ACS_KEY_EXCHANGE_ECDH
 
 # KDF buffer sizes - always present so C code compiles when KDF is off.
 config BT_ACS_KDF_SALT_MAX_SIZE
@@ -591,6 +609,18 @@ config BT_ACS_MAX_NONCE_RECORDS
 	  With the single-algorithm choice model this is always 1.
 	  When converting to multi-algorithm bool options, expand
 	  this to count each enabled algorithm.
+
+config BT_ACS_KEX_CTX_COUNT
+	int "Concurrent key-exchange contexts"
+	depends on BT_ACS_ANY_KEY_EXCHANGE
+	range 1 BT_MAX_CONN
+	default 1
+	help
+	  Number of key exchanges that can run concurrently across all
+	  connections. A context is pool-allocated when Start Key Exchange
+	  is accepted and released when the exchange completes or aborts,
+	  so connections carry only a pointer instead of the full
+	  transcript state.
 
 # Hidden helpers - derived from active selections, used for CMakeLists gating.
 config BT_ACS_ANY_KEY_EXCHANGE

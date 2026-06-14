@@ -490,17 +490,9 @@ void acs_seq_abort(struct acs_procedure *proc)
 		return;
 	}
 
-	switch (proc->seq_state) {
-	case ACS_CP_SEQ_KEX_SUCCESS_RSP:
-	case ACS_CP_SEQ_KEX_SUCCESS_STATUS:
-	case ACS_CP_SEQ_KEX_FAIL_RSP:
-	case ACS_CP_SEQ_KEX_FAIL_CLEANUP:
-		if (proc->acs_conn && acs_kex_in_progress(proc->acs_conn)) {
-			acs_key_exchange_abort(proc->acs_conn);
-		}
-		break;
-	default:
-		break;
+	if (proc->seq_state == ACS_CP_SEQ_KEX_CONTINUE && proc->acs_conn &&
+	    acs_kex_in_progress(proc->acs_conn)) {
+		acs_key_exchange_abort(proc->acs_conn);
 	}
 
 	acs_seq_clear(proc);
@@ -510,18 +502,11 @@ static int acs_seq_dispatch_step(struct acs_procedure *proc)
 {
 	switch (proc->seq_state) {
 #if IS_ENABLED(CONFIG_BT_ACS_ANY_KEY_EXCHANGE)
-	case ACS_CP_SEQ_KEX_SUCCESS_RSP:
-		proc->seq_state = ACS_CP_SEQ_KEX_SUCCESS_STATUS;
-		return acs_key_exchange_step_response(proc, 0x00);
-	case ACS_CP_SEQ_KEX_SUCCESS_STATUS:
-		return acs_key_exchange_step_success_status(proc);
-	case ACS_CP_SEQ_KEX_FAIL_RSP:
-		proc->seq_state = ACS_CP_SEQ_KEX_FAIL_CLEANUP;
-		return acs_key_exchange_step_response(proc, 0x01);
-	case ACS_CP_SEQ_KEX_FAIL_CLEANUP:
-		acs_key_exchange_abort(proc->acs_conn);
-		acs_seq_clear(proc);
-		return 0;
+	case ACS_CP_SEQ_KEX_CONTINUE:
+		/* The key-exchange state machine owns its completion chain;
+		 * it re-uses or clears this sequence slot as it advances.
+		 */
+		return acs_kex_continue(proc);
 #endif
 #if IS_ENABLED(CONFIG_BT_ACS_DESCRIPTORS)
 	case ACS_CP_SEQ_ALL_ACTIVE_ISC:

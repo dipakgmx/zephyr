@@ -109,10 +109,7 @@ enum acs_reply_channel {
  */
 enum acs_cp_seq_state {
 	ACS_CP_SEQ_IDLE = 0,
-	ACS_CP_SEQ_KEX_SUCCESS_RSP,
-	ACS_CP_SEQ_KEX_SUCCESS_STATUS,
-	ACS_CP_SEQ_KEX_FAIL_RSP,
-	ACS_CP_SEQ_KEX_FAIL_CLEANUP,
+	ACS_CP_SEQ_KEX_CONTINUE, /**< Confirm drives the key-exchange state machine */
 	ACS_CP_SEQ_ALL_ACTIVE_ISC,
 	ACS_CP_SEQ_ALL_ACTIVE_KEY,
 	ACS_CP_SEQ_ALL_ACTIVE_RC,
@@ -210,12 +207,32 @@ struct bt_acs_kdf_params {
 };
 
 /**
- * @brief Transient key-exchange context.
+ * @brief Key-exchange state machine states.
+ *
+ * AWAIT_* states name the inbound CP opcode the exchange accepts next.
+ * SEND_RESULT and FINALIZE drive the outbound completion chain: each is
+ * entered when the previous indication confirms (via acs_kex_continue()).
+ */
+enum acs_kex_state {
+	ACS_KEX_AWAIT_PUBKEY = 0,   /**< Expect Key Exchange ECDH (ECDH and OOB starts) */
+	ACS_KEX_AWAIT_KDF,          /**< Expect Key Exchange KDF (in-chain or standalone) */
+	ACS_KEX_AWAIT_CONFIRM_CODE, /**< Expect ECDH Confirmation Code */
+	ACS_KEX_AWAIT_CONFIRM_RAND, /**< Expect ECDH Confirmation Random Number */
+	ACS_KEX_SEND_RESULT,        /**< On confirm: send Key Exchange Response */
+	ACS_KEX_FINALIZE,           /**< On confirm: commit keys, or tear down on failure */
+};
+
+/**
+ * @brief Key-exchange transaction state.
+ *
+ * Pool-allocated when Start Key Exchange is accepted; holds the transcript
+ * for exactly one exchange targeting one Key_ID and is zeroized and released
+ * on completion or abort. Connections reference it via bt_acs_conn::kex
+ * (NULL when no exchange is in progress).
  */
 struct bt_acs_kex_ctx {
-	bool active; /**< True while a key exchange is in progress on this connection. */
-	/** Next legal inbound KEX opcode, or 0 when no further inbound step is accepted. */
-	uint8_t next_expected_opcode;
+	enum acs_kex_state state; /**< Next step the state machine will accept/run */
+	bool failed;              /**< Completion chain reports failure instead of success */
 	/** Key material buffer — raw ECDH shared secret initially, overwritten
 	 *  in-place by HKDF when the KDF step runs.  key_mat_len tracks the
 	 *  valid length after each write.
@@ -292,7 +309,7 @@ struct bt_acs_conn {
 	uint8_t status_flags;                /**< Status flags */
 	uint16_t restriction_map_id;         /**< Restriction map ID */
 	struct bt_acs_crypto_session crypto; /**< Persistent crypto session */
-	struct bt_acs_kex_ctx kex;           /**< Embedded key-exchange transcript state */
+	struct bt_acs_kex_ctx *kex;          /**< In-progress key exchange, NULL when idle */
 	uint8_t status_data[3];              /**< Embedded status indication payload */
 	struct bt_gatt_indicate_params status_indicate_params; /**< Status indication params */
 	struct acs_procedure plain_cp_proc;                    /**< Singleton plain-CP procedure

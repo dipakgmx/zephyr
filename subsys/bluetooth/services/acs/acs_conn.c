@@ -112,9 +112,6 @@ void acs_conn_cleanup(struct bt_acs_conn *acs_conn)
 	acs_conn->conn = NULL;
 	acs_conn->status_flags = BT_ACS_STATUS_SECURITY_CONTROLS_ENABLED;
 
-	/* Release transient key-exchange context back to the pool. */
-	acs_key_exchange_abort(acs_conn);
-
 	acs_crypto_release_exchange_keys(acs_conn);
 	acs_crypto_destroy_connection_record_keys(acs_conn);
 	/* No need to wipe or rebind the runtime slots here.  The session cache
@@ -129,6 +126,12 @@ void acs_conn_cleanup(struct bt_acs_conn *acs_conn)
 	acs_seg_notify_async_reset(&acs_conn->notify_tx);
 #endif
 	acs_procedure_abort_all(acs_conn, NULL);
+
+	/* Release the transient key-exchange context back to the pool only
+	 * after abort_all has sync-cancelled the workqueue items - a DOI
+	 * continuation could otherwise still dereference it.
+	 */
+	acs_key_exchange_abort(acs_conn);
 
 	/* Reset the plain-CP procedure singleton. */
 	atomic_set(&acs_conn->plain_cp_proc.plain_cp.locked, 0);

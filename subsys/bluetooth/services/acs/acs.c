@@ -361,13 +361,13 @@ int bt_acs_set_oob_number(struct bt_conn *conn, const uint8_t *oob, uint16_t len
 		return -ESRCH;
 	}
 
-	if (acs_conn->kex.start_kex.confirmation_method != BT_ACS_CONFIRM_METHOD_INPUT_OOB) {
+	if (acs_conn->kex->start_kex.confirmation_method != BT_ACS_CONFIRM_METHOD_INPUT_OOB) {
 		LOG_WRN("Confirmation method is not Input OOB");
 		return -EPERM;
 	}
 
-	memset(acs_conn->kex.auth_value, 0, sizeof(acs_conn->kex.auth_value));
-	memcpy(&acs_conn->kex.auth_value[ACS_CONFIRM_VALUE_SIZE - len], oob, len);
+	memset(acs_conn->kex->auth_value, 0, sizeof(acs_conn->kex->auth_value));
+	memcpy(&acs_conn->kex->auth_value[ACS_CONFIRM_VALUE_SIZE - len], oob, len);
 
 	return 0;
 }

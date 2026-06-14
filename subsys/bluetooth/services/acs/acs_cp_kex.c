@@ -75,10 +75,10 @@ int acs_cp_kex_exchange_kdf(struct acs_procedure *proc, struct net_buf_simple *b
 	 */
 
 	if (!acs_kex_in_progress(acs_conn) ||
-	    key_id != sys_le16_to_cpu(acs_conn->kex.start_kex.key_id)) {
+	    key_id != sys_le16_to_cpu(acs_conn->kex->start_kex.key_id)) {
 		LOG_WRN("Key exchange KDF operand invalid Key_ID: 0x%04x, expected 0x%04x", key_id,
 			acs_kex_in_progress(acs_conn)
-				? sys_le16_to_cpu(acs_conn->kex.start_kex.key_id)
+				? sys_le16_to_cpu(acs_conn->kex->start_kex.key_id)
 				: 0);
 		acs_key_exchange_abort(acs_conn);
 		return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE;
@@ -94,11 +94,11 @@ int acs_cp_kex_exchange_kdf(struct acs_procedure *proc, struct net_buf_simple *b
 		 * established and the KEX state machine has been advanced by Start Key Exchange.
 		 */
 		if (err == -EAGAIN) {
-			proc->seq_state = ACS_CP_SEQ_KEX_FAIL_RSP;
+			acs_kex_conclude(proc, true);
 			return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE;
 		} else if (err) {
 			LOG_ERR("KDF key exchange: internal error (err %d)", err);
-			proc->seq_state = ACS_CP_SEQ_KEX_FAIL_RSP;
+			acs_kex_conclude(proc, true);
 			return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED;
 		}
 
@@ -106,18 +106,18 @@ int acs_cp_kex_exchange_kdf(struct acs_procedure *proc, struct net_buf_simple *b
 		 * with the correct SEQ_EVEN_ODD logic - no separate reset needed here.
 		 *
 		 * SECURITY_ESTABLISHED flag and the security_established callback are
-		 * deferred to kex_step_status, which runs after the KEY_EXCHANGE_RESPONSE
+		 * deferred to acs_kex_finalize, which runs after the KEY_EXCHANGE_RESPONSE
 		 * indication is confirmed by the peer.  Setting them here would tell the
 		 * application the session is live before the peer has acknowledged it. */
 		/* KDF_RESPONSE must be delivered before KEY_EXCHANGE_RESPONSE (§4.4.3.10). */
-		proc->seq_state = ACS_CP_SEQ_KEX_SUCCESS_RSP;
+		acs_kex_conclude(proc, false);
 		return ACS_CP_RESULT_STAGED_REPLY;
 	}
 #endif /* CONFIG_BT_ACS_KEY_EXCHANGE_KDF */
 
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_ECDH)
 	/* ECDH KDF path: KEY_EXCHANGE_RESPONSE follows after Confirmation Random Number. */
-	if (!acs_kex_expects(acs_conn, BT_ACS_CP_OPCODE_KEY_EXCHANGE_KDF)) {
+	if (!acs_kex_expects(acs_conn, ACS_KEX_AWAIT_KDF)) {
 		acs_key_exchange_abort(acs_conn);
 		return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE;
 	}
@@ -125,11 +125,11 @@ int acs_cp_kex_exchange_kdf(struct acs_procedure *proc, struct net_buf_simple *b
 	err = acs_key_exchange_ecdh_kdf(acs_conn, &rsp_buf->b);
 
 	if (err == -EAGAIN) {
-		proc->seq_state = ACS_CP_SEQ_KEX_FAIL_RSP;
+		acs_kex_conclude(proc, true);
 		return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE;
 	} else if (err) {
 		LOG_ERR("ECDH KDF: internal error (err %d)", err);
-		proc->seq_state = ACS_CP_SEQ_KEX_FAIL_RSP;
+		acs_kex_conclude(proc, true);
 		return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED;
 	}
 
@@ -229,8 +229,6 @@ int acs_cp_kex_start(struct acs_procedure *proc, struct net_buf_simple *buf)
 		return BT_ACS_CP_RESPONSE_INVALID_OPERAND;
 	}
 
-	err = 0;
-
 	if (acs_kex_in_progress(acs_conn)) {
 		LOG_WRN("Start Key Exchange rejected - another key exchange is already active");
 		return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE;
@@ -265,30 +263,29 @@ int acs_cp_kex_start(struct acs_procedure *proc, struct net_buf_simple *buf)
 			LOG_WRN("KDF child key already active - invalidate before re-exchange");
 			return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE;
 		}
-	} else
+	}
 #endif /* CONFIG_BT_ACS_KEY_EXCHANGE_KDF */
-	{
-		err = acs_key_exchange_ecdh_start(acs_conn, key_id);
-	}
 
-	if (err != 0) {
-		acs_key_exchange_abort(acs_conn);
-		return errno_to_acs_status(err);
-	}
-
-	if (!acs_kex_in_progress(acs_conn)) {
-		memset(&acs_conn->kex, 0, sizeof(acs_conn->kex));
-		acs_conn->kex.active = true;
+	if (acs_kex_alloc(acs_conn) == NULL) {
+		return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED;
 	}
 
 	/* Store request data before callbacks so bt_acs_set_oob_number() can
-	 * validate the confirmation method.  If OOB processing fails below the
-	 * kex context is aborted, making the cached value irrelevant.
+	 * validate the confirmation method.  If anything below fails, the
+	 * abort releases the context and the cached value with it.
 	 */
-	acs_conn->kex.start_kex = req_data;
+	acs_conn->kex->start_kex = req_data;
+
+	if (!IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF) || key_id != ACS_KEY_ID_KDF) {
+		err = acs_key_exchange_ecdh_start(acs_conn, key_id);
+		if (err != 0) {
+			acs_key_exchange_abort(acs_conn);
+			return errno_to_acs_status(err);
+		}
+	}
 
 	/* Clear auth_value before populating it in the switch cases below */
-	memset(acs_conn->kex.auth_value, 0, sizeof(acs_conn->kex.auth_value));
+	memset(acs_conn->kex->auth_value, 0, sizeof(acs_conn->kex->auth_value));
 
 	switch (method) {
 	case BT_ACS_CONFIRM_METHOD_OUTPUT_OOB:
@@ -300,7 +297,7 @@ int acs_cp_kex_start(struct acs_procedure *proc, struct net_buf_simple *buf)
 		oob_num = (oob_num % ACS_OUTPUT_NUMERIC_BUCKET_COUNT) + 1;
 #endif
 		sys_put_be32(oob_num,
-			     &acs_conn->kex.auth_value[ACS_CONFIRM_VALUE_SIZE - sizeof(oob_num)]);
+			     &acs_conn->kex->auth_value[ACS_CONFIRM_VALUE_SIZE - sizeof(oob_num)]);
 		if (cb && cb->output_oob_number) {
 			cb->output_oob_number(proc->acs_conn->conn, action, oob_num);
 		}
@@ -320,17 +317,16 @@ int acs_cp_kex_start(struct acs_procedure *proc, struct net_buf_simple *buf)
 				return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED;
 			}
 			/* Right-align big-endian in the 256-bit auth_value. */
-			memcpy(&acs_conn->kex.auth_value[ACS_CONFIRM_VALUE_SIZE - oob_len], oob_buf,
-			       oob_len);
+			memcpy(&acs_conn->kex->auth_value[ACS_CONFIRM_VALUE_SIZE - oob_len],
+			       oob_buf, oob_len);
 		}
 		break;
 	default:
 		break;
 	}
 
-	acs_conn->kex.next_expected_opcode = (key_id == ACS_KEY_ID_KDF)
-						     ? BT_ACS_CP_OPCODE_KEY_EXCHANGE_KDF
-						     : BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH;
+	acs_conn->kex->state =
+		(key_id == ACS_KEY_ID_KDF) ? ACS_KEX_AWAIT_KDF : ACS_KEX_AWAIT_PUBKEY;
 
 	return BT_ACS_CP_RESPONSE_SUCCESS;
 }
@@ -342,7 +338,7 @@ int acs_cp_kex_exchange_ecdh(struct acs_procedure *proc, struct net_buf_simple *
 	uint16_t key_id;
 	int err;
 
-	if (!acs_kex_expects(acs_conn, BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH)) {
+	if (!acs_kex_expects(acs_conn, ACS_KEX_AWAIT_PUBKEY)) {
 		acs_key_exchange_abort(acs_conn);
 		return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE;
 	}
@@ -351,7 +347,7 @@ int acs_cp_kex_exchange_ecdh(struct acs_procedure *proc, struct net_buf_simple *
 
 	/* Key_ID must match the one negotiated during Start Key Exchange. */
 	if (!acs_kex_in_progress(acs_conn) ||
-	    key_id != sys_le16_to_cpu(acs_conn->kex.start_kex.key_id)) {
+	    key_id != sys_le16_to_cpu(acs_conn->kex->start_kex.key_id)) {
 		LOG_WRN("ECDH key exchange with invalid Key_ID: 0x%04X", key_id);
 		acs_key_exchange_abort(acs_conn);
 		return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE;
@@ -366,27 +362,27 @@ int acs_cp_kex_exchange_ecdh(struct acs_procedure *proc, struct net_buf_simple *
 			acs_key_exchange_abort(acs_conn);
 			return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED;
 		}
-		err = cb->oob_key_get(proc->acs_conn->conn, acs_conn->kex.key_material,
-				      &acs_conn->kex.key_mat_len);
-		if (err || acs_conn->kex.key_mat_len == 0) {
+		err = cb->oob_key_get(proc->acs_conn->conn, acs_conn->kex->key_material,
+				      &acs_conn->kex->key_mat_len);
+		if (err || acs_conn->kex->key_mat_len == 0) {
 			LOG_ERR("OOB key_get failed: %d", err);
 			acs_key_exchange_abort(acs_conn);
 			return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED;
 		}
-		acs_conn->kex.next_expected_opcode = BT_ACS_CP_OPCODE_ECDH_CONFIRM_CODE;
+		acs_conn->kex->state = ACS_KEX_AWAIT_CONFIRM_CODE;
 		return BT_ACS_CP_RESPONSE_SUCCESS;
 	}
 #endif /* CONFIG_BT_ACS_KEY_EXCHANGE_OOB */
 
-	if (buf->len != sizeof(acs_conn->kex.client_pubkey)) {
+	if (buf->len != sizeof(acs_conn->kex->client_pubkey)) {
 		LOG_WRN("ECDH key exchange operand invalid length: %u", buf->len);
 		acs_key_exchange_abort(acs_conn);
 		return BT_ACS_CP_RESPONSE_INVALID_OPERAND;
 	}
 
 	/* Copy the packed operand out of the request buffer for aligned access. */
-	memcpy(&acs_conn->kex.client_pubkey, net_buf_simple_pull_mem(buf, buf->len),
-	       sizeof(acs_conn->kex.client_pubkey));
+	memcpy(&acs_conn->kex->client_pubkey, net_buf_simple_pull_mem(buf, buf->len),
+	       sizeof(acs_conn->kex->client_pubkey));
 
 	{
 		struct net_buf *rsp_buf = proc->buffers.response_buf;
@@ -395,14 +391,14 @@ int acs_cp_kex_exchange_ecdh(struct acs_procedure *proc, struct net_buf_simple *
 
 		if (err == -EBADMSG || err == -EINVAL) {
 			LOG_ERR("ECDH pubkey: invalid client public key (err %d)", err);
-			proc->seq_state = ACS_CP_SEQ_KEX_FAIL_RSP;
+			acs_kex_conclude(proc, true);
 			return BT_ACS_CP_RESPONSE_INVALID_PUBLIC_KEY;
 		} else if (err == -EAGAIN) {
-			proc->seq_state = ACS_CP_SEQ_KEX_FAIL_RSP;
+			acs_kex_conclude(proc, true);
 			return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE;
 		} else if (err) {
 			LOG_ERR("ECDH pubkey: internal error (err %d)", err);
-			proc->seq_state = ACS_CP_SEQ_KEX_FAIL_RSP;
+			acs_kex_conclude(proc, true);
 			return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED;
 		} else {
 			return ACS_CP_RESULT_STAGED_REPLY;
@@ -418,7 +414,7 @@ int acs_cp_kex_ecdh_confirm_code(struct acs_procedure *proc, struct net_buf_simp
 	struct net_buf *rsp_buf;
 	int err;
 
-	if (!acs_kex_expects(acs_conn, BT_ACS_CP_OPCODE_ECDH_CONFIRM_CODE)) {
+	if (!acs_kex_expects(acs_conn, ACS_KEX_AWAIT_CONFIRM_CODE)) {
 		LOG_ERR("confirm_code: invalid KEX ordering");
 		acs_key_exchange_abort(acs_conn);
 		return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE;
@@ -433,7 +429,7 @@ int acs_cp_kex_ecdh_confirm_code(struct acs_procedure *proc, struct net_buf_simp
 	memcpy(&req_data, net_buf_simple_pull_mem(buf, sizeof(req_data)), sizeof(req_data));
 
 	if (!acs_kex_in_progress(acs_conn) ||
-	    sys_le16_to_cpu(req_data.key_id) != sys_le16_to_cpu(acs_conn->kex.start_kex.key_id)) {
+	    sys_le16_to_cpu(req_data.key_id) != sys_le16_to_cpu(acs_conn->kex->start_kex.key_id)) {
 		acs_key_exchange_abort(acs_conn);
 		return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE;
 	}
@@ -442,7 +438,7 @@ int acs_cp_kex_ecdh_confirm_code(struct acs_procedure *proc, struct net_buf_simp
 	key_id = sys_le16_to_cpu(req_data.key_id);
 	ARG_UNUSED(key_id); /* used only for log; kex stays alive */
 
-	memcpy(acs_conn->kex.client_confirm, req_data.confirm_code, ACS_CONFIRM_VALUE_SIZE);
+	memcpy(acs_conn->kex->client_confirm, req_data.confirm_code, ACS_CONFIRM_VALUE_SIZE);
 
 	rsp_buf = proc->buffers.response_buf;
 
@@ -450,7 +446,7 @@ int acs_cp_kex_ecdh_confirm_code(struct acs_procedure *proc, struct net_buf_simp
 
 	if (err) {
 		/* Keep kex alive long enough to emit KEY_EXCHANGE_RESPONSE(failed). */
-		proc->seq_state = ACS_CP_SEQ_KEX_FAIL_RSP;
+		acs_kex_conclude(proc, true);
 		return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED;
 	} else {
 		return ACS_CP_RESULT_STAGED_REPLY;
@@ -464,7 +460,7 @@ int acs_cp_kex_ecdh_confirm_rand(struct acs_procedure *proc, struct net_buf_simp
 	struct net_buf *rsp_buf;
 	int err;
 
-	if (!acs_kex_expects(acs_conn, BT_ACS_CP_OPCODE_ECDH_CONFIRM_RAND)) {
+	if (!acs_kex_expects(acs_conn, ACS_KEX_AWAIT_CONFIRM_RAND)) {
 		acs_key_exchange_abort(acs_conn);
 		return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE;
 	}
@@ -478,12 +474,12 @@ int acs_cp_kex_ecdh_confirm_rand(struct acs_procedure *proc, struct net_buf_simp
 	memcpy(&req_data, net_buf_simple_pull_mem(buf, sizeof(req_data)), sizeof(req_data));
 
 	if (!acs_kex_in_progress(acs_conn) ||
-	    sys_le16_to_cpu(req_data.key_id) != sys_le16_to_cpu(acs_conn->kex.start_kex.key_id)) {
+	    sys_le16_to_cpu(req_data.key_id) != sys_le16_to_cpu(acs_conn->kex->start_kex.key_id)) {
 		acs_key_exchange_abort(acs_conn);
 		return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE;
 	}
 
-	if (memcmp(req_data.random, acs_conn->kex.server_random, ACS_CONFIRM_VALUE_SIZE) == 0) {
+	if (memcmp(req_data.random, acs_conn->kex->server_random, ACS_CONFIRM_VALUE_SIZE) == 0) {
 		acs_key_exchange_abort(acs_conn);
 		return BT_ACS_CP_RESPONSE_INVALID_OPERAND;
 	}
@@ -494,10 +490,10 @@ int acs_cp_kex_ecdh_confirm_rand(struct acs_procedure *proc, struct net_buf_simp
 
 	if (err == -EACCES) {
 		/* Confirmation code mismatch: chain KEX_RESPONSE(failed). */
-		proc->seq_state = ACS_CP_SEQ_KEX_FAIL_RSP;
+		acs_kex_conclude(proc, true);
 		return BT_ACS_CP_RESPONSE_INVALID_KEY_EXCHANGE_CONFIRMATION_CODE;
 	} else if (err) {
-		proc->seq_state = ACS_CP_SEQ_KEX_FAIL_RSP;
+		acs_kex_conclude(proc, true);
 		return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED;
 	}
 
@@ -508,22 +504,22 @@ int acs_cp_kex_ecdh_confirm_rand(struct acs_procedure *proc, struct net_buf_simp
 
 		if (acs_crypto_key_runtime_lookup(acs_conn, ACS_KEY_ID_ECDH, &exchange_key) != 0) {
 			LOG_ERR("Missing ECDH runtime key state");
-			proc->seq_state = ACS_CP_SEQ_KEX_FAIL_RSP;
+			acs_kex_conclude(proc, true);
 			return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED;
 		}
 
-		if (acs_conn->kex.kdf_applied) {
+		if (acs_conn->kex->kdf_applied) {
 			psa_status_t status;
 
-			status = psa_export_key(acs_conn->kex.derived_key_id, key_buf,
+			status = psa_export_key(acs_conn->kex->derived_key_id, key_buf,
 						sizeof(key_buf), &key_buf_len);
 			if (status != PSA_SUCCESS) {
 				LOG_ERR("Failed to export derived key: %d", status);
-				proc->seq_state = ACS_CP_SEQ_KEX_FAIL_RSP;
+				acs_kex_conclude(proc, true);
 				return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED;
 			}
 
-			acs_psa_destroy_key(&acs_conn->kex.derived_key_id);
+			acs_psa_destroy_key(&acs_conn->kex->derived_key_id);
 			err = acs_crypto_activate_key(acs_conn, exchange_key, key_buf, key_buf_len);
 			mbedtls_platform_zeroize(key_buf, sizeof(key_buf));
 		} else {
@@ -532,12 +528,12 @@ int acs_cp_kex_ecdh_confirm_rand(struct acs_procedure *proc, struct net_buf_simp
 
 		if (err) {
 			LOG_ERR("Failed to establish session key: %d", err);
-			proc->seq_state = ACS_CP_SEQ_KEX_FAIL_RSP;
+			acs_kex_conclude(proc, true);
 			return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED;
 		}
 	}
 
-	proc->seq_state = ACS_CP_SEQ_KEX_SUCCESS_RSP;
+	acs_kex_conclude(proc, false);
 	return ACS_CP_RESULT_STAGED_REPLY;
 }
 #endif /* CONFIG_BT_ACS_KEY_EXCHANGE_ECDH */

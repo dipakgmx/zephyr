@@ -45,7 +45,7 @@ extern "C" {
 /** Single-segment (complete) PDU header: First=1, Last=1, Counter=0 */
 #define ACS_SEG_SINGLE_PDU (BIT(ACS_SEG_FIRST_SEGMENT_BIT) | BIT(ACS_SEG_LAST_SEGMENT_BIT))
 
-/** @brief Spec §3.6.2: timeout between segments of a multi-segment write (30 s). */
+/** @brief Timeout between segments of a multi-segment write (30 s, §4.3.2.1 / §4.4.3.21). */
 #define ACS_SEG_RX_TIMEOUT K_SECONDS(30)
 
 /** @brief Size of the small PDU scratch buffer embedded in acs_seg_tx_ctx.

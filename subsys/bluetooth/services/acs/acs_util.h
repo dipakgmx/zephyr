@@ -61,12 +61,12 @@ static inline bool acs_session_established(const struct bt_acs_conn *acs_conn)
 
 static inline bool acs_kex_in_progress(const struct bt_acs_conn *acs_conn)
 {
-	return acs_conn && acs_conn->kex.active;
+	return acs_conn && acs_conn->kex != NULL;
 }
 
-static inline bool acs_kex_expects(const struct bt_acs_conn *acs_conn, uint8_t opcode)
+static inline bool acs_kex_expects(const struct bt_acs_conn *acs_conn, enum acs_kex_state state)
 {
-	return acs_kex_in_progress(acs_conn) && acs_conn->kex.next_expected_opcode == opcode;
+	return acs_kex_in_progress(acs_conn) && acs_conn->kex->state == state;
 }
 
 #ifdef __cplusplus
