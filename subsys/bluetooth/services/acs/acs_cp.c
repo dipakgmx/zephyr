@@ -377,10 +377,16 @@ int acs_cp_dispatch(const struct acs_frame *frame, struct bt_acs_conn *acs_conn,
 					(ret < 0) ? errno_to_acs_status(ret) : (uint8_t)ret);
 	}
 
+	if (err) {
+		acs_reply_free(reply);
+		if (prot_req == NULL) {
+			atomic_set(&acs_conn->cp_locked, 0);
+		}
 #if IS_ENABLED(CONFIG_BT_ACS_ANY_KEY_EXCHANGE)
-	if (err && acs_cp_opcode_is_kex(opcode) && acs_kex_in_progress(acs_conn)) {
-		acs_key_exchange_abort(acs_conn);
-	}
+		if (acs_cp_opcode_is_kex(opcode) && acs_kex_in_progress(acs_conn)) {
+			acs_key_exchange_abort(acs_conn);
+		}
 #endif
+	}
 	return err;
 }

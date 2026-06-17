@@ -104,24 +104,13 @@ static void cp_tx_done(struct bt_conn *bt_conn, const struct bt_gatt_attr *attr,
 static int reply_submit_plain_cp(struct acs_reply *reply)
 {
 	struct bt_acs_conn *conn = reply->conn;
-	struct net_buf *rsp_buf;
-	int err;
 
 	__ASSERT_NO_MSG(conn != NULL);
 	__ASSERT_NO_MSG(conn->conn != NULL);
+	__ASSERT_NO_MSG(reply->response != NULL);
 
-	rsp_buf = reply->response;
-	reply->response = NULL;
-
-	__ASSERT_NO_MSG(rsp_buf != NULL);
-
-	err = acs_seg_tx_send(&conn->cp_tx, conn->conn, acs_attr_cp(), rsp_buf, cp_tx_done, reply);
-	if (err) {
-		atomic_set(&conn->cp_locked, 0);
-		acs_buf_free(rsp_buf);
-		acs_reply_free(reply);
-	}
-	return err;
+	return acs_seg_tx_send(&conn->cp_tx, conn->conn, acs_attr_cp(), reply->response, cp_tx_done,
+			       reply);
 }
 
 #if IS_ENABLED(CONFIG_BT_ACS_FEAT_AUTHENTICATION)
@@ -489,7 +478,7 @@ int acs_reply_submit(struct acs_reply *reply)
 	}
 }
 
-static void acs_reply_continue(struct acs_reply *reply)
+static bool acs_reply_continue(struct acs_reply *reply)
 {
 	int err;
 
@@ -502,7 +491,7 @@ static void acs_reply_continue(struct acs_reply *reply)
 	case ACS_REPLY_KEX_COMPLETE:
 		acs_kex_finalize_success(reply->conn);
 		reply->step = ACS_REPLY_DONE;
-		return;
+		return false;
 	case ACS_REPLY_KEX_FAIL:
 		reply->step = ACS_REPLY_KEX_CLEANUP;
 		err = acs_kex_send_result(reply, 0x01);
@@ -510,7 +499,7 @@ static void acs_reply_continue(struct acs_reply *reply)
 	case ACS_REPLY_KEX_CLEANUP:
 		acs_key_exchange_abort(reply->conn);
 		reply->step = ACS_REPLY_DONE;
-		return;
+		return false;
 #endif
 #if IS_ENABLED(CONFIG_BT_ACS_DESCRIPTORS)
 	case ACS_REPLY_DESCS_ISC:
@@ -530,16 +519,18 @@ static void acs_reply_continue(struct acs_reply *reply)
 	case ACS_REPLY_INVALIDATE:
 		bt_acs_invalidate_security(reply->conn->conn);
 		reply->step = ACS_REPLY_DONE;
-		return;
+		return false;
 #endif
 	default:
 		reply->step = ACS_REPLY_DONE;
-		return;
+		return false;
 	}
 
 	if (err) {
 		reply->step = ACS_REPLY_DONE;
+		return false;
 	}
+	return true;
 }
 
 static void reply_continue_handler(struct k_work *work)
@@ -556,7 +547,9 @@ static void reply_continue_handler(struct k_work *work)
 		return;
 	}
 
-	acs_reply_continue(reply);
+	if (acs_reply_continue(reply)) {
+		return;
+	}
 
 	if (reply->step == ACS_REPLY_DONE) {
 		bool is_cp = (reply->channel == ACS_REPLY_CP);
@@ -630,6 +623,7 @@ void acs_abort_commit(struct bt_acs_conn *conn)
 
 	if (acs_cp_rsp_status(reply, BT_ACS_CP_OPCODE_ABORT, BT_ACS_CP_RESPONSE_SUCCESS)) {
 		LOG_ERR("Deferred ABORT response send failed");
+		acs_reply_free(reply);
 		atomic_set(&conn->cp_locked, 0);
 	}
 }
