@@ -8,6 +8,7 @@ zephyr_sources_ifdef(
   acs_conn.c
   acs_session.c
   acs_runtime.c
+  acs_reply.c
   acs_cp.c
   acs_cp_feature.c
   acs_cp_descriptors.c
@@ -21,7 +22,6 @@ zephyr_sources_ifdef(
   acs_sec_mgmt.c
   acs_request.c
   acs_data_in.c
-  acs_data_out.c
 )
 
 # Key exchange — compiled when any KEx method is enabled.

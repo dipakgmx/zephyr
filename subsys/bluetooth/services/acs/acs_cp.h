@@ -357,20 +357,20 @@ enum bt_acs_cp_response_code {
  * @name CP opcode handler result contract
  *
  * Handlers validate and build but never transmit or stage; for data-response
- * opcodes the dispatcher stages @c proc->buffers.response_buf with the
- * response opcode before the handler runs, and the handler appends its
- * operand bytes there. A handler returns @ref ACS_CP_RESULT_STAGED_REPLY once the
- * response is built, a @ref bt_acs_cp_response_code to send a Response Code
- * indication, a negative errno (mapped via errno_to_acs_status()), or
- * @ref ACS_CP_RESULT_NO_REPLY to send nothing (deferred Abort). Multistep opcodes
- * additionally arm @c proc->seq_state; follow-up indications are driven by
- * acs_seq_on_confirm().
+ * opcodes the dispatcher stages @c reply->response with the response opcode
+ * before the handler runs, and the handler appends its operand bytes there.
+ * A handler returns @ref ACS_CP_RESULT_STAGED_REPLY once the response is built,
+ * a @ref bt_acs_cp_response_code to send a Response Code indication, a negative
+ * errno (mapped via errno_to_acs_status()), or @ref ACS_CP_RESULT_NO_REPLY to
+ * send nothing (deferred Abort). Multistep opcodes additionally set
+ * @c reply->step; follow-up indications are driven by the continuation engine
+ * in acs_reply.c.
  *
  * The domains cannot collide: Response Code 0x00 is spec-reserved (RFU) and
  * the wire field is one octet, so neither sentinel is a sendable code.
  * @{
  */
-#define ACS_CP_RESULT_STAGED_REPLY 0     /**< Reply staged in the proc's response buffer */
+#define ACS_CP_RESULT_STAGED_REPLY 0     /**< Reply staged in the reply's response buffer */
 #define ACS_CP_RESULT_NO_REPLY     0x100 /**< Suppress any response for now */
 /** @} */
 

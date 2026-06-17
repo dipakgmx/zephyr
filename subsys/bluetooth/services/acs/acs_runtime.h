@@ -64,10 +64,9 @@ int acs_runtime_dispatch_frame(const struct acs_frame *frame, struct bt_acs_conn
 /**
  * @brief Dispatch a Data-In frame that targets a protected service CP.
  *
- * Performs the DOI CCC check, allocates a request context, transfers ownership
- * of @c acs_conn->data_rx.buf into the context, then forwards to
- * @ref acs_cp_dispatch. Drops the proc reference here unless a
- * multi-step reply sequence took it over.
+ * Performs the DOI CCC check, allocates a reply, transfers ownership of
+ * @c acs_conn->data_rx.buf into the reply, then forwards to
+ * @ref acs_cp_dispatch.
  */
 int acs_runtime_dispatch_protected_cp_frame(const struct acs_frame *frame,
 					    struct bt_acs_conn *acs_conn);

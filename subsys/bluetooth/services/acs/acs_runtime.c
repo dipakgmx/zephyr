@@ -70,9 +70,9 @@ static int acs_runtime_classify_frame(const struct acs_frame *frame, uint16_t ma
  * request. The unwrap helper already pulled the transport header and trimmed
  * the buffer in place, so data/len describe the inner plaintext payload.
  */
-static void acs_procedure_take_request_buf(struct acs_procedure *proc, struct bt_acs_conn *acs_conn)
+static void acs_reply_take_request_buf(struct acs_reply *reply, struct bt_acs_conn *acs_conn)
 {
-	proc->buffers.request_buf = acs_conn->data_rx.buf;
+	reply->request = acs_conn->data_rx.buf;
 	acs_conn->data_rx.buf = NULL;
 }
 
@@ -80,15 +80,13 @@ static void acs_procedure_take_request_buf(struct acs_procedure *proc, struct bt
 int acs_runtime_dispatch_protected_cp_frame(const struct acs_frame *frame,
 					    struct bt_acs_conn *acs_conn)
 {
-	struct acs_procedure *req_ctx;
-	bool still_inflight;
+	struct acs_reply *reply;
 	int err;
 
 	__ASSERT_NO_MSG(frame != NULL);
 	__ASSERT_NO_MSG(acs_conn != NULL);
 	__ASSERT_NO_MSG(acs_conn->data_rx.buf != NULL);
 
-	/* Spec-mandated: reject Data In write if DOI CCC not configured. */
 	err = acs_doi_ccc_check(acs_conn->conn);
 	if (err) {
 		LOG_WRN("DOI indications not enabled for protected CP handle 0x%04x",
@@ -98,48 +96,25 @@ int acs_runtime_dispatch_protected_cp_frame(const struct acs_frame *frame,
 
 	LOG_DBG("routing handle 0x%04x to CP dispatcher (respond via DOI)", frame->resource_handle);
 
-	req_ctx = acs_procedure_alloc(acs_conn, frame->resource_handle, frame->isc_id);
-	if (!req_ctx) {
-		LOG_WRN("no free CP request context for handle 0x%04x", frame->resource_handle);
+	reply = acs_reply_alloc(acs_conn);
+	if (!reply) {
+		LOG_WRN("no free reply slot for protected CP handle 0x%04x",
+			frame->resource_handle);
 		return -ENOMEM;
 	}
 
-	acs_procedure_take_request_buf(req_ctx, acs_conn);
+	reply->channel = ACS_REPLY_DOI;
+	reply->resource_handle = frame->resource_handle;
+	reply->isc_id = frame->isc_id;
+	acs_reply_take_request_buf(reply, acs_conn);
 
-	err = acs_cp_dispatch(frame, acs_conn, req_ctx);
+	err = acs_cp_dispatch(frame, acs_conn, reply);
 
-	/* A send failure inside dispatch can abort an armed reply sequence,
-	 * which drops the ALLOC reference and destroys req_ctx. Only touch it
-	 * if it is still registered on the connection.
-	 */
-	still_inflight = false;
-	for (uint8_t i = 0; i < CONFIG_BT_ACS_MAX_INFLIGHT_REQ_PER_CONN; i++) {
-		if (atomic_ptr_get(&acs_conn->inflight_reqs[i]) == req_ctx) {
-			still_inflight = true;
-			break;
-		}
-	}
-	if (!still_inflight) {
-		return err;
+	if (reply->request) {
+		acs_buf_free(reply->request);
+		reply->request = NULL;
 	}
 
-	/* The CP handler ran synchronously and consumed the input bytes already.
-	 * Drop the decrypted_request buffer now so it returns to the pool while
-	 * we wait for the indication to confirm - acs_req_free will see NULL
-	 * and skip the free at refcount-zero.
-	 */
-	if (req_ctx->buffers.request_buf) {
-		acs_buf_free(req_ctx->buffers.request_buf);
-		req_ctx->buffers.request_buf = NULL;
-	}
-
-	/* If a multi-step reply sequence is active, the sequence now owns the
-	 * ALLOC ref and will release it in acs_seq_clear(). Otherwise, drop it
-	 * here - the single response is already queued or completed.
-	 */
-	if (req_ctx->seq_state == ACS_CP_SEQ_IDLE) {
-		acs_procedure_release_owner(req_ctx);
-	}
 	return err;
 }
 
@@ -198,7 +173,7 @@ static enum acs_req_access acs_rmap_resolve_request_access(uint16_t map_id, uint
 int acs_runtime_dispatch_protected_char_frame(const struct acs_frame *frame,
 					      struct bt_acs_conn *acs_conn)
 {
-	struct acs_procedure *req_ctx;
+	struct acs_reply *reply;
 	int err;
 
 	__ASSERT_NO_MSG(frame != NULL);
@@ -218,27 +193,29 @@ int acs_runtime_dispatch_protected_char_frame(const struct acs_frame *frame,
 		return err;
 	}
 
-	req_ctx = acs_procedure_alloc(acs_conn, frame->resource_handle, frame->isc_id);
-	if (!req_ctx) {
-		LOG_WRN("no free request context for handle 0x%04x", frame->resource_handle);
+	reply = acs_reply_alloc(acs_conn);
+	if (!reply) {
+		LOG_WRN("no free reply slot for handle 0x%04x", frame->resource_handle);
 		return -ENOMEM;
 	}
 
-	acs_procedure_take_request_buf(req_ctx, acs_conn);
+	reply->resource_handle = frame->resource_handle;
+	reply->isc_id = frame->isc_id;
+	acs_reply_take_request_buf(reply, acs_conn);
 
 #if defined(CONFIG_BT_ACS_FEAT_AUTHORIZATION)
-	req_ctx->route.access = acs_rmap_resolve_request_access(acs_conn->restriction_map_id,
-								frame->resource_handle,
-								frame->isc_id, frame->payload_len);
-	if (req_ctx->route.access == ACS_REQ_ACCESS_UNKNOWN) {
+	reply->access = acs_rmap_resolve_request_access(acs_conn->restriction_map_id,
+							frame->resource_handle, frame->isc_id,
+							frame->payload_len);
+	if (reply->access == ACS_REQ_ACCESS_UNKNOWN) {
 		LOG_ERR("no read/write op in rmap for handle 0x%04x isc 0x%04x",
 			frame->resource_handle, frame->isc_id);
-		acs_procedure_release_owner(req_ctx);
+		acs_reply_free(reply);
 		return -ENOENT;
 	}
 #endif
 
-	acs_request_queue_submit(acs_conn, req_ctx);
+	acs_request_queue_submit(acs_conn, reply);
 	return 0;
 }
 #endif /* CONFIG_BT_ACS_FEAT_AUTHENTICATION */
@@ -351,7 +328,7 @@ ssize_t acs_cp_write(struct bt_conn *conn, const struct bt_gatt_attr *attr, cons
 #if IS_ENABLED(CONFIG_BT_ACS_ABORT)
 		/*
 		 * Abort command must preempt any in-progress procedure per §4.4.4: it bypasses the
-		 * plain_cp_proc lock and the handler owns the lock semantics itself.
+		 * cp_locked gate and the handler owns the lock semantics itself.
 		 */
 		is_abort = (frame.payload_len > 0 && frame.payload[0] == BT_ACS_CP_OPCODE_ABORT);
 #endif
@@ -367,7 +344,7 @@ ssize_t acs_cp_write(struct bt_conn *conn, const struct bt_gatt_attr *attr, cons
 			return BT_GATT_ERR(BT_ATT_ERR_AUTHORIZATION);
 		}
 #endif
-		if (!is_abort && !atomic_cas(&acs_conn->plain_cp_proc.plain_cp.locked, 0, 1)) {
+		if (!is_abort && !atomic_cas(&acs_conn->cp_locked, 0, 1)) {
 			acs_seg_rx_reset(&acs_conn->cp_rx);
 			LOG_WRN("procedure already in progress");
 			return BT_GATT_ERR(BT_ATT_ERR_PROCEDURE_IN_PROGRESS);

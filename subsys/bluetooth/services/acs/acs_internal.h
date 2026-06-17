@@ -14,15 +14,14 @@
  * Layering (skim top-to-bottom to follow the data flow):
  *
  *   acs_wire_constants.h  - on-the-wire field sizes / opcodes
- *   acs_types.h           - core structs (acs_frame, acs_procedure,
+ *   acs_types.h           - core structs (acs_frame, acs_reply,
  *                           bt_acs_conn) and enumerations shared across layers
  *   acs_util.h            - small inline helpers
  *
  *   acs_runtime.h         - GATT-write entrypoints + frame dispatch + Data In
  *                           unwrap. This is where every inbound PDU enters.
- *   acs_procedure.h       - procedure (request) lifecycle, multi-step reply
- *                           sequences, reply staging + send (acs_tx_submit),
- *                           CP opcode dispatch.
+ *   acs_reply.h           - reply lifecycle (alloc/free/submit/continue/abort),
+ *                           reply staging + send, CP opcode dispatch.
  *   acs_crypto.h          - session crypto + key exchange API.
  *
  * The remaining declarations below cover service-level concerns that don't
@@ -36,7 +35,7 @@
 #include "acs_util.h"
 
 #include "acs_runtime.h"
-#include "acs_procedure.h"
+#include "acs_reply.h"
 #include "acs_crypto.h"
 
 #ifdef __cplusplus
@@ -136,19 +135,6 @@ int acs_doi_ccc_check(struct bt_conn *conn);
 
 /** @brief Indicate the ACS Status characteristic to @p conn. */
 void acs_status_indicate(struct bt_conn *conn);
-
-#if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION)
-/** @brief Initialise the per-connection DOI drain queue state. */
-void acs_doi_queue_init(struct bt_acs_conn *acs_conn);
-
-/** @brief Schedule DOI drain / reply-sequence continuation work. */
-void acs_doi_queue_submit(struct bt_acs_conn *acs_conn);
-#endif
-
-#if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_NOTIFICATION)
-/** @brief Initialise the per-connection DON drain queue state. */
-void acs_don_queue_init(struct bt_acs_conn *acs_conn);
-#endif
 
 /** @brief Return true if the ACS service has been initialised. */
 bool acs_is_initialized(void);

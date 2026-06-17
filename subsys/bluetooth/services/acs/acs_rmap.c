@@ -526,9 +526,9 @@ int acs_rmap_resolve_handles(void)
 	return 0;
 }
 
-int acs_cp_handle_get_restriction_map_id_list(struct acs_procedure *proc)
+int acs_cp_handle_get_restriction_map_id_list(struct acs_reply *reply)
 {
-	int err = acs_rmap_build_id_list_response(&proc->buffers.response_buf->b);
+	int err = acs_rmap_build_id_list_response(&reply->response->b);
 
 	if (err) {
 		return errno_to_acs_status(err);
@@ -536,7 +536,7 @@ int acs_cp_handle_get_restriction_map_id_list(struct acs_procedure *proc)
 	return ACS_CP_RESULT_STAGED_REPLY;
 }
 
-int acs_cp_handle_get_restriction_map_descriptor(struct acs_procedure *proc,
+int acs_cp_handle_get_restriction_map_descriptor(struct acs_reply *reply,
 						 struct net_buf_simple *buf)
 {
 	struct acs_rmap_get_descriptor_req desc_req;
@@ -554,20 +554,20 @@ int acs_cp_handle_get_restriction_map_descriptor(struct acs_procedure *proc,
 		return BT_ACS_CP_RESPONSE_PARAMETER_OUT_OF_RANGE;
 	}
 
-	if (map.map_isc_id != 0 && proc->kind == ACS_PROC_KIND_PLAIN_CP) {
+	if (map.map_isc_id != 0 && reply->channel == ACS_REPLY_CP) {
 		LOG_WRN("Get Restriction Map Descriptor: protected map 0x%04x requires Data In",
 			desc_req.map_id);
 		return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE;
 	}
 
-	err = acs_rmap_build_descriptor_response(&desc_req, &proc->buffers.response_buf->b);
+	err = acs_rmap_build_descriptor_response(&desc_req, &reply->response->b);
 	if (err) {
 		return errno_to_acs_status(err);
 	}
 	return ACS_CP_RESULT_STAGED_REPLY;
 }
 
-int acs_cp_handle_activate_restriction_map(struct acs_procedure *proc, struct net_buf_simple *buf)
+int acs_cp_handle_activate_restriction_map(struct acs_reply *reply, struct net_buf_simple *buf)
 {
 	uint16_t map_id;
 	struct bt_acs_restriction_map map;
@@ -585,14 +585,14 @@ int acs_cp_handle_activate_restriction_map(struct acs_procedure *proc, struct ne
 		return BT_ACS_CP_RESPONSE_PARAMETER_OUT_OF_RANGE;
 	}
 
-	if (map.map_isc_id != 0 && proc->kind == ACS_PROC_KIND_PLAIN_CP) {
+	if (map.map_isc_id != 0 && reply->channel == ACS_REPLY_CP) {
 		LOG_WRN("Activate Restriction Map: map 0x%04x is protected (ISC 0x%04x) - "
 			"plain CP is not applicable",
 			map_id, map.map_isc_id);
 		return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE;
 	}
 
-	proc->acs_conn->restriction_map_id = map_id;
+	reply->conn->restriction_map_id = map_id;
 	LOG_DBG("Restriction map 0x%04x activated", map_id);
 
 	return BT_ACS_CP_RESPONSE_SUCCESS;
@@ -602,12 +602,12 @@ int acs_cp_handle_activate_restriction_map(struct acs_procedure *proc, struct ne
 
 static const uint8_t all_records_filter[2] = {0xFF, 0xFF};
 
-int acs_all_active_step_isc(struct acs_procedure *proc)
+int acs_all_active_step_isc(struct acs_reply *reply)
 {
 	struct net_buf *buf;
 	struct net_buf_simple operand;
 
-	buf = acs_prepare_reply_buf(proc);
+	buf = acs_prepare_reply_buf(reply);
 	if (!buf) {
 		return -ENOMEM;
 	}
@@ -619,21 +619,21 @@ int acs_all_active_step_isc(struct acs_procedure *proc)
 
 	if (acs_isc_build_response(&operand, &buf->b) != 0) {
 		LOG_ERR("Get All Active Descriptors: ISC build failed");
-		acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_GET_ALL_ACTIVE_DESCRIPTORS,
+		acs_cp_rsp_status(reply, BT_ACS_CP_OPCODE_GET_ALL_ACTIVE_DESCRIPTORS,
 				  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
-		acs_seq_clear(proc);
+		reply->step = ACS_REPLY_DONE;
 		return 0;
 	}
-	return acs_cp_send_reply(proc);
+	return acs_cp_send_reply(reply);
 }
 
-int acs_all_active_step_key(struct acs_procedure *proc)
+int acs_all_active_step_key(struct acs_reply *reply)
 {
 	struct net_buf *buf;
 	struct net_buf_simple operand;
 	int err;
 
-	buf = acs_prepare_reply_buf(proc);
+	buf = acs_prepare_reply_buf(reply);
 	if (!buf) {
 		return -ENOMEM;
 	}
@@ -642,48 +642,48 @@ int acs_all_active_step_key(struct acs_procedure *proc)
 	net_buf_simple_init_with_data(&operand, (void *)all_records_filter,
 				      sizeof(all_records_filter));
 
-	err = acs_key_desc_build_response(&operand, &buf->b, proc->acs_conn);
+	err = acs_key_desc_build_response(&operand, &buf->b, reply->conn);
 
 	if (err == -ENOENT) {
-		acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_GET_ALL_ACTIVE_DESCRIPTORS,
+		acs_cp_rsp_status(reply, BT_ACS_CP_OPCODE_GET_ALL_ACTIVE_DESCRIPTORS,
 				  BT_ACS_CP_RESPONSE_SUCCESS);
-		acs_seq_clear(proc);
+		reply->step = ACS_REPLY_DONE;
 		return 0;
 	}
 	if (err) {
 		LOG_ERR("Get All Active Descriptors: Key build failed (%d)", err);
-		acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_GET_ALL_ACTIVE_DESCRIPTORS,
+		acs_cp_rsp_status(reply, BT_ACS_CP_OPCODE_GET_ALL_ACTIVE_DESCRIPTORS,
 				  BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED);
-		acs_seq_clear(proc);
+		reply->step = ACS_REPLY_DONE;
 		return 0;
 	}
-	return acs_cp_send_reply(proc);
+	return acs_cp_send_reply(reply);
 }
 
-int acs_all_active_step_rc(struct acs_procedure *proc)
+int acs_all_active_step_rc(struct acs_reply *reply)
 {
-	int err = acs_cp_rsp_status(proc, BT_ACS_CP_OPCODE_GET_ALL_ACTIVE_DESCRIPTORS,
+	int err = acs_cp_rsp_status(reply, BT_ACS_CP_OPCODE_GET_ALL_ACTIVE_DESCRIPTORS,
 				    BT_ACS_CP_RESPONSE_SUCCESS);
 
-	acs_seq_clear(proc);
+	reply->step = ACS_REPLY_DONE;
 	return err;
 }
 
-int acs_cp_all_active_get(struct acs_procedure *proc)
+int acs_cp_all_active_get(struct acs_reply *reply)
 {
 	struct acs_rmap_get_descriptor_req rm_operand;
 	int err;
 
-	rm_operand.map_id = proc->acs_conn->restriction_map_id;
+	rm_operand.map_id = reply->conn->restriction_map_id;
 	rm_operand.resource_handle_filter = ACS_RMAP_FILTER_ALL;
-	err = acs_rmap_build_descriptor_response(&rm_operand, &proc->buffers.response_buf->b);
+	err = acs_rmap_build_descriptor_response(&rm_operand, &reply->response->b);
 	if (err != 0) {
 		LOG_ERR("Get All Active Descriptors: RMAP build failed (%d)", err);
 		return errno_to_acs_status(err);
 	}
 
 	/* Remaining descriptor payloads chain on the confirm-side sequence. */
-	proc->seq_state = ACS_CP_SEQ_ALL_ACTIVE_ISC;
+	reply->step = ACS_REPLY_DESCS_ISC;
 	return ACS_CP_RESULT_STAGED_REPLY;
 }
 

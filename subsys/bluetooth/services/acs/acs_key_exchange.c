@@ -95,32 +95,27 @@ static void acs_kex_free(struct bt_acs_conn *acs_conn)
 	k_mem_slab_free(&acs_kex_slab, kex);
 }
 
-/* Send Key Exchange Response carrying the exchange verdict (Table 4.77). */
-static int acs_kex_send_result(struct acs_procedure *proc)
+int acs_kex_send_result(struct acs_reply *reply, uint8_t status_code)
 {
-	struct bt_acs_conn const *acs_conn = proc->acs_conn;
+	struct bt_acs_conn const *acs_conn = reply->conn;
 	uint8_t payload[3];
 	struct net_buf *buf;
 
 	sys_put_le16(sys_le16_to_cpu(acs_conn->kex->start_kex.key_id), &payload[0]);
-	payload[2] = acs_conn->kex->failed ? 0x01 : 0x00;
+	payload[2] = status_code;
 
-	buf = acs_prepare_reply_buf(proc);
+	buf = acs_prepare_reply_buf(reply);
 	if (!buf) {
 		return -ENOMEM;
 	}
 
 	net_buf_add_u8(buf, BT_ACS_CP_OPCODE_KEY_EXCHANGE_RESPONSE);
 	net_buf_add_mem(buf, payload, sizeof(payload));
-	return acs_cp_send_reply(proc);
+	return acs_cp_send_reply(reply);
 }
 
-/* Commit the established exchange: release the transcript, raise
- * SECURITY_ESTABLISHED, persist, and indicate the new status.
- */
-static int acs_kex_finalize(struct acs_procedure *proc)
+void acs_kex_finalize_success(struct bt_acs_conn *acs_conn)
 {
-	struct bt_acs_conn *acs_conn = proc->acs_conn;
 	const struct bt_acs_cb *cb = acs_cb_get();
 
 	acs_kex_free(acs_conn);
@@ -134,48 +129,17 @@ static int acs_kex_finalize(struct acs_procedure *proc)
 	acs_session_store(acs_conn->conn, acs_conn);
 #endif
 
-	acs_seq_clear(proc);
 	acs_status_indicate(acs_conn->conn);
-	return 0;
 }
 
-void acs_kex_conclude(struct acs_procedure *proc, bool failed)
+void acs_kex_conclude(struct acs_reply *reply, bool failed)
 {
-	struct bt_acs_kex_ctx *kex = proc->acs_conn->kex;
+	struct bt_acs_kex_ctx *kex = reply->conn->kex;
 
 	__ASSERT_NO_MSG(kex != NULL);
 
 	kex->failed = failed;
-	kex->state = ACS_KEX_SEND_RESULT;
-	proc->seq_state = ACS_CP_SEQ_KEX_CONTINUE;
-}
-
-int acs_kex_continue(struct acs_procedure *proc)
-{
-	struct bt_acs_conn *acs_conn = proc->acs_conn;
-	struct bt_acs_kex_ctx *kex = acs_conn->kex;
-
-	if (!kex) {
-		acs_seq_clear(proc);
-		return 0;
-	}
-
-	switch (kex->state) {
-	case ACS_KEX_SEND_RESULT:
-		kex->state = ACS_KEX_FINALIZE;
-		return acs_kex_send_result(proc);
-	case ACS_KEX_FINALIZE:
-		if (kex->failed) {
-			acs_key_exchange_abort(acs_conn);
-			acs_seq_clear(proc);
-			return 0;
-		}
-		return acs_kex_finalize(proc);
-	default:
-		LOG_WRN("KEX continue in unexpected state %d", kex->state);
-		acs_seq_clear(proc);
-		return 0;
-	}
+	reply->step = failed ? ACS_REPLY_KEX_FAIL : ACS_REPLY_KEX_OK;
 }
 
 static int check_state(struct bt_acs_conn const *acs_conn, enum acs_kex_state state)

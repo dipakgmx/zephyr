@@ -73,7 +73,7 @@ struct bt_acs_conn *acs_conn_alloc(struct bt_conn *conn)
 	acs_conn->status_flags = BT_ACS_STATUS_SECURITY_CONTROLS_ENABLED;
 	acs_conn->restriction_map_id =
 		IS_ENABLED(CONFIG_BT_ACS_FEAT_AUTHORIZATION) ? CONFIG_BT_ACS_ACTIVE_RMAP_ID : 0;
-	/* pending_reqs[] is zero-initialised by memset above (NULL = free slot) */
+	acs_reply_init_conn(acs_conn);
 	acs_request_queue_init(acs_conn);
 #if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_NOTIFICATION)
 	acs_don_queue_init(acs_conn);
@@ -82,12 +82,6 @@ struct bt_acs_conn *acs_conn_alloc(struct bt_conn *conn)
 	acs_doi_queue_init(acs_conn);
 #endif /* CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION */
 
-	/* Wire up the embedded plain-CP procedure singleton. The conn's own
-	 * memset has already zeroed the memory; mark it as plain CP so the
-	 * slab/refcount paths skip it if anything ever drives it through them.
-	 */
-	acs_conn->plain_cp_proc.kind = ACS_PROC_KIND_PLAIN_CP;
-	acs_conn->plain_cp_proc.acs_conn = acs_conn;
 	acs_seg_tx_init(&acs_conn->cp_tx);
 #if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_NOTIFICATION)
 	acs_seg_notify_async_init(&acs_conn->notify_tx);
@@ -119,13 +113,14 @@ void acs_conn_cleanup(struct bt_acs_conn *acs_conn)
 	 * preservation), and the next acs_conn_alloc on this index memsets the
 	 * whole conn before rebinding slots.
 	 */
-	/* Abort request contexts before freeing the shared I/O slot so queued/in-flight
-	 * ACS Data Out activity cannot outlive the buffers it references.
+	/* Abort all in-flight replies before freeing the shared I/O slot so
+	 * queued/in-flight ACS Data Out activity cannot outlive the buffers it
+	 * references.
 	 */
 #if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_NOTIFICATION)
 	acs_seg_notify_async_reset(&acs_conn->notify_tx);
 #endif
-	acs_procedure_abort_all(acs_conn, NULL);
+	acs_reply_abort_all(acs_conn);
 
 	/* Release the transient key-exchange context back to the pool only
 	 * after abort_all has sync-cancelled the workqueue items - a DOI
@@ -133,13 +128,8 @@ void acs_conn_cleanup(struct bt_acs_conn *acs_conn)
 	 */
 	acs_key_exchange_abort(acs_conn);
 
-	/* Reset the plain-CP procedure singleton. */
-	atomic_set(&acs_conn->plain_cp_proc.plain_cp.locked, 0);
-	acs_conn->plain_cp_proc.plain_cp.abort_pending = false;
-	if (acs_conn->plain_cp_proc.buffers.response_buf) {
-		acs_buf_free(acs_conn->plain_cp_proc.buffers.response_buf);
-		acs_conn->plain_cp_proc.buffers.response_buf = NULL;
-	}
+	atomic_set(&acs_conn->cp_locked, 0);
+	acs_conn->cp_abort_pending = false;
 	acs_seg_tx_reset(&acs_conn->cp_tx);
 #if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION)
 	acs_seg_tx_reset(&acs_conn->indicate_tx);

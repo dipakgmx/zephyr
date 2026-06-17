@@ -130,7 +130,7 @@ static const struct bt_acs_feature_rsp acs_features = {
 			  : 0)),
 };
 
-int acs_cp_handle_get_feature(struct acs_procedure *proc, struct net_buf_simple *buf)
+int acs_cp_handle_get_feature(struct acs_reply *reply, struct net_buf_simple *buf)
 {
 	if (buf->len != 0) {
 		return BT_ACS_CP_RESPONSE_INVALID_OPERAND;
@@ -138,17 +138,17 @@ int acs_cp_handle_get_feature(struct acs_procedure *proc, struct net_buf_simple 
 
 	LOG_DBG("feat=0x%08x prot=0x%04x", acs_features.features, acs_features.protection_methods);
 
-	net_buf_add_mem(proc->buffers.response_buf, &acs_features, sizeof(acs_features));
+	net_buf_add_mem(reply->response, &acs_features, sizeof(acs_features));
 
 	return ACS_CP_RESULT_STAGED_REPLY;
 }
 
 #if IS_ENABLED(CONFIG_BT_ACS_ATT_MTU)
-int acs_cp_handle_att_mtu(struct acs_procedure *proc)
+int acs_cp_handle_att_mtu(struct acs_reply *reply)
 {
-	uint16_t mtu = bt_gatt_get_mtu(proc->acs_conn->conn) - 3U;
+	uint16_t mtu = bt_gatt_get_mtu(reply->conn->conn) - 3U;
 
-	net_buf_add_le16(proc->buffers.response_buf, mtu);
+	net_buf_add_le16(reply->response, mtu);
 	return ACS_CP_RESULT_STAGED_REPLY;
 }
 #endif /* CONFIG_BT_ACS_ATT_MTU */
@@ -180,9 +180,9 @@ static bool acs_client_nonce_fixed_is_unique(struct bt_acs_conn *acs_conn,
 	return true;
 }
 
-int acs_cp_handle_set_client_nonce_fixed(struct acs_procedure *proc, struct net_buf_simple *buf)
+int acs_cp_handle_set_client_nonce_fixed(struct acs_reply *reply, struct net_buf_simple *buf)
 {
-	struct bt_acs_conn *acs_conn = proc->acs_conn;
+	struct bt_acs_conn *acs_conn = reply->conn;
 	const struct bt_acs_key_desc_record *key_desc;
 	struct bt_acs_key_desc_runtime *runtime;
 	uint16_t key_id;

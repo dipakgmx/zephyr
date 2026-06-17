@@ -47,9 +47,9 @@ static inline bool is_active_key_id(uint16_t key_id)
 	       ((ACS_ACTIVE_KEY_ID_MASK & BIT(key_id)) != 0U);
 }
 
-int acs_sec_mgmt_invalidate_all(struct acs_procedure *proc)
+int acs_sec_mgmt_invalidate_all(struct acs_reply *reply)
 {
-	struct bt_acs_conn const *acs_conn = proc->acs_conn;
+	struct bt_acs_conn const *acs_conn = reply->conn;
 	uint8_t req_idx;
 	int count = 0;
 
@@ -58,7 +58,7 @@ int acs_sec_mgmt_invalidate_all(struct acs_procedure *proc)
 		return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE;
 	}
 
-	req_idx = bt_conn_index(proc->acs_conn->conn);
+	req_idx = bt_conn_index(reply->conn->conn);
 
 	for (uint8_t i = 0; i < CONFIG_BT_MAX_CONN; i++) {
 		struct bt_acs_conn *ac = acs_conn_by_index(i);
@@ -74,16 +74,16 @@ int acs_sec_mgmt_invalidate_all(struct acs_procedure *proc)
 		}
 	}
 
-	acs_session_cache_clear_all_except(bt_conn_get_dst(proc->acs_conn->conn));
+	acs_session_cache_clear_all_except(bt_conn_get_dst(reply->conn->conn));
 
 #if defined(CONFIG_BT_SETTINGS)
-	acs_session_clear_all_except(proc->acs_conn->conn);
+	acs_session_clear_all_except(reply->conn->conn);
 #endif /* CONFIG_BT_SETTINGS */
 
 	LOG_DBG("Invalidated security for %d other connection(s); deferring self", count);
 
 	/* Defer self-invalidation until after the success response is confirmed. */
-	proc->seq_state = ACS_CP_SEQ_INVALIDATE_SELF;
+	reply->step = ACS_REPLY_INVALIDATE;
 
 	return BT_ACS_CP_RESPONSE_SUCCESS;
 }
@@ -112,7 +112,7 @@ static void invalidate_kdf_child(struct bt_acs_conn *acs_conn)
 }
 #endif
 
-int acs_sec_mgmt_invalidate_key(struct acs_procedure *proc, struct net_buf_simple *buf)
+int acs_sec_mgmt_invalidate_key(struct acs_reply *reply, struct net_buf_simple *buf)
 {
 	struct acs_cp_invalidate_key_req invalidate_req;
 	uint16_t key_id;
@@ -130,23 +130,23 @@ int acs_sec_mgmt_invalidate_key(struct acs_procedure *proc, struct net_buf_simpl
 	       sizeof(invalidate_req));
 	key_id = sys_le16_to_cpu(invalidate_req.key_id);
 
-	if (!proc->acs_conn) {
+	if (!reply->conn) {
 		LOG_ERR("Invalidate Key received for unknown connection");
 		return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED;
 	}
 
 	if (key_id == BT_ACS_GET_KEY_DESC_ALL_RECORDS_FILTER) {
-		if (acs_key_exchange_established_key(proc->acs_conn) == NULL) {
+		if (acs_key_exchange_established_key(reply->conn) == NULL) {
 			return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE;
 		}
 
-		bt_acs_invalidate_security(proc->acs_conn->conn);
+		bt_acs_invalidate_security(reply->conn->conn);
 		response_code = BT_ACS_CP_RESPONSE_SUCCESS;
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
 	} else if (key_id == ACS_KEY_ID_KDF) {
 		struct bt_acs_key_desc_runtime *kdf_key;
 
-		ret = acs_crypto_key_runtime_lookup(proc->acs_conn, ACS_KEY_ID_KDF, &kdf_key);
+		ret = acs_crypto_key_runtime_lookup(reply->conn, ACS_KEY_ID_KDF, &kdf_key);
 		if (ret) {
 			LOG_ERR("Missing KDF runtime key state");
 			response_code = BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED;
@@ -155,40 +155,40 @@ int acs_sec_mgmt_invalidate_key(struct acs_procedure *proc, struct net_buf_simpl
 			 * Applicable" */
 			response_code = BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE;
 		} else {
-			invalidate_kdf_child(proc->acs_conn);
+			invalidate_kdf_child(reply->conn);
 #if defined(CONFIG_BT_SETTINGS)
-			acs_session_store(proc->acs_conn->conn, proc->acs_conn);
+			acs_session_store(reply->conn->conn, reply->conn);
 #endif
 			{
 				const struct bt_acs_cb *cb = acs_cb_get();
 
 				if (cb && cb->security_invalidated) {
-					cb->security_invalidated(proc->acs_conn->conn);
+					cb->security_invalidated(reply->conn->conn);
 				}
 			}
-			acs_status_indicate(proc->acs_conn->conn);
+			acs_status_indicate(reply->conn->conn);
 			response_code = BT_ACS_CP_RESPONSE_SUCCESS;
 			LOG_DBG("KDF child key invalidated");
 		}
 	} else if (is_active_algorithm_key_id(key_id)) {
 		struct bt_acs_key_desc_runtime *kdf_key;
 
-		ret = acs_crypto_key_runtime_lookup(proc->acs_conn, ACS_KEY_ID_KDF, &kdf_key);
+		ret = acs_crypto_key_runtime_lookup(reply->conn, ACS_KEY_ID_KDF, &kdf_key);
 		if (ret == 0 && kdf_key->psa_key_id != 0U) {
 			/* Algorithm keys (GCM, CCM, …) use the KDF child as their actual key
 			 * material.  Invalidating them is equivalent to invalidating the child. */
-			invalidate_kdf_child(proc->acs_conn);
+			invalidate_kdf_child(reply->conn);
 #if defined(CONFIG_BT_SETTINGS)
-			acs_session_store(proc->acs_conn->conn, proc->acs_conn);
+			acs_session_store(reply->conn->conn, reply->conn);
 #endif
 			{
 				const struct bt_acs_cb *cb = acs_cb_get();
 
 				if (cb && cb->security_invalidated) {
-					cb->security_invalidated(proc->acs_conn->conn);
+					cb->security_invalidated(reply->conn->conn);
 				}
 			}
-			acs_status_indicate(proc->acs_conn->conn);
+			acs_status_indicate(reply->conn->conn);
 			response_code = BT_ACS_CP_RESPONSE_SUCCESS;
 			LOG_DBG("Algorithm key 0x%04x invalidated (KDF child destroyed, parent "
 				"retained)",
@@ -203,11 +203,11 @@ int acs_sec_mgmt_invalidate_key(struct acs_procedure *proc, struct net_buf_simpl
 	} else if (is_active_key_id(key_id)) {
 		struct bt_acs_key_desc_runtime *current_key;
 
-		if (acs_crypto_key_runtime_lookup(proc->acs_conn, key_id, &current_key) != 0 ||
+		if (acs_crypto_key_runtime_lookup(reply->conn, key_id, &current_key) != 0 ||
 		    current_key->psa_key_id == 0U) {
 			response_code = BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE;
 		} else {
-			ret = bt_acs_invalidate_security(proc->acs_conn->conn);
+			ret = bt_acs_invalidate_security(reply->conn->conn);
 			if (ret) {
 				LOG_ERR("Failed to invalidate security for key ID 0x%04x: %d",
 					key_id, ret);
@@ -243,102 +243,47 @@ int acs_sec_mgmt_invalidate_key(struct acs_procedure *proc, struct net_buf_simpl
  *   3. Commit  - only after both checks pass, tear down sequences, KEX, and
  *                data-op state, then send the ABORT SUCCESS response.
  *
- * ABORT bypasses the plain_cp_proc.plain_cp.locked gate in acs_cp_write() (ABORT must be
+ * ABORT bypasses the cp_locked gate in acs_cp_write() (ABORT must be
  * able to preempt an in-progress procedure), so this handler also owns the
  * lock bookkeeping for its own response.
  */
-int acs_sec_mgmt_abort(struct acs_procedure *proc)
+int acs_sec_mgmt_abort(struct acs_reply *reply)
 {
-	struct bt_acs_conn *acs_conn = proc->acs_conn;
-	struct k_work_sync sync;
+	struct bt_acs_conn *acs_conn = reply->conn;
 	bool plain_cp_active;
 	bool kex_in_progress;
-	bool data_ops_pending;
 	bool has_work;
 	bool can_commit;
 
-	plain_cp_active = (atomic_get(&acs_conn->plain_cp_proc.plain_cp.locked) == 1);
-
+	plain_cp_active = (atomic_get(&acs_conn->cp_locked) == 1);
 	kex_in_progress = acs_kex_in_progress(acs_conn);
-
-	data_ops_pending = false;
-	for (uint8_t i = 0; i < CONFIG_BT_ACS_MAX_INFLIGHT_REQ_PER_CONN; i++) {
-		struct acs_procedure *slot = atomic_ptr_get(&acs_conn->inflight_reqs[i]);
-
-		/* A protected Abort occupies a slot itself - not work to abort. */
-		if (slot != NULL && slot != proc) {
-			data_ops_pending = true;
-			break;
-		}
-	}
-
-	has_work = plain_cp_active || kex_in_progress || data_ops_pending;
+	has_work = plain_cp_active || kex_in_progress;
 
 	if (!has_work) {
 		LOG_WRN("Abort requested with no in-progress procedure");
-		if (proc->kind == ACS_PROC_KIND_PLAIN_CP) {
-			/* Take the lock for our own response, since no proc holds it. */
-			atomic_set(&acs_conn->plain_cp_proc.plain_cp.locked, 1);
+		if (reply->channel == ACS_REPLY_CP) {
+			atomic_set(&acs_conn->cp_locked, 1);
 		}
 		return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE;
 	}
 
-	/* If a CP indication is already handed to the BLE stack we cannot
-	 * un-send it, but we CAN suppress all subsequent indications once it
-	 * confirms.  Set a deferred flag so the confirm callback tears down the
-	 * procedure and sends ABORT SUCCESS when the channel is free.
-	 *
-	 * We must not try to send a response here - the TX channel is occupied
-	 * and the send would fail with -EBUSY.
-	 */
 	can_commit = !acs_conn->cp_tx.tx_in_flight;
 
 	if (!can_commit) {
-		if (proc->kind == ACS_PROC_KIND_PROTECTED_REQ) {
-			/* The deferred-commit path answers on the plain CP channel;
-			 * a protected Abort must reply on its own (DOI) channel,
-			 * so reject instead of deferring.
-			 */
+		if (reply->channel != ACS_REPLY_CP) {
 			return BT_ACS_CP_RESPONSE_ABORT_UNSUCCESSFUL;
 		}
 		LOG_DBG("Abort deferred - indication in flight, will commit on confirm");
-		acs_conn->plain_cp_proc.plain_cp.abort_pending = true;
+		acs_conn->cp_abort_pending = true;
 		return ACS_CP_RESULT_NO_REPLY;
 	}
 
-	/*
-	 * Plain CP: cancel any staged/pending response.  Sync-cancel the seg-TX work first so a
-	 * racing work handler cannot fire between our free and the new ABORT response allocation.
-	 */
-	if (plain_cp_active) {
-		k_work_cancel_sync(&acs_conn->cp_tx.tx_work, &sync);
-		acs_seq_clear(&acs_conn->plain_cp_proc);
-		if (acs_conn->plain_cp_proc.buffers.response_buf) {
-			acs_buf_free(acs_conn->plain_cp_proc.buffers.response_buf);
-			acs_conn->plain_cp_proc.buffers.response_buf = NULL;
-		}
-		/* A plain-CP Abort takes over the lock for its own response; a
-		 * protected Abort replies via DOI, so release the canceled
-		 * procedure's lock - nothing will confirm it.
-		 */
-		if (proc->kind == ACS_PROC_KIND_PROTECTED_REQ) {
-			atomic_set(&acs_conn->plain_cp_proc.plain_cp.locked, 0);
-		}
-	} else if (proc->kind == ACS_PROC_KIND_PLAIN_CP) {
-		atomic_set(&acs_conn->plain_cp_proc.plain_cp.locked, 1);
+	acs_abort_commit(acs_conn);
+
+	if (reply->channel == ACS_REPLY_CP) {
+		atomic_set(&acs_conn->cp_locked, 1);
 	}
 
-	/* Tear down KEX state (local only - always safe once probed). */
-	if (kex_in_progress) {
-		acs_key_exchange_abort(acs_conn);
-	}
-
-	/* Drain any pending protected-resource requests, sparing this one. */
-	if (data_ops_pending) {
-		acs_procedure_abort_all(acs_conn, proc);
-	}
-
-	/* Send success response - lock released on confirm as usual. */
 	return BT_ACS_CP_RESPONSE_SUCCESS;
 }
 
@@ -346,7 +291,7 @@ int acs_sec_mgmt_abort(struct acs_procedure *proc)
 
 #if IS_ENABLED(CONFIG_BT_ACS_SET_SECURITY_CONTROLS_SWITCH)
 
-int acs_sec_mgmt_set_security_switch(struct acs_procedure *proc, struct net_buf_simple *buf)
+int acs_sec_mgmt_set_security_switch(struct acs_reply *reply, struct net_buf_simple *buf)
 {
 	struct acs_cp_sec_switch_req switch_req;
 	uint8_t switch_state;
@@ -356,7 +301,7 @@ int acs_sec_mgmt_set_security_switch(struct acs_procedure *proc, struct net_buf_
 		return BT_ACS_CP_RESPONSE_INVALID_OPERAND;
 	}
 
-	if (!proc->acs_conn) {
+	if (!reply->conn) {
 		LOG_ERR("Set Security Controls Switch for unknown ACS connection");
 		return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED;
 	}
@@ -366,12 +311,12 @@ int acs_sec_mgmt_set_security_switch(struct acs_procedure *proc, struct net_buf_
 	switch_state = switch_req.switch_state & 0x01;
 
 	if (switch_state) {
-		proc->acs_conn->status_flags |= BT_ACS_STATUS_SECURITY_CONTROLS_ENABLED;
+		reply->conn->status_flags |= BT_ACS_STATUS_SECURITY_CONTROLS_ENABLED;
 	} else {
-		proc->acs_conn->status_flags &= ~BT_ACS_STATUS_SECURITY_CONTROLS_ENABLED;
+		reply->conn->status_flags &= ~BT_ACS_STATUS_SECURITY_CONTROLS_ENABLED;
 	}
 
-	acs_status_indicate(proc->acs_conn->conn);
+	acs_status_indicate(reply->conn->conn);
 
 	LOG_DBG("Security controls switch set to %u", switch_state);
 
@@ -382,7 +327,7 @@ int acs_sec_mgmt_set_security_switch(struct acs_procedure *proc, struct net_buf_
 
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_URI)
 
-int acs_sec_mgmt_get_key_uri(struct acs_procedure *proc, struct net_buf_simple *buf)
+int acs_sec_mgmt_get_key_uri(struct acs_reply *reply, struct net_buf_simple *buf)
 {
 	struct acs_cp_get_key_uri_req key_uri_req;
 	struct acs_cp_key_uri_rsp_hdr *hdr;
@@ -410,12 +355,12 @@ int acs_sec_mgmt_get_key_uri(struct acs_procedure *proc, struct net_buf_simple *
 		return BT_ACS_CP_RESPONSE_PARAMETER_OUT_OF_RANGE;
 	}
 
-	if (!proc->acs_conn) {
+	if (!reply->conn) {
 		LOG_ERR("Get Key URI for key_id=0x%04x with no ACS connection context", key_id);
 		return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED;
 	}
 
-	rsp_buf = &proc->buffers.response_buf->b;
+	rsp_buf = &reply->response->b;
 
 	hdr = net_buf_simple_add(rsp_buf, sizeof(struct acs_cp_key_uri_rsp_hdr));
 	hdr->key_id = sys_cpu_to_le16(key_id);
@@ -424,7 +369,7 @@ int acs_sec_mgmt_get_key_uri(struct acs_procedure *proc, struct net_buf_simple *
 	uri_ptr = rsp_buf->data + rsp_buf->len;
 	uri_len = 0;
 
-	err = cb->key_uri_get(proc->acs_conn->conn, key_id, uri_ptr, uri_max, &uri_len);
+	err = cb->key_uri_get(reply->conn->conn, key_id, uri_ptr, uri_max, &uri_len);
 
 	if (err || uri_len == 0) {
 		LOG_DBG("key_uri_get key_id=0x%04x err=%d", key_id, err);
@@ -442,11 +387,11 @@ int acs_sec_mgmt_get_key_uri(struct acs_procedure *proc, struct net_buf_simple *
 
 #if IS_ENABLED(CONFIG_BT_ACS_INITIATE_PAIRING)
 
-int acs_sec_mgmt_initiate_pairing(struct acs_procedure *proc)
+int acs_sec_mgmt_initiate_pairing(struct acs_reply *reply)
 {
 	int err;
 
-	err = bt_conn_set_security(proc->acs_conn->conn, BT_SECURITY_L2 | BT_SECURITY_FORCE_PAIR);
+	err = bt_conn_set_security(reply->conn->conn, BT_SECURITY_L2 | BT_SECURITY_FORCE_PAIR);
 
 	if (err) {
 		LOG_ERR("Initiate Pairing: bt_conn_set_security failed: %d", err);

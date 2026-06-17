@@ -25,14 +25,24 @@ struct bt_acs_kex_ctx *acs_kex_alloc(struct bt_acs_conn *acs_conn);
 /**
  * @brief Conclude the inbound phase of the exchange with a verdict.
  *
- * Arms the completion chain: the next indication confirms drive
- * @ref acs_kex_continue, which sends Key Exchange Response (success/failure)
- * and then commits the keys or tears the exchange down.
+ * Sets reply->step to ACS_REPLY_KEX_OK (success) or ACS_REPLY_KEX_FAIL
+ * (failure). The continuation engine in acs_reply.c drives the rest.
  */
-void acs_kex_conclude(struct acs_procedure *proc, bool failed);
+void acs_kex_conclude(struct acs_reply *reply, bool failed);
 
-/** @brief Advance the completion chain on indication confirm (sequence engine hook). */
-int acs_kex_continue(struct acs_procedure *proc);
+/**
+ * @brief Send the Key Exchange Response indication (Table 4.77).
+ *
+ * Exported for the continuation engine in acs_reply.c.
+ */
+int acs_kex_send_result(struct acs_reply *reply, uint8_t status_code);
+
+/**
+ * @brief Commit exchange keys, raise SECURITY_ESTABLISHED, persist, indicate.
+ *
+ * Only the success path — failure cleanup is handled by acs_key_exchange_abort.
+ */
+void acs_kex_finalize_success(struct bt_acs_conn *conn);
 
 /** @brief Initialize the Key Exchange procedure. */
 int acs_key_exchange_ecdh_start(struct bt_acs_conn *acs_conn, uint16_t key_id);

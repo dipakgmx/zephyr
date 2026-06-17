@@ -8,7 +8,7 @@
  * @file acs_types.h
  * @brief ACS internal data structures, enumerations, and forward declarations.
  *
- * All core ACS types live here to keep the circular acs_procedure <-> bt_acs_conn
+ * All core ACS types live here to keep the circular acs_reply <-> bt_acs_conn
  * dependency resolved in one place. Included transitively via acs_internal.h.
  */
 
@@ -31,8 +31,8 @@
 extern "C" {
 #endif
 
-struct acs_procedure; /**< Defined below; forward-declared for bt_acs_conn */
-struct bt_acs_conn;   /**< Defined below; forward-declared for struct acs_procedure */
+struct acs_reply;   /**< Defined below; forward-declared for bt_acs_conn */
+struct bt_acs_conn; /**< Defined below; forward-declared for struct acs_reply */
 
 /**
  * @brief Source GATT characteristic that produced an inbound frame.
@@ -102,34 +102,22 @@ enum acs_reply_channel {
 };
 
 /**
- * @brief State of a multi-indication reply sequence (OTS-style enum dispatch).
+ * @brief Continuation step for multi-indication reply sequences.
  *
- * Each value identifies the next step to execute when the current CP indication
- * is confirmed.  ACS_CP_SEQ_IDLE means no sequence is active.
+ * Each value identifies the next action after the current indication confirms.
+ * ACS_REPLY_DONE means the reply is complete and can be freed.
+ * Maps 1:1 to the spec's multi-indication sequences (§4.4.3).
  */
-enum acs_cp_seq_state {
-	ACS_CP_SEQ_IDLE = 0,
-	ACS_CP_SEQ_KEX_CONTINUE, /**< Confirm drives the key-exchange state machine */
-	ACS_CP_SEQ_ALL_ACTIVE_ISC,
-	ACS_CP_SEQ_ALL_ACTIVE_KEY,
-	ACS_CP_SEQ_ALL_ACTIVE_RC,
-	ACS_CP_SEQ_INVALIDATE_SELF,
-};
-
-/**
- * @brief Discriminator for which caller holds a reference on a request context.
- */
-enum acs_procedure_ref_who {
-	ACS_PROCEDURE_REF_ALLOC = 0, /**< Owner reference (dispatch / work-handler / reply seq) */
-	ACS_PROCEDURE_REF_TX = 1,    /**< TX path reference (queued/in-flight) */
-};
-
-/**
- * @brief Which flavour of ACS procedure this struct instance represents.
- */
-enum acs_proc_kind {
-	ACS_PROC_KIND_PLAIN_CP = 0,      /**< Embedded per-connection plain Control Point proc */
-	ACS_PROC_KIND_PROTECTED_REQ = 1, /**< Slab-allocated protected request proc */
+enum acs_reply_step {
+	ACS_REPLY_DONE = 0,
+	ACS_REPLY_KEX_OK,       /**< Send Key Exchange Rsp (success) */
+	ACS_REPLY_KEX_COMPLETE, /**< Finalize: commit keys, set SECURITY_ESTABLISHED */
+	ACS_REPLY_KEX_FAIL,     /**< Send Key Exchange Rsp (failure) */
+	ACS_REPLY_KEX_CLEANUP,  /**< Abort KEX context */
+	ACS_REPLY_DESCS_ISC,    /**< Send ISC Descriptor Rsp */
+	ACS_REPLY_DESCS_KEY,    /**< Send Key Descriptor Rsp */
+	ACS_REPLY_DESCS_RC,     /**< Send final Response Code */
+	ACS_REPLY_INVALIDATE,   /**< Clear security-established after confirm */
 };
 
 /**
@@ -253,52 +241,37 @@ struct bt_acs_kex_ctx {
 	uint8_t client_confirm[ACS_CONFIRM_VALUE_SIZE]; /**< Client confirmation code */
 };
 
-/**
- * @brief Buffers owned by an in-flight procedure.
- */
-struct acs_proc_buffers {
-	struct net_buf *request_buf;  /**< Reference-counted decrypted request buffer */
-	struct net_buf *response_buf; /**< Pool buffer for plaintext response staging */
-};
-
-/** Resolved request access kind for a protected characteristic procedure. */
+/** Resolved request access kind for a protected characteristic request. */
 enum acs_req_access {
 	ACS_REQ_ACCESS_UNKNOWN = 0,
 	ACS_REQ_ACCESS_READ,
 	ACS_REQ_ACCESS_WRITE,
 };
 
-struct acs_proc_route {
-	uint16_t resource_handle;   /**< Protected resource handle (0 for plain CP singleton) */
-	uint16_t isc_id;            /**< ISC_ID associated with this request (0 for plain CP) */
-	enum acs_req_access access; /**< Resolved read/write from rmap + payload heuristic */
-};
+#if IS_ENABLED(CONFIG_BT_ACS_FEAT_AUTHENTICATION)
+#define ACS_REPLY_SLOTS (1 + CONFIG_BT_ACS_MAX_INFLIGHT_REQ_PER_CONN)
+#else
+#define ACS_REPLY_SLOTS 1
+#endif
 
-struct acs_proc_lifetime {
-	atomic_t ref_count;          /**< Request lifetime refcount (unused for plain CP) */
-	ATOMIC_DEFINE(ref_flags, 2); /**< Per-caller bitmask (debug: catch double-release) */
-};
-
-struct acs_proc_registration {
-	/** Published slot in acs_conn->pending_reqs[] (NULL for plain CP singleton). */
-	atomic_ptr_t *pending_slot;
-};
-
-struct acs_proc_plain_cp_state {
-	atomic_t locked;    /**< Plain-CP busy gate: 1 while a procedure is active */
-	bool abort_pending; /**< Plain-CP deferred-abort flag (indication in flight) */
-};
-
-struct acs_procedure {
-	sys_snode_t node;                  /**< k_fifo linkage for send queue (DOI) */
-	struct bt_acs_conn *acs_conn;      /**< Owning ACS connection; NULL after disconnect */
-	enum acs_proc_kind kind;           /**< Plain CP singleton vs protected request */
-	enum acs_cp_seq_state seq_state;   /**< Multi-indication reply-sequence state */
-	struct acs_proc_buffers buffers;   /**< Request/response buffer ownership */
-	struct acs_proc_route route;       /**< Resource routing metadata */
-	struct acs_proc_lifetime lifetime; /**< Refcount bookkeeping */
-	struct acs_proc_registration registration; /**< Connection slot registration */
-	struct acs_proc_plain_cp_state plain_cp;   /**< Plain-CP-only busy/abort interlock */
+/**
+ * @brief Outbound reply context — ownership-transfer model, no refcount.
+ *
+ * At any moment exactly one entity owns the reply: the handler building it,
+ * the TX queue, or the BLE stack (via completion callback user_data).
+ * Freed by acs_reply_free() through a single cleanup path.
+ */
+struct acs_reply {
+	sys_snode_t node;               /**< TX queue linkage */
+	struct bt_acs_conn *conn;       /**< Owning connection (always valid while allocated) */
+	bool aborted;                   /**< Set by abort_all, checked by completion cb */
+	enum acs_reply_channel channel; /**< ACS_REPLY_CP / DOI / DON */
+	enum acs_reply_step step;       /**< What to do after current indication confirms */
+	uint16_t resource_handle;       /**< 0 for plain CP */
+	uint16_t isc_id;                /**< 0 for plain CP */
+	enum acs_req_access access;     /**< Read/write for protected char requests */
+	struct net_buf *request;        /**< Decrypted input (NULL for plain CP) */
+	struct net_buf *response;       /**< Staged reply buffer */
 };
 
 /**
@@ -312,9 +285,16 @@ struct bt_acs_conn {
 	struct bt_acs_kex_ctx *kex;          /**< In-progress key exchange, NULL when idle */
 	uint8_t status_data[3];              /**< Embedded status indication payload */
 	struct bt_gatt_indicate_params status_indicate_params; /**< Status indication params */
-	struct acs_procedure plain_cp_proc;                    /**< Singleton plain-CP procedure
-								*  (kind=ACS_PROC_KIND_PLAIN_CP; not slab-managed)
-								*/
+
+	atomic_t cp_locked;    /**< Plain-CP busy gate: 1 while a procedure is active */
+	bool cp_abort_pending; /**< Plain-CP deferred-abort flag (indication in flight) */
+
+	struct acs_reply replies[ACS_REPLY_SLOTS]; /**< Per-connection reply pool */
+	atomic_t reply_in_use[ACS_REPLY_SLOTS];    /**< Allocation flags for reply pool */
+
+	atomic_ptr_t pending_continue;     /**< Reply awaiting continuation */
+	struct k_work reply_continue_work; /**< Deferred continuation handler */
+
 	struct acs_seg_tx_ctx cp_tx; /**< Plain CP indication transport context */
 #if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_NOTIFICATION)
 	struct acs_seg_notify_ctx notify_tx; /**< DON notification segmentation context */
@@ -326,33 +306,17 @@ struct bt_acs_conn {
 	struct acs_seg_rx_ctx data_rx; /**< Data In path RX reassembly context */
 	struct k_fifo request_fifo;    /**< Pending protected request FIFO */
 	struct k_work request_work;    /**< Protected request dispatch worker */
-	/** In-flight request slots, one per concurrent protected request. */
-	atomic_ptr_t inflight_reqs[CONFIG_BT_ACS_MAX_INFLIGHT_REQ_PER_CONN];
 #if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION)
-	struct k_fifo indicate_fifo;       /**< Pending Data Out Indicate response FIFO */
-	struct k_work doi_drain_work;      /**< DOI drain / continuation worker */
-	atomic_ptr_t active_indication;    /**< Currently in-flight DOI response slot */
-	atomic_ptr_t pending_seq_continue; /**< Reply sequence waiting to continue on workq */
+	struct k_fifo tx_indicate_fifo; /**< Pending Data Out Indicate response FIFO */
+	struct k_work doi_drain_work;   /**< DOI drain worker */
+	atomic_ptr_t active_indication; /**< Currently in-flight DOI response slot */
 #endif
 #if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_NOTIFICATION)
-	struct k_fifo notify_fifo;        /**< Pending Data Out Notify response FIFO */
+	struct k_fifo tx_notify_fifo;     /**< Pending Data Out Notify response FIFO */
 	struct k_work don_drain_work;     /**< DON drain worker */
 	atomic_ptr_t active_notification; /**< Currently in-flight DON response slot */
 #endif
 };
-
-/**
- * @brief Reply channel for a procedure's CP responses.
- *
- * Plain CP replies travel as unencrypted CP indications; protected CP replies
- * travel as encrypted DOI indications. Both are confirmed paths.
- */
-static inline enum acs_reply_channel acs_proc_reply_channel(const struct acs_procedure *proc)
-{
-	__ASSERT_NO_MSG(proc != NULL);
-
-	return (proc->kind == ACS_PROC_KIND_PLAIN_CP) ? ACS_REPLY_CP : ACS_REPLY_DOI;
-}
 
 #ifdef __cplusplus
 }
