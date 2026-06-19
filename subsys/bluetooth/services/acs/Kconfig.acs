@@ -156,8 +156,8 @@ config BT_ACS_ECDH_HAS_Y
 	default 0 if BT_ACS_ECDH_CURVE_CURVE25519
 	default 1
 
-# Shared secret buffer size - used by ECDH and OOB key exchange.
-# Sized to the ECDH curve when ECDH is enabled; 32 bytes otherwise.
+# Shared secret buffer size - sized to the ECDH curve when ECDH is enabled;
+# 32 bytes otherwise.
 config BT_ACS_SHARED_SECRET_MAX_SIZE
 	int
 	default 66 if BT_ACS_ECDH_CURVE_P521
@@ -246,59 +246,6 @@ config BT_ACS_KDF_INFO_MAX_SIZE
 	default 48 if BT_ACS_KDF_HKDF_SHA384_WITH_INFO
 	default 32 if BT_ACS_KDF_HKDF_SHA256_WITH_INFO
 	default 0
-
-menuconfig BT_ACS_KEY_EXCHANGE_OOB
-	bool "Out-of-Band key exchange"
-	depends on PSA_WANT_KEY_TYPE_DERIVE
-	depends on BT_SETTINGS
-	depends on BT_ACS_FEAT_AUTHENTICATION
-	help
-	  Enable Out-of-Band (OOB) key exchange for this ACS
-	  implementation.
-
-	  This option enables the ACS OOB key exchange method used to
-	  establish shared key material between the AC Client and the
-	  AC Server through an out-of-band channel.
-
-	  In this implementation, OOB key exchange depends on
-	  BT_SETTINGS for persistent ACS key material.
-
-if BT_ACS_KEY_EXCHANGE_OOB
-
-config BT_ACS_OOB_TRANSPORT_ON_DEVICE
-	bool "On device"
-	default y
-	help
-	  Advertise support for providing the OOB key on the device
-	  (BIT(15) of OOB_Key_Exchange_Capabilities).
-
-	  In this implementation, use this option when
-	  bt_acs_cb.oob_key_get is provided
-	  (see <zephyr/bluetooth/services/acs.h>).
-
-config BT_ACS_OOB_STATIC_NUM_NUMBER
-	bool "Static OOB confirmation number - numeric"
-	default y
-	help
-	  Advertise support for a static OOB confirmation number in
-	  numeric format (BIT(5) of
-	  Confirmation_Static_OOB_Number_Capabilities).
-
-	  In this implementation, use this option when
-	  bt_acs_cb.static_oob_get is provided
-	  (see <zephyr/bluetooth/services/acs.h>).
-
-config BT_ACS_OOB_STATIC_NUM_ON_DEVICE
-	bool "Static OOB confirmation number - on device"
-	default y
-	help
-	  Advertise that the static OOB confirmation number is
-	  available on the device (BIT(15) of
-	  Confirmation_Static_OOB_Number_Capabilities).
-
-	  This option advertises capability information only.
-
-endif # BT_ACS_KEY_EXCHANGE_OOB
 
 menu "Confirmation Capabilities"
 
@@ -436,13 +383,10 @@ config BT_ACS_INITIATE_PAIRING
 config BT_ACS_KEY_URI
 	bool "Get Key URI procedure"
 	default n
-	depends on BT_ACS_KEY_EXCHANGE_OOB
+	depends on BT_ACS_ANY_KEY_EXCHANGE
 	help
 	  Enable support for the Get Key URI procedure and Key URI
 	  Response.
-
-	  This option is available only when OOB key exchange is
-	  enabled.
 
 	  In this implementation, use this option when a
 	  key_uri_get callback is registered in bt_acs_cb.
@@ -625,7 +569,7 @@ config BT_ACS_KEX_CTX_COUNT
 # Hidden helpers - derived from active selections, used for CMakeLists gating.
 config BT_ACS_ANY_KEY_EXCHANGE
 	bool
-	default y if BT_ACS_KEY_EXCHANGE_ECDH || BT_ACS_KEY_EXCHANGE_KDF || BT_ACS_KEY_EXCHANGE_OOB
+	default y if BT_ACS_KEY_EXCHANGE_ECDH || BT_ACS_KEY_EXCHANGE_KDF
 
 config BT_ACS_ANY_DATA_PROTECTION
 	bool

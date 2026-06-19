@@ -47,9 +47,6 @@ static const struct bt_acs_feature_rsp acs_features = {
 		(IS_ENABLED(CONFIG_BT_ACS_KEY_URI) ? BT_ACS_FEATURE_KEY_URI_SUPPORTED : 0) |
 
 		/* Key Exchange Methods */
-		(IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_OOB)
-			 ? BT_ACS_FEATURE_OOB_KEY_EXCHANGE_SUPPORTED
-			 : 0) |
 		(IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_ECDH)
 			 ? BT_ACS_FEATURE_ECDH_KEY_EXCHANGE_SUPPORTED
 			 : 0) |
@@ -98,16 +95,9 @@ static const struct bt_acs_feature_rsp acs_features = {
 			  ? BT_ACS_PROTECTION_AUTHORIZATION_SUPPORTED
 			  : 0)),
 
-	.oob_key_exchange_capabilities = (IS_ENABLED(CONFIG_BT_ACS_OOB_TRANSPORT_ON_DEVICE)
-						  ? BT_ACS_OOB_KEY_EXCHANGE_ON_DEVICE
-						  : 0),
+	.oob_key_exchange_capabilities = 0U,
 
-	.confirmation_static_oob_number_capabilities =
-		((IS_ENABLED(CONFIG_BT_ACS_OOB_STATIC_NUM_NUMBER) ? BT_ACS_OOB_KEY_EXCHANGE_NUMBER
-								  : 0) |
-		 (IS_ENABLED(CONFIG_BT_ACS_OOB_STATIC_NUM_ON_DEVICE)
-			  ? BT_ACS_OOB_KEY_EXCHANGE_ON_DEVICE
-			  : 0)),
+	.confirmation_static_oob_number_capabilities = 0U,
 
 	/* Numeric confirmation input capabilities */
 	.confirmation_input_oob_number_max_value = CONFIG_BT_ACS_CONFIRMATION_INPUT_MAX_VALUE,

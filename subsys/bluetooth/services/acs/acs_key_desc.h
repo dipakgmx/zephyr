@@ -30,9 +30,6 @@ struct bt_acs_conn;
 /** AES-CMAC: ParentID(2) + MsgType(1) + MAC(1) - nonce fields excluded per Table 4.45 C.1 */
 #define ACS_KEY_DESC_AES_CMAC_DATA_SIZE 4
 
-/** OOB Data: OOB_Method(1) + ServerFmt(1) + ClientFmt(1) + Curve(1) + KDF(1) (Table 4.37) */
-#define ACS_KEY_DESC_OOB_DATA_SIZE 5
-
 /** KDF Data: Parent_Key_ID(2) + KDF_Algorithm(1) */
 #define ACS_KEY_DESC_KDF_DATA_SIZE 3
 
@@ -94,25 +91,6 @@ struct acs_key_rec_aes_alg_hdr {
 } __packed;
 
 /**
- * @brief OOB Key Exchange record - full wire layout (Table 4.37).
- *
- * Data fields
- *   oob_method    - OOB_Method                  (Table 4.38)
- *   server_pk_fmt - AC_Server_Public_Key_Format  (Table 4.40)
- *   client_pk_fmt - AC_Client_Public_Key_Format  (Table 4.41)
- *   curve         - Elliptic_Curve               (Table 4.42)
- *   kdf           - Key_Derivation_Function      (Table 4.43)
- */
-struct acs_key_rec_oob {
-	struct acs_key_rec_hdr hdr;
-	uint8_t oob_method;
-	uint8_t server_pk_fmt;
-	uint8_t client_pk_fmt;
-	uint8_t curve;
-	uint8_t kdf;
-} __packed;
-
-/**
  * @brief KDF Key Exchange record - full wire layout.
  *
  * Data fields
@@ -130,7 +108,7 @@ struct acs_key_rec_kdf {
  *
  * Per spec, within a single key descriptor record the Data.Key_ID field
  * shall NOT equal the record's own Type_Value.  Algorithm records (CCM …)
- * and key-exchange records (ECDH, OOB …) therefore carry distinct IDs:
+ * and key-exchange records (ECDH …) therefore carry distinct IDs:
  *
  *  ISC.key_id = 0x0001  →  ACS_KEY_ID_CCM  (algorithm record)
  *  CCM.Data.Key_ID      →  ACS_KEY_ID_ECDH (key-exchange record)
@@ -139,12 +117,11 @@ struct acs_key_rec_kdf {
 #define ACS_KEY_ID_KDF  0x0002 /**< KDF key-exchange record       */
 #define ACS_KEY_ID_GCM  0x0003 /**< AES-128-GCM algorithm record  */
 #define ACS_KEY_ID_CCM  0x0004 /**< AES-128-CCM algorithm record  */
-#define ACS_KEY_ID_OOB  0x0005 /**< OOB key-exchange record       */
-#define ACS_KEY_ID_CMAC 0x0006 /**< AES-128-CMAC algorithm record */
-#define ACS_KEY_ID_GMAC 0x0007 /**< AES-128-GMAC algorithm record */
+#define ACS_KEY_ID_CMAC 0x0005 /**< AES-128-CMAC algorithm record */
+#define ACS_KEY_ID_GMAC 0x0006 /**< AES-128-GMAC algorithm record */
 
-/** @brief Maximum number of key-exchange Key_IDs (ECDH, OOB, KDF). */
-#define ACS_KEY_ID_COUNT 3
+/** @brief Maximum number of key-exchange Key_IDs (ECDH, KDF). */
+#define ACS_KEY_ID_COUNT 2
 
 /**
  * @brief Key Record Type_ID values for ACS Key Descriptor (Table 4.36)
@@ -153,7 +130,6 @@ struct acs_key_rec_kdf {
  * Data field.
  */
 enum acs_key_record_type {
-	ACS_KEY_REC_OOB = 0x00,          /**< OOB Key Exchange */
 	ACS_KEY_REC_ECDH = 0x01,         /**< ECDH Key Exchange */
 	ACS_KEY_REC_KDF = 0x02,          /**< KDF Key Exchange */
 	ACS_KEY_REC_AES_128_CMAC = 0x03, /**< AES-128-CMAC algorithm */
@@ -237,19 +213,6 @@ enum acs_nonce_type {
 };
 
 /**
- * @brief OOB Method field values for ACS Key Descriptor (Table 4.38)
- *
- * The OOB_Method field defines the method used to get the AC Server key out-of-band.
- */
-enum acs_oob_method {
-	ACS_OOB_METHOD_MANUFACTURER = 0x00, /**< Manufacturer-specific */
-	ACS_OOB_METHOD_URI = 0x01,          /**< URI */
-	ACS_OOB_METHOD_2D_CODE = 0x02,      /**< 2D Machine-readable Code */
-	ACS_OOB_METHOD_BAR_CODE = 0x03,     /**< Bar Code */
-	ACS_OOB_METHOD_NFC = 0x04           /**< NFC */
-};
-
-/**
  * @brief Key Descriptor record (Table 4.36).
  *
  * Each record describes a key-exchange method or algorithm and its parameters.
@@ -266,13 +229,6 @@ struct bt_acs_key_desc_record {
 			uint8_t curve;
 			uint8_t kdf;
 		} ecdh;
-		struct {
-			uint8_t oob_method;
-			uint8_t server_pk_fmt;
-			uint8_t client_pk_fmt;
-			uint8_t curve;
-			uint8_t kdf;
-		} oob;
 		struct {
 			uint16_t parent_key_id;
 			uint8_t kdf_algorithm;

@@ -123,7 +123,7 @@ enum acs_reply_step {
 /**
  * @brief Unified runtime state for one key descriptor on a connection.
  *
- * Covers both key-exchange records (ECDH, KDF, OOB) and algorithm records
+ * Covers both key-exchange records (ECDH, KDF) and algorithm records
  * (GCM, CCM, GMAC, CMAC).  Exchange-key entries use only key_desc and
  * psa_key_id; the nonce fields are unused for them.
  */
@@ -164,7 +164,7 @@ acs_key_desc_runtime_key_id(const struct bt_acs_key_desc_runtime *key_desc_runti
 struct bt_acs_crypto_session {
 	/** Unified per-Key_ID runtime state for all key descriptors.
 	 *
-	 * Exchange-key slots (ECDH, KDF, OOB) are bound first, followed by
+	 * Exchange-key slots (ECDH, KDF) are bound first, followed by
 	 * algorithm-record slots (GCM, CCM, GMAC).  Looked up uniformly via
 	 * acs_crypto_key_runtime_lookup().
 	 */
@@ -202,7 +202,7 @@ struct bt_acs_kdf_params {
  * entered when the previous indication confirms (via acs_kex_continue()).
  */
 enum acs_kex_state {
-	ACS_KEX_AWAIT_PUBKEY = 0,   /**< Expect Key Exchange ECDH (ECDH and OOB starts) */
+	ACS_KEX_AWAIT_PUBKEY = 0,   /**< Expect Key Exchange ECDH */
 	ACS_KEX_AWAIT_KDF,          /**< Expect Key Exchange KDF (in-chain or standalone) */
 	ACS_KEX_AWAIT_CONFIRM_CODE, /**< Expect ECDH Confirmation Code */
 	ACS_KEX_AWAIT_CONFIRM_RAND, /**< Expect ECDH Confirmation Random Number */
@@ -236,7 +236,7 @@ struct bt_acs_kex_ctx {
 	psa_key_id_t ecdh_key_id;    /**< PSA key identifier for the server ephemeral private key */
 	psa_key_id_t derived_key_id; /**< PSA key for shared secret / ECDHKey (never in app RAM) */
 	struct acs_cp_start_key_exchange_req start_kex; /**< Cached START_KEY_EXCHANGE operand */
-	uint8_t auth_value[ACS_CONFIRM_VALUE_SIZE];     /**< AuthValue (OOB number / static key) */
+	uint8_t auth_value[ACS_CONFIRM_VALUE_SIZE];     /**< AuthValue (confirmation number) */
 	uint8_t server_random[ACS_CONFIRM_VALUE_SIZE];  /**< Server random nonce */
 	uint8_t client_confirm[ACS_CONFIRM_VALUE_SIZE]; /**< Client confirmation code */
 };

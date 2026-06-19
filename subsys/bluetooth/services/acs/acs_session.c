@@ -160,7 +160,7 @@ reimport_failed:
 	LOG_ERR("Cached PSA keys invalid - resetting crypto");
 	acs_crypto_destroy_exchange_keys(acs_conn);
 	acs_crypto_reset(acs_conn);
-	acs_conn->status_flags = BT_ACS_STATUS_SECURITY_CONTROLS_ENABLED;
+	acs_conn->status_flags = 0;
 	return -EIO;
 
 reimport_ok:
@@ -319,7 +319,7 @@ static void acs_session_erase_slot(size_t slot)
 }
 
 /*
- * Find the long-lived parent exchange key (ECDH or OOB) on @p acs_conn.
+ * Find the long-lived parent exchange key (ECDH) on @p acs_conn.
  *
  * Distinct from acs_key_exchange_established_key() in that the KDF child is
  * deliberately excluded: only the parent is persisted, and the child gets
@@ -340,18 +340,6 @@ static int acs_session_find_parent_key(const struct bt_acs_conn *acs_conn,
 			return 0;
 		}
 	}
-
-#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_OOB)
-	{
-		struct bt_acs_key_desc_runtime *oob_key;
-
-		if (acs_crypto_key_runtime_lookup(acs_conn, ACS_KEY_ID_OOB, &oob_key) == 0 &&
-		    oob_key->psa_key_id != 0U) {
-			*exchange_key = oob_key;
-			return 0;
-		}
-	}
-#endif
 
 	return -ENOENT;
 }
@@ -476,9 +464,8 @@ void acs_session_restore(struct bt_conn *conn, struct bt_acs_conn *acs_conn)
 		return;
 	}
 
-	/* acs_key_exchange_established_key falls through to whichever exchange
-	 * key was restored (ECDH or OOB).  The KDF child is never persisted, so
-	 * the lookup will skip it.
+	/* acs_key_exchange_established_key falls through to the restored ECDH
+	 * key.  The KDF child is never persisted, so the lookup will skip it.
 	 */
 	established_key = acs_key_exchange_established_key(acs_conn);
 	if (established_key != NULL) {

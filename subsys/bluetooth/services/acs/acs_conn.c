@@ -70,7 +70,7 @@ struct bt_acs_conn *acs_conn_alloc(struct bt_conn *conn)
 	memset(acs_conn, 0, sizeof(*acs_conn));
 	acs_crypto_init_slots(acs_conn);
 	acs_conn->conn = conn;
-	acs_conn->status_flags = BT_ACS_STATUS_SECURITY_CONTROLS_ENABLED;
+	acs_conn->status_flags = 0;
 	acs_conn->restriction_map_id =
 		IS_ENABLED(CONFIG_BT_ACS_FEAT_AUTHORIZATION) ? CONFIG_BT_ACS_ACTIVE_RMAP_ID : 0;
 	acs_reply_init_conn(acs_conn);
@@ -104,7 +104,7 @@ void acs_conn_cleanup(struct bt_acs_conn *acs_conn)
 	LOG_DBG("Cleaning up ACS connection state %p", (void *)acs_conn);
 
 	acs_conn->conn = NULL;
-	acs_conn->status_flags = BT_ACS_STATUS_SECURITY_CONTROLS_ENABLED;
+	acs_conn->status_flags = 0;
 
 	acs_crypto_release_exchange_keys(acs_conn);
 	acs_crypto_destroy_connection_record_keys(acs_conn);

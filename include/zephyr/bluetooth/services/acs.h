@@ -551,26 +551,6 @@ struct bt_acs_cb {
 	 */
 	int (*static_oob_get)(struct bt_conn *conn, uint8_t *oob_out, uint16_t *oob_len);
 
-#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_OOB)
-	/**
-	 * @brief Application provides the OOB pre-shared key.
-	 *
-	 * Called during OOB key exchange (§4.4.3.17.1.1, ACS_KEY_ID_OOB)
-	 * so the server can populate the shared secret used for confirmation
-	 * code and random verification.  Write the OOB key bytes into
-	 * @p key_out and set @p key_len.
-	 *
-	 * Required when @kconfig{CONFIG_BT_ACS_KEY_EXCHANGE_OOB} is enabled.
-	 *
-	 * @param conn    Connection object.
-	 * @param key_out Buffer to receive the OOB shared key
-	 *                (up to CONFIG_BT_ACS_SHARED_SECRET_MAX_SIZE bytes).
-	 * @param key_len Set to actual byte count written.
-	 * @return 0 on success, negative error code on failure.
-	 */
-	int (*oob_key_get)(struct bt_conn *conn, uint8_t *key_out, uint16_t *key_len);
-#endif /* CONFIG_BT_ACS_KEY_EXCHANGE_OOB */
-
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_URI)
 	/**
 	 * @brief Application provides the URI for a given key ID.

@@ -46,17 +46,6 @@ struct bt_acs_key_desc_runtime *acs_key_exchange_established_key(struct bt_acs_c
 	}
 #endif
 
-#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_OOB)
-	{
-		struct bt_acs_key_desc_runtime *oob_key;
-
-		if (acs_crypto_key_runtime_lookup(acs_conn, ACS_KEY_ID_OOB, &oob_key) == 0 &&
-		    oob_key->psa_key_id != 0U) {
-			return oob_key;
-		}
-	}
-#endif
-
 	return NULL;
 }
 
@@ -559,10 +548,10 @@ static int acs_crypto_derive_kdf_child_key(struct bt_acs_conn *acs_conn)
 	struct acs_hkdf_ikm ikm;
 	int ret;
 
-	ret = acs_crypto_key_runtime_lookup(acs_conn, ACS_KEY_ID_ECDH, &parent_key);
-	if (ret) {
-		LOG_ERR("No runtime key state for ECDH parent");
-		return ret;
+	parent_key = acs_key_exchange_established_key(acs_conn);
+	if (!parent_key) {
+		LOG_ERR("No established exchange key for KDF parent");
+		return -ENOENT;
 	}
 
 	ret = acs_crypto_key_runtime_lookup(acs_conn, ACS_KEY_ID_KDF, &kdf_key);
@@ -615,7 +604,7 @@ static int acs_kdf_serialize_response(struct bt_acs_kex_ctx const *kex,
 
 int acs_key_exchange_ecdh_start(struct bt_acs_conn *acs_conn, uint16_t key_id)
 {
-	if (key_id != ACS_KEY_ID_ECDH && key_id != ACS_KEY_ID_OOB) {
+	if (key_id != ACS_KEY_ID_ECDH) {
 		LOG_ERR("key_id 0x%04x does not match supported exchange key IDs", key_id);
 		return -EALREADY;
 	}
@@ -629,7 +618,7 @@ int acs_key_exchange_ecdh_start(struct bt_acs_conn *acs_conn, uint16_t key_id)
 	acs_crypto_destroy_exchange_keys(acs_conn);
 	acs_crypto_destroy_connection_record_keys(acs_conn);
 
-	if (key_id == ACS_KEY_ID_ECDH) {
+	{
 		int err = acs_crypto_generate_keypair(acs_conn);
 
 		if (err) {
@@ -664,11 +653,8 @@ int acs_key_exchange_ecdh_pubkey(struct bt_acs_conn *acs_conn, struct net_buf_si
 	net_buf_simple_add_mem(rsp_buf, &acs_conn->kex->server_pubkey,
 			       sizeof(acs_conn->kex->server_pubkey));
 
-	if (sys_le16_to_cpu(acs_conn->kex->start_kex.key_id) == ACS_KEY_ID_ECDH) {
-		acs_conn->kex->state = ACS_KEX_AWAIT_KDF;
-	} else {
-		acs_conn->kex->state = ACS_KEX_AWAIT_CONFIRM_CODE;
-	}
+	/* §4.4.3.17.1: ECDH key exchange requires KDF next. */
+	acs_conn->kex->state = ACS_KEX_AWAIT_KDF;
 	LOG_INF("ECDH Public Keys Exchanged");
 	return 0;
 }
@@ -860,11 +846,6 @@ int acs_key_exchange_ecdh_confirm_rand(struct bt_acs_conn *acs_conn,
 		return err;
 	}
 
-	if (memcmp(client_random, acs_conn->kex->server_random, ACS_CONFIRM_VALUE_SIZE) == 0) {
-		LOG_WRN("client random matches server random");
-		return -EINVAL;
-	}
-
 	{
 		psa_status_t status;
 
@@ -877,6 +858,12 @@ int acs_key_exchange_ecdh_confirm_rand(struct bt_acs_conn *acs_conn,
 	}
 
 	sys_memcpy_swap(client_random_be, client_random, ACS_CONFIRM_VALUE_SIZE);
+
+	if (memcmp(client_random_be, acs_conn->kex->server_random, ACS_CONFIRM_VALUE_SIZE) == 0) {
+		LOG_WRN("client random matches server random");
+		mbedtls_platform_zeroize(key_mat, sizeof(key_mat));
+		return -EINVAL;
+	}
 
 	err = acs_ecdh_confirm_code_compute(acs_conn->kex->server_pubkey.x,
 #if CONFIG_BT_ACS_ECDH_HAS_Y

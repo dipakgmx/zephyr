@@ -123,17 +123,6 @@ BT_ACS_KEY_DESC_DEFINE(acs_key_desc_gmac, .type_id = ACS_KEY_REC_AES_128_GMAC,
 		       });
 #endif
 
-#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_OOB)
-BT_ACS_KEY_DESC_DEFINE(acs_key_desc_oob, .type_id = ACS_KEY_REC_OOB, .key_id = ACS_KEY_ID_OOB,
-		       .oob = {
-			       .oob_method = ACS_OOB_METHOD_MANUFACTURER,
-			       .server_pk_fmt = ACS_KEY_DESC_PK_FMT,
-			       .client_pk_fmt = ACS_KEY_DESC_PK_FMT,
-			       .curve = ACS_KEY_DESC_CURVE,
-			       .kdf = ACS_KEY_DESC_KDF,
-		       });
-#endif
-
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
 BT_ACS_KEY_DESC_DEFINE(acs_key_desc_kdf_rec, .type_id = ACS_KEY_REC_KDF, .key_id = ACS_KEY_ID_KDF,
 		       .kdf = {
@@ -342,29 +331,6 @@ int acs_key_desc_build_response(struct net_buf_simple *operand, struct net_buf_s
 				"cli_fmt=%u",
 				rec->key_id, rec->ecdh.curve, rec->ecdh.kdf,
 				rec->ecdh.server_pk_fmt, rec->ecdh.client_pk_fmt);
-
-		} else if (rec->type_id == ACS_KEY_REC_OOB) {
-			struct acs_key_rec_oob wire = {
-				.hdr =
-					{
-						.type_id = ACS_KEY_REC_OOB,
-						.type_value = sys_cpu_to_le16(rec->key_id),
-						.data_size = ACS_KEY_DESC_OOB_DATA_SIZE,
-					},
-				.oob_method = rec->oob.oob_method,
-				.server_pk_fmt = rec->oob.server_pk_fmt,
-				.client_pk_fmt = rec->oob.client_pk_fmt,
-				.curve = rec->oob.curve,
-				.kdf = rec->oob.kdf,
-			};
-
-			if (net_buf_simple_tailroom(buf) < sizeof(wire)) {
-				return -ENOMEM;
-			}
-			net_buf_simple_add_mem(buf, &wire, sizeof(wire));
-
-			LOG_DBG("Key rec: type=OOB key_id=0x%04x method=%u curve=%u kdf=%u",
-				rec->key_id, rec->oob.oob_method, rec->oob.curve, rec->oob.kdf);
 
 		} else if (rec->type_id == ACS_KEY_REC_KDF) {
 			struct acs_key_rec_kdf wire = {

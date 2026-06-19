@@ -29,6 +29,7 @@ BUILD_ASSERT(IS_ENABLED(CONFIG_BT_ACS_DESCRIPTORS) ||
 
 static const struct bt_acs_cb *acs_cb;
 static bool acs_initialized;
+static bool acs_security_controls_enabled = true;
 
 static struct k_work_q acs_work_q;
 K_THREAD_STACK_DEFINE(acs_work_q_stack, CONFIG_BT_ACS_WORKQUEUE_STACK_SIZE);
@@ -87,9 +88,16 @@ static ssize_t acs_status_read(struct bt_conn *conn, const struct bt_gatt_attr *
 
 	if (acs_conn != NULL) {
 		status_data[0] = acs_conn->status_flags;
+		if (acs_security_controls_enabled) {
+			status_data[0] |= BT_ACS_STATUS_SECURITY_CONTROLS_ENABLED;
+		} else {
+			status_data[0] &= ~BT_ACS_STATUS_SECURITY_CONTROLS_ENABLED;
+		}
 		sys_put_le16(acs_conn->restriction_map_id, &status_data[1]);
 	} else {
-		status_data[0] = BT_ACS_STATUS_SECURITY_CONTROLS_ENABLED;
+		status_data[0] = acs_security_controls_enabled
+					 ? BT_ACS_STATUS_SECURITY_CONTROLS_ENABLED
+					 : 0;
 		sys_put_le16(IS_ENABLED(CONFIG_BT_ACS_FEAT_AUTHORIZATION)
 				     ? CONFIG_BT_ACS_ACTIVE_RMAP_ID
 				     : 0,
@@ -275,6 +283,11 @@ void acs_status_indicate(struct bt_conn *conn)
 	}
 
 	acs_conn->status_data[0] = acs_conn->status_flags;
+	if (acs_security_controls_enabled) {
+		acs_conn->status_data[0] |= BT_ACS_STATUS_SECURITY_CONTROLS_ENABLED;
+	} else {
+		acs_conn->status_data[0] &= ~BT_ACS_STATUS_SECURITY_CONTROLS_ENABLED;
+	}
 	sys_put_le16(acs_conn->restriction_map_id, &acs_conn->status_data[1]);
 
 	memset(&acs_conn->status_indicate_params, 0, sizeof(acs_conn->status_indicate_params));
@@ -372,12 +385,36 @@ int bt_acs_set_oob_number(struct bt_conn *conn, const uint8_t *oob, uint16_t len
 	return 0;
 }
 
+bool acs_security_switch_get(void)
+{
+	return acs_security_controls_enabled;
+}
+
+void acs_security_switch_set(bool enabled)
+{
+	if (acs_security_controls_enabled == enabled) {
+		return;
+	}
+
+	acs_security_controls_enabled = enabled;
+
+	for (size_t i = 0; i < CONFIG_BT_MAX_CONN; i++) {
+		struct bt_acs_conn *acs_conn = acs_conn_by_index(i);
+
+		if (acs_conn && acs_conn->conn) {
+			acs_status_indicate(acs_conn->conn);
+		}
+	}
+}
+
 uint8_t bt_acs_status_get(struct bt_conn *conn)
 {
 	struct bt_acs_conn const *acs_conn = acs_conn_lookup(conn);
 
 	if (!acs_conn) {
-		return BT_ACS_STATUS_SECURITY_CONTROLS_ENABLED;
+		return acs_security_controls_enabled
+			       ? BT_ACS_STATUS_SECURITY_CONTROLS_ENABLED
+			       : 0;
 	}
 
 	return acs_conn->status_flags;

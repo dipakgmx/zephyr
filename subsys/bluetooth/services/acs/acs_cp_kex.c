@@ -246,9 +246,9 @@ int acs_cp_kex_start(struct acs_reply *reply, struct net_buf_simple *buf)
 				method, action);
 			return BT_ACS_CP_RESPONSE_INVALID_OPERAND;
 		}
-		if (acs_crypto_key_runtime_lookup(acs_conn, ACS_KEY_ID_ECDH, &parent_key) != 0 ||
-		    !acs_current_key_installed(parent_key)) {
-			LOG_WRN("no ECDH parent key available, prior exchange required");
+		parent_key = acs_key_exchange_established_key(acs_conn);
+		if (!parent_key || !acs_current_key_installed(parent_key)) {
+			LOG_WRN("no parent key available, prior exchange required");
 			return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE;
 		}
 		/* A KDF child key derived from the ECDH parent is already installed.
@@ -352,27 +352,6 @@ int acs_cp_kex_exchange_ecdh(struct acs_reply *reply, struct net_buf_simple *buf
 		acs_key_exchange_abort(acs_conn);
 		return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE;
 	}
-
-#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_OOB)
-	/* OOB path: no pubkey on the wire; fetch pre-shared key from app callback. */
-	if (key_id == ACS_KEY_ID_OOB) {
-		const struct bt_acs_cb *cb = acs_cb_get();
-
-		if (!cb || !cb->oob_key_get) {
-			acs_key_exchange_abort(acs_conn);
-			return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED;
-		}
-		err = cb->oob_key_get(reply->conn->conn, acs_conn->kex->key_material,
-				      &acs_conn->kex->key_mat_len);
-		if (err || acs_conn->kex->key_mat_len == 0) {
-			LOG_ERR("OOB key_get failed: %d", err);
-			acs_key_exchange_abort(acs_conn);
-			return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED;
-		}
-		acs_conn->kex->state = ACS_KEX_AWAIT_CONFIRM_CODE;
-		return BT_ACS_CP_RESPONSE_SUCCESS;
-	}
-#endif /* CONFIG_BT_ACS_KEY_EXCHANGE_OOB */
 
 	if (buf->len != sizeof(acs_conn->kex->client_pubkey)) {
 		LOG_WRN("ECDH key exchange operand invalid length: %u", buf->len);
@@ -479,9 +458,15 @@ int acs_cp_kex_ecdh_confirm_rand(struct acs_reply *reply, struct net_buf_simple 
 		return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE;
 	}
 
-	if (memcmp(req_data.random, acs_conn->kex->server_random, ACS_CONFIRM_VALUE_SIZE) == 0) {
-		acs_key_exchange_abort(acs_conn);
-		return BT_ACS_CP_RESPONSE_INVALID_OPERAND;
+	{
+		uint8_t client_random_be[ACS_CONFIRM_VALUE_SIZE];
+
+		sys_memcpy_swap(client_random_be, req_data.random, ACS_CONFIRM_VALUE_SIZE);
+		if (memcmp(client_random_be, acs_conn->kex->server_random,
+			   ACS_CONFIRM_VALUE_SIZE) == 0) {
+			acs_key_exchange_abort(acs_conn);
+			return BT_ACS_CP_RESPONSE_INVALID_OPERAND;
+		}
 	}
 
 	rsp_buf = reply->response;
@@ -502,8 +487,10 @@ int acs_cp_kex_ecdh_confirm_rand(struct acs_reply *reply, struct net_buf_simple 
 		uint8_t key_buf[CONFIG_BT_ACS_SESSION_KEY_SIZE];
 		size_t key_buf_len;
 
-		if (acs_crypto_key_runtime_lookup(acs_conn, ACS_KEY_ID_ECDH, &exchange_key) != 0) {
-			LOG_ERR("Missing ECDH runtime key state");
+		if (acs_crypto_key_runtime_lookup(
+			    acs_conn, sys_le16_to_cpu(acs_conn->kex->start_kex.key_id),
+			    &exchange_key) != 0) {
+			LOG_ERR("Missing exchange runtime key state");
 			acs_kex_conclude(reply, true);
 			return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED;
 		}

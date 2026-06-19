@@ -32,7 +32,6 @@ LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
 #define ACS_ACTIVE_KEY_ID_MASK                                                                     \
 	(ACS_ACTIVE_ALGORITHM_KEY_ID_MASK |                                                        \
 	 (IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_ECDH) ? BIT(ACS_KEY_ID_ECDH) : 0U) |               \
-	 (IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_OOB) ? BIT(ACS_KEY_ID_OOB) : 0U) |                 \
 	 (IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF) ? BIT(ACS_KEY_ID_KDF) : 0U))
 
 static inline bool is_active_algorithm_key_id(uint16_t key_id)
@@ -308,15 +307,16 @@ int acs_sec_mgmt_set_security_switch(struct acs_reply *reply, struct net_buf_sim
 
 	/* Copy the packed operand out of the request buffer for aligned access. */
 	memcpy(&switch_req, net_buf_simple_pull_mem(buf, sizeof(switch_req)), sizeof(switch_req));
-	switch_state = switch_req.switch_state & 0x01;
 
-	if (switch_state) {
-		reply->conn->status_flags |= BT_ACS_STATUS_SECURITY_CONTROLS_ENABLED;
-	} else {
-		reply->conn->status_flags &= ~BT_ACS_STATUS_SECURITY_CONTROLS_ENABLED;
+	if (switch_req.switch_state & 0xFE) {
+		LOG_WRN("Set Security Controls Switch: padding bits non-zero (0x%02x)",
+			switch_req.switch_state);
+		return BT_ACS_CP_RESPONSE_INVALID_OPERAND;
 	}
 
-	acs_status_indicate(reply->conn->conn);
+	switch_state = switch_req.switch_state & 0x01;
+
+	acs_security_switch_set(switch_state != 0);
 
 	LOG_DBG("Security controls switch set to %u", switch_state);
 

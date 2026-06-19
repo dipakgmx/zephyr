@@ -36,10 +36,6 @@
 #include <zephyr/sys/printk.h>
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/kernel.h>
-#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_OOB)
-#include <zephyr/shell/shell.h>
-#endif
-
 #include <zephyr/settings/settings.h>
 
 #include <zephyr/bluetooth/bluetooth.h>
@@ -111,39 +107,9 @@ static void acs_security_invalidated(struct bt_conn *conn)
 	printk("ACS security invalidated for %s\n", addr);
 }
 
-#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_OOB)
-
-static uint8_t oob_psk[CONFIG_BT_ACS_SHARED_SECRET_MAX_SIZE];
-static uint16_t oob_psk_len;
-
-static int oob_key_get_cb(struct bt_conn *conn, uint8_t *key_out, uint16_t *key_len)
-{
-	if (oob_psk_len == 0) {
-		printk("ACS OOB: no key set\n");
-		return -ENOENT;
-	}
-	memcpy(key_out, oob_psk, oob_psk_len);
-	*key_len = oob_psk_len;
-	return 0;
-}
-
-static void output_oob_number_cb(struct bt_conn *conn, uint8_t action, uint32_t oob_number)
-{
-	char addr[BT_ADDR_LE_STR_LEN];
-
-	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
-	printk("ACS OOB confirmation number for %s: %u\n", addr, oob_number);
-}
-
-#endif /* CONFIG_BT_ACS_KEY_EXCHANGE_OOB */
-
 static const struct bt_acs_cb acs_cb = {
 	.security_established = acs_security_established,
 	.security_invalidated = acs_security_invalidated,
-#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_OOB)
-	.oob_key_get = oob_key_get_cb,
-	.output_oob_number = output_oob_number_cb,
-#endif
 };
 
 /* BLE advertising */

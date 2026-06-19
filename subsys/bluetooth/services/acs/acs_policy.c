@@ -67,6 +67,10 @@ bool bt_acs_policy_is_permitted(struct bt_conn *conn, uint16_t att_handle,
 		return true;
 	}
 
+	if (!acs_security_switch_get()) {
+		return true;
+	}
+
 	if (acs_conn->status_flags & BT_ACS_STATUS_SECURITY_ESTABLISHED) {
 		return true;
 	}

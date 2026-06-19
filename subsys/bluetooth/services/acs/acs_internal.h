@@ -139,6 +139,12 @@ void acs_status_indicate(struct bt_conn *conn);
 /** @brief Return true if the ACS service has been initialised. */
 bool acs_is_initialized(void);
 
+/** @brief Get the server-wide security controls switch state. */
+bool acs_security_switch_get(void);
+
+/** @brief Set the server-wide security controls switch and indicate all connections. */
+void acs_security_switch_set(bool enabled);
+
 /** @brief Return the registered application callbacks, or NULL. */
 const struct bt_acs_cb *acs_cb_get(void);
 

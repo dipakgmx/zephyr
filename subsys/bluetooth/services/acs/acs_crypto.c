@@ -93,9 +93,6 @@ void acs_crypto_init_slots(struct bt_acs_conn *acs_conn)
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
 	acs_conn->crypto.key_runtimes[slot++].key_desc = acs_key_desc_lookup(ACS_KEY_ID_KDF);
 #endif
-#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_OOB)
-	acs_conn->crypto.key_runtimes[slot++].key_desc = acs_key_desc_lookup(ACS_KEY_ID_OOB);
-#endif
 
 	__ASSERT_NO_MSG(slot <= ACS_KEY_ID_COUNT);
 
