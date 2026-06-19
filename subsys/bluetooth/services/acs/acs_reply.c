@@ -101,46 +101,7 @@ struct net_buf *acs_prepare_reply_buf(struct acs_reply *reply)
 static void cp_tx_done(struct bt_conn *bt_conn, const struct bt_gatt_attr *attr, int err,
 		       void *user_data);
 
-static int reply_submit_plain_cp(struct acs_reply *reply)
-{
-	struct bt_acs_conn *conn = reply->conn;
-
-	__ASSERT_NO_MSG(conn != NULL);
-	__ASSERT_NO_MSG(conn->conn != NULL);
-	__ASSERT_NO_MSG(reply->response != NULL);
-
-	return acs_seg_tx_send(&conn->cp_tx, conn->conn, acs_attr_cp(), reply->response, cp_tx_done,
-			       reply);
-}
-
 #if IS_ENABLED(CONFIG_BT_ACS_FEAT_AUTHENTICATION)
-
-static void data_tx_format_wire(uint8_t *ciphertext_and_tag, uint16_t plain_len, uint8_t tag_size)
-{
-	uint8_t tag_tmp[ACS_MAX_AUTH_TAG_SIZE];
-
-	memcpy(tag_tmp, ciphertext_and_tag + plain_len, tag_size);
-	sys_mem_swap(tag_tmp, tag_size);
-	sys_mem_swap(ciphertext_and_tag, plain_len);
-	memmove(ciphertext_and_tag + tag_size, ciphertext_and_tag, plain_len);
-	memcpy(ciphertext_and_tag, tag_tmp, tag_size);
-}
-
-static void data_tx_put_nonce_var(uint8_t *dst,
-				  const struct bt_acs_key_desc_runtime *key_desc_runtime,
-				  uint64_t tx_counter)
-{
-	const struct bt_acs_key_desc_record *key_desc = key_desc_runtime->key_desc;
-	uint8_t counter_size = acs_key_desc_nonce_counter_size(key_desc);
-	uint8_t prefix_size = acs_key_desc_nonce_prefix_size(key_desc);
-
-	sys_put_le(dst, &tx_counter, counter_size);
-
-	if (key_desc->aes.nonce_type == ACS_NONCE_SEQ_EVEN_ODD && prefix_size > 0U) {
-		memcpy(&dst[counter_size], key_desc_runtime->server_nonce_fixed, prefix_size);
-		sys_mem_swap(&dst[counter_size], prefix_size);
-	}
-}
 
 static int data_tx_encrypt_in_place(struct bt_acs_conn *acs_conn, uint16_t isc_id,
 				    struct net_buf *buf)
@@ -209,13 +170,28 @@ static int data_tx_encrypt_in_place(struct bt_acs_conn *acs_conn, uint16_t isc_i
 
 	__ASSERT_NO_MSG(cipher_len == plain_len + auth_tag_size);
 
-	data_tx_format_wire(plaintext, plain_len, auth_tag_size);
+	uint8_t tag_tmp[ACS_MAX_AUTH_TAG_SIZE];
+
+	memcpy(tag_tmp, plaintext + plain_len, auth_tag_size);
+	sys_mem_swap(tag_tmp, auth_tag_size);
+	sys_mem_swap(plaintext, plain_len);
+	memmove(plaintext + auth_tag_size, plaintext, plain_len);
+	memcpy(plaintext, tag_tmp, auth_tag_size);
 	net_buf_add(buf, auth_tag_size);
 
 	uint8_t *hdr = net_buf_push(buf, nonce_var_size + sizeof(uint16_t));
+	uint8_t *nonce_dst = hdr + sizeof(uint16_t);
+	uint8_t counter_size = acs_key_desc_nonce_counter_size(key_desc);
+	uint8_t prefix_size = acs_key_desc_nonce_prefix_size(key_desc);
 
 	sys_put_le16(isc_id, hdr);
-	data_tx_put_nonce_var(hdr + sizeof(uint16_t), key_desc_runtime, tx_counter);
+	sys_put_le(nonce_dst, &tx_counter, counter_size);
+
+	if (key_desc->aes.nonce_type == ACS_NONCE_SEQ_EVEN_ODD && prefix_size > 0U) {
+		memcpy(&nonce_dst[counter_size], key_desc_runtime->server_nonce_fixed,
+		       prefix_size);
+		sys_mem_swap(&nonce_dst[counter_size], prefix_size);
+	}
 
 	return 0;
 }
@@ -227,14 +203,9 @@ static int data_tx_encrypt_in_place(struct bt_acs_conn *acs_conn, uint16_t isc_i
 static void don_tx_done(struct bt_conn *bt_conn, const struct bt_gatt_attr *attr, int err,
 			void *user_data);
 
-static void acs_don_queue_submit(struct bt_acs_conn *acs_conn)
+static void data_tx_don_drain_work(struct k_work *work)
 {
-	__ASSERT_NO_MSG(acs_conn != NULL);
-	k_work_submit_to_queue(acs_get_wq(), &acs_conn->don_drain_work);
-}
-
-static void data_tx_drain_don_queue(struct bt_acs_conn *acs_conn)
-{
+	struct bt_acs_conn *acs_conn = CONTAINER_OF(work, struct bt_acs_conn, don_drain_work);
 	sys_snode_t *snode;
 	struct acs_reply *reply;
 	int err;
@@ -273,12 +244,6 @@ static void data_tx_drain_don_queue(struct bt_acs_conn *acs_conn)
 	}
 }
 
-static void data_tx_don_drain_work(struct k_work *work)
-{
-	struct bt_acs_conn *acs_conn = CONTAINER_OF(work, struct bt_acs_conn, don_drain_work);
-	data_tx_drain_don_queue(acs_conn);
-}
-
 void acs_don_queue_init(struct bt_acs_conn *acs_conn)
 {
 	__ASSERT_NO_MSG(acs_conn != NULL);
@@ -300,7 +265,7 @@ static void don_tx_done(struct bt_conn *bt_conn, const struct bt_gatt_attr *attr
 	acs_reply_free(reply);
 
 	if (!was_aborted) {
-		acs_don_queue_submit(acs_conn);
+		k_work_submit_to_queue(acs_get_wq(), &acs_conn->don_drain_work);
 	}
 }
 
@@ -326,7 +291,7 @@ static int data_tx_send_notify(struct acs_reply *reply)
 	}
 
 	k_fifo_put(&acs_conn->tx_notify_fifo, reply);
-	acs_don_queue_submit(acs_conn);
+	k_work_submit_to_queue(acs_get_wq(), &acs_conn->don_drain_work);
 	return 0;
 }
 
@@ -343,8 +308,9 @@ void acs_doi_queue_submit(struct bt_acs_conn *acs_conn)
 	k_work_submit_to_queue(acs_get_wq(), &acs_conn->doi_drain_work);
 }
 
-static void data_tx_drain_doi_queue(struct bt_acs_conn *acs_conn)
+static void data_tx_doi_drain_work(struct k_work *work)
 {
+	struct bt_acs_conn *acs_conn = CONTAINER_OF(work, struct bt_acs_conn, doi_drain_work);
 	sys_snode_t *snode;
 	struct acs_reply *reply;
 	int err;
@@ -379,12 +345,6 @@ static void data_tx_drain_doi_queue(struct bt_acs_conn *acs_conn)
 		LOG_WRN("DOI seg_tx_send failed: %d (handle 0x%04x)", err, reply->resource_handle);
 		acs_reply_free(reply);
 	}
-}
-
-static void data_tx_doi_drain_work(struct k_work *work)
-{
-	struct bt_acs_conn *acs_conn = CONTAINER_OF(work, struct bt_acs_conn, doi_drain_work);
-	data_tx_drain_doi_queue(acs_conn);
 }
 
 void acs_doi_queue_init(struct bt_acs_conn *acs_conn)
@@ -463,7 +423,8 @@ int acs_reply_submit(struct acs_reply *reply)
 
 	switch (reply->channel) {
 	case ACS_REPLY_CP:
-		return reply_submit_plain_cp(reply);
+		return acs_seg_tx_send(&reply->conn->cp_tx, reply->conn->conn, acs_attr_cp(),
+				       reply->response, cp_tx_done, reply);
 #if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_NOTIFICATION)
 	case ACS_REPLY_DON:
 		return data_tx_send_notify(reply);

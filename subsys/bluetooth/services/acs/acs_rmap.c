@@ -436,25 +436,25 @@ int acs_rmap_build_id_list_response(struct net_buf_simple *buf)
 	return 0;
 }
 
-static const struct bt_uuid *rmap_lookup_uuid(const struct bt_acs_rmap_protected *p)
-{
-	STRUCT_SECTION_FOREACH(bt_acs_rmap_char_reg, reg) {
-		if (reg->entry == p) {
-			return reg->char_uuid;
-		}
-	}
-	STRUCT_SECTION_FOREACH_ALTERNATE(bt_acs_rmap_cp_reg, bt_acs_rmap_char_reg, reg) {
-		if (reg->entry == p) {
-			return reg->char_uuid;
-		}
-	}
-	return NULL;
-}
-
 static void rmap_dump_entry(const char *kind, const struct bt_acs_rmap_protected *p)
 {
-	const struct bt_uuid *uuid = rmap_lookup_uuid(p);
+	const struct bt_uuid *uuid = NULL;
 	char uuid_str[BT_UUID_STR_LEN] = "<unknown>";
+
+	STRUCT_SECTION_FOREACH(bt_acs_rmap_char_reg, reg) {
+		if (reg->entry == p) {
+			uuid = reg->char_uuid;
+			break;
+		}
+	}
+	if (!uuid) {
+		STRUCT_SECTION_FOREACH_ALTERNATE(bt_acs_rmap_cp_reg, bt_acs_rmap_char_reg, reg) {
+			if (reg->entry == p) {
+				uuid = reg->char_uuid;
+				break;
+			}
+		}
+	}
 
 	if (uuid) {
 		bt_uuid_to_str(uuid, uuid_str, sizeof(uuid_str));

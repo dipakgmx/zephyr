@@ -755,21 +755,6 @@ void acs_crypto_destroy_connection_record_keys(struct bt_acs_conn *acs_conn)
 	}
 }
 
-/*
- * Invalidate per-session nonce state on a record whose key has just become
- * unusable.  The record is not expected to encrypt/decrypt again until a
- * successful bind re-runs acs_derive_nonce_state() - so plain zero is fine
- * here, no need for the EVEN_ODD-aware initial state.
- */
-static void acs_clear_nonce_state(struct bt_acs_key_desc_runtime *runtime)
-{
-	mbedtls_platform_zeroize(runtime->server_nonce_fixed, sizeof(runtime->server_nonce_fixed));
-	mbedtls_platform_zeroize(runtime->client_nonce_fixed, sizeof(runtime->client_nonce_fixed));
-	runtime->client_nonce_set = false;
-	runtime->tx_nonce_counter = 0U;
-	runtime->rx_nonce_counter = 0U;
-}
-
 int acs_crypto_bind_algorithm_keys(struct bt_acs_conn *acs_conn,
 				   struct bt_acs_key_desc_runtime *parent)
 {
@@ -831,6 +816,12 @@ void acs_crypto_invalidate_algorithm_keys(struct bt_acs_conn *acs_conn)
 		}
 
 		acs_crypto_destroy_key(runtime);
-		acs_clear_nonce_state(runtime);
+		mbedtls_platform_zeroize(runtime->server_nonce_fixed,
+					 sizeof(runtime->server_nonce_fixed));
+		mbedtls_platform_zeroize(runtime->client_nonce_fixed,
+					 sizeof(runtime->client_nonce_fixed));
+		runtime->client_nonce_set = false;
+		runtime->tx_nonce_counter = 0U;
+		runtime->rx_nonce_counter = 0U;
 	}
 }

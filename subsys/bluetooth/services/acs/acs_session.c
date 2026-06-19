@@ -44,16 +44,6 @@ struct acs_session_cache_entry {
 
 static struct acs_session_cache_entry session_cache[CONFIG_BT_MAX_PAIRED];
 
-static bool any_current_key_installed(const struct bt_acs_conn *acs_conn)
-{
-	for (size_t i = 0; i < ACS_KEY_ID_COUNT; i++) {
-		if (acs_conn->crypto.key_runtimes[i].psa_key_id != 0U) {
-			return true;
-		}
-	}
-	return false;
-}
-
 static struct acs_session_cache_entry *session_cache_find(const bt_addr_le_t *addr)
 {
 	for (size_t i = 0; i < ARRAY_SIZE(session_cache); i++) {
@@ -67,8 +57,15 @@ static struct acs_session_cache_entry *session_cache_find(const bt_addr_le_t *ad
 void acs_session_cache_save(const bt_addr_le_t *addr, const struct bt_acs_conn *acs_conn)
 {
 	struct acs_session_cache_entry *entry;
+	bool has_key = false;
 
-	if (!any_current_key_installed(acs_conn)) {
+	for (size_t i = 0; i < ACS_KEY_ID_COUNT; i++) {
+		if (acs_conn->crypto.key_runtimes[i].psa_key_id != 0U) {
+			has_key = true;
+			break;
+		}
+	}
+	if (!has_key) {
 		return;
 	}
 

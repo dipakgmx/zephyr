@@ -281,21 +281,18 @@ static const uint8_t acs_cp_rsp_opcode[BT_ACS_CP_OPCODE_RFU] = {
 	[BT_ACS_CP_OPCODE_KEY_EXCHANGE_KDF] = BT_ACS_CP_OPCODE_KEY_EXCHANGE_KDF_RESPONSE,
 };
 
-static uint8_t acs_cp_response_opcode(uint8_t opcode)
-{
-	if (opcode == BT_ACS_CP_OPCODE_ATT_MTU) {
-		return BT_ACS_CP_OPCODE_ATT_MTU_RESPONSE;
-	}
-	if (opcode >= ARRAY_SIZE(acs_cp_rsp_opcode)) {
-		return 0U;
-	}
-	return acs_cp_rsp_opcode[opcode];
-}
-
 static int acs_cp_stage_response(struct acs_reply *reply, uint8_t opcode)
 {
-	uint8_t rsp_opcode = acs_cp_response_opcode(opcode);
+	uint8_t rsp_opcode;
 	struct net_buf *rsp_buf;
+
+	if (opcode == BT_ACS_CP_OPCODE_ATT_MTU) {
+		rsp_opcode = BT_ACS_CP_OPCODE_ATT_MTU_RESPONSE;
+	} else if (opcode >= ARRAY_SIZE(acs_cp_rsp_opcode)) {
+		rsp_opcode = 0U;
+	} else {
+		rsp_opcode = acs_cp_rsp_opcode[opcode];
+	}
 
 	if (rsp_opcode == 0U) {
 		return 0;
