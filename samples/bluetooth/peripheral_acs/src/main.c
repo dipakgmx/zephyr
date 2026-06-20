@@ -18,8 +18,8 @@
  *   HRS Measurement   (Notify, ISC HIGH_SEC)
  *     - Notify → device sends HR data via Data Out (DON, encrypted)
  *
- *   HRS Control Point (Write, ISC HIGH_SEC)
- *     - Write → client sends Reset Energy Expended via Data In (encrypted)
+ *   HRS Control Point (CP procedure 0x01, ISC HIGH_SEC)
+ *     - Reset Energy Expended → client sends via Data In (encrypted)
  *
  * Unprotected characteristics (GAP Device Name, Body Sensor Location, DIS)
  * are not listed in any restriction map — plain GATT, always accessible.
@@ -80,11 +80,11 @@ BT_ACS_RESTRICTION_MAP_DEFINE(native_map, .map_id = 0x0000, .map_isc_id = BT_ACS
  *
  * Increment CONFIG_BT_ACS_ACTIVE_RMAP_ID in Kconfig whenever the protected
  * resource set changes so clients know to re-fetch the RMAP.
+ *
+ * Get Restriction Map Descriptor (0x02) and Activate Restriction Map (0x06)
+ * are not listed here — their protection is per-map (driven by map_isc_id)
+ * and the handlers enforce that directly.
  */
-BT_ACS_RMAP_PROTECT_CP_IN_MAP(acs_cp_protected, CONFIG_BT_ACS_ACTIVE_RMAP_ID, BT_UUID_GATT_ACS_CP,
-			      BT_ACS_RMAP_OP_ENTRY(BT_ACS_CP_OPCODE_GET_RESTRICTION_MAP_DESCRIPTOR,
-						   BT_ACS_ISC_ID_DEFAULT));
-
 BT_ACS_RESTRICTION_MAP_DEFINE(secured_map, .map_id = CONFIG_BT_ACS_ACTIVE_RMAP_ID,
 			      .map_isc_id = BT_ACS_ISC_ID_DEFAULT,
 			      .default_isc_id = BT_ACS_ISC_ID_NONE);

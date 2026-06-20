@@ -10,7 +10,7 @@
  * HRS restriction map entries:
  *
  *   HR Measurement  → Notify, HIGH_SEC:  encrypted HR stream via Data Out (DON)
- *   HR Control Point → Write, HIGH_SEC:  Reset Energy Expended via Data In
+ *   HR Control Point → CP procedure 0x01 (Reset Energy Expended), HIGH_SEC via Data In
  */
 
 #include <errno.h>
@@ -27,8 +27,10 @@ BT_ACS_PROTECT_CHAR_R_IN_MAP(hrs_body_sensor, CONFIG_BT_ACS_ACTIVE_RMAP_ID, BT_U
 BT_ACS_PROTECT_CHAR_N_IN_MAP(hrs_measurement, CONFIG_BT_ACS_ACTIVE_RMAP_ID, BT_UUID_HRS_MEASUREMENT,
 			     BT_ACS_ISC_ID_DEFAULT);
 
-BT_ACS_PROTECT_CHAR_W_IN_MAP(hrs_control_point, CONFIG_BT_ACS_ACTIVE_RMAP_ID,
-			     BT_UUID_HRS_CONTROL_POINT, BT_ACS_ISC_ID_DEFAULT);
+BT_ACS_PROTECT_CP_PROC_IN_MAP(hrs_control_point, CONFIG_BT_ACS_ACTIVE_RMAP_ID,
+			      BT_UUID_HRS_CONTROL_POINT,
+			      BT_HRS_CONTROL_POINT_RESET_ENERGY_EXPANDED_REQ,
+			      BT_ACS_ISC_ID_DEFAULT);
 
 /* --- HRS callbacks --- */
 
