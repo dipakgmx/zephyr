@@ -224,6 +224,12 @@ bool acs_rmap_cp_opcode_is_protected(uint16_t map_id, uint16_t cp_handle, uint8_
 
 	if (acs_rmap_find_protected(map_id, cp_handle, &kind, &entry) != 0 ||
 	    kind != ACS_RMAP_RESOURCE_CP) {
+		struct bt_acs_restriction_map map;
+
+		if (acs_rmap_lookup(map_id, &map) == 0 &&
+		    map.default_isc_id != BT_ACS_ISC_ID_NONE) {
+			return true;
+		}
 		return false;
 	}
 
@@ -244,6 +250,12 @@ bool acs_rmap_char_is_protected(uint16_t map_id, uint16_t att_handle,
 
 	if (acs_rmap_find_protected(map_id, att_handle, &kind, &entry) != 0 ||
 	    kind != ACS_RMAP_RESOURCE_CHAR) {
+		struct bt_acs_restriction_map map;
+
+		if (acs_rmap_lookup(map_id, &map) == 0 &&
+		    map.default_isc_id != BT_ACS_ISC_ID_NONE) {
+			return true;
+		}
 		return false;
 	}
 

@@ -33,12 +33,25 @@ static int acs_runtime_classify_frame(const struct acs_frame *frame, uint16_t ma
 		return 0;
 	}
 
+	/* Data-In frame targeting the ACS CP → encrypted CP path (DOI reply). */
+	if (frame->resource_handle == bt_gatt_attr_get_handle(acs_attr_cp())) {
+		*kind = ACS_ROUTE_PROTECTED_SERVICE_CP;
+		return 0;
+	}
+
 #if defined(CONFIG_BT_ACS_FEAT_AUTHORIZATION)
 	{
 		enum acs_rmap_resource_kind hit;
 		const struct bt_acs_rmap_protected *entry;
 
 		if (acs_rmap_find_protected(map_id, frame->resource_handle, &hit, &entry) != 0) {
+			struct bt_acs_restriction_map map;
+
+			if (acs_rmap_lookup(map_id, &map) == 0 &&
+			    map.default_isc_id != BT_ACS_ISC_ID_NONE) {
+				*kind = ACS_ROUTE_PROTECTED_CHAR;
+				return 0;
+			}
 			LOG_WRN("data-in handle 0x%04x not in restriction map %u",
 				frame->resource_handle, map_id);
 			return -ENOENT;
@@ -128,6 +141,14 @@ static enum acs_req_access acs_rmap_resolve_request_access(uint16_t map_id, uint
 	bool can_write = false;
 
 	if (acs_rmap_find_protected(map_id, handle, &kind, &entry) != 0) {
+		struct bt_acs_restriction_map map;
+
+		if (acs_rmap_lookup(map_id, &map) == 0 &&
+		    map.default_isc_id != BT_ACS_ISC_ID_NONE &&
+		    map.default_isc_id == isc_id) {
+			return (payload_len > 0) ? ACS_REQ_ACCESS_WRITE
+						 : ACS_REQ_ACCESS_READ;
+		}
 		return ACS_REQ_ACCESS_UNKNOWN;
 	}
 
