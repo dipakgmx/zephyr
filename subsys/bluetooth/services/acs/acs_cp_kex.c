@@ -487,9 +487,9 @@ int acs_cp_kex_ecdh_confirm_rand(struct acs_reply *reply, struct net_buf_simple 
 		uint8_t key_buf[CONFIG_BT_ACS_SESSION_KEY_SIZE];
 		size_t key_buf_len;
 
-		if (acs_crypto_key_runtime_lookup(
-			    acs_conn, sys_le16_to_cpu(acs_conn->kex->start_kex.key_id),
-			    &exchange_key) != 0) {
+		if (acs_crypto_key_runtime_lookup(acs_conn,
+						  sys_le16_to_cpu(acs_conn->kex->start_kex.key_id),
+						  &exchange_key) != 0) {
 			LOG_ERR("Missing exchange runtime key state");
 			acs_kex_conclude(reply, true);
 			return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED;

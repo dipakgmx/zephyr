@@ -95,9 +95,8 @@ static ssize_t acs_status_read(struct bt_conn *conn, const struct bt_gatt_attr *
 		}
 		sys_put_le16(acs_conn->restriction_map_id, &status_data[1]);
 	} else {
-		status_data[0] = acs_security_controls_enabled
-					 ? BT_ACS_STATUS_SECURITY_CONTROLS_ENABLED
-					 : 0;
+		status_data[0] =
+			acs_security_controls_enabled ? BT_ACS_STATUS_SECURITY_CONTROLS_ENABLED : 0;
 		sys_put_le16(IS_ENABLED(CONFIG_BT_ACS_FEAT_AUTHORIZATION)
 				     ? CONFIG_BT_ACS_ACTIVE_RMAP_ID
 				     : 0,
@@ -412,9 +411,7 @@ uint8_t bt_acs_status_get(struct bt_conn *conn)
 	struct bt_acs_conn const *acs_conn = acs_conn_lookup(conn);
 
 	if (!acs_conn) {
-		return acs_security_controls_enabled
-			       ? BT_ACS_STATUS_SECURITY_CONTROLS_ENABLED
-			       : 0;
+		return acs_security_controls_enabled ? BT_ACS_STATUS_SECURITY_CONTROLS_ENABLED : 0;
 	}
 
 	return acs_conn->status_flags;

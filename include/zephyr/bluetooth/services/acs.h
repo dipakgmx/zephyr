@@ -340,10 +340,11 @@ struct bt_acs_rmap_char_reg {
  * @param _char_uuid Pointer to the CP characteristic UUID (e.g. BT_UUID_GATT_ACS_CP)
  * @param ...        One or more BT_ACS_RMAP_OP_ENTRY() initialisers
  *
- * Example:
+ * Example (multi-opcode CP — use the low-level macro directly):
  * @code
- *   BT_ACS_RMAP_PROTECT_CP_IN_MAP(acs_cp, 0x0001, BT_UUID_GATT_ACS_CP,
- *       BT_ACS_RMAP_OP_ENTRY(BT_ACS_CP_OPCODE_GET_RESTRICTION_MAP_DESCRIPTOR, 0x0001));
+ *   BT_ACS_RMAP_PROTECT_CP_IN_MAP(dts_cp, 0x0001, BT_UUID_DTS_CONTROL_POINT,
+ *       BT_ACS_RMAP_OP_ENTRY(0x01, BT_ACS_ISC_ID_HIGH_SEC),
+ *       BT_ACS_RMAP_OP_ENTRY(0x03, BT_ACS_ISC_ID_HIGH_SEC));
  *
  *   // CP entries auto-discovered — no extra map fields needed:
  *   BT_ACS_RESTRICTION_MAP_DEFINE(secured_map, .map_id = 0x0001, ...);
@@ -449,6 +450,28 @@ struct bt_acs_rmap_char_reg {
 					BT_ACS_RMAP_OP_ENTRY(BT_ACS_RMAP_OP_ATT_READ, _isc_id),    \
 					BT_ACS_RMAP_OP_ENTRY(BT_ACS_RMAP_OP_ATT_WRITE, _isc_id),   \
 					BT_ACS_RMAP_OP_ENTRY(BT_ACS_RMAP_OP_ATT_NOTIFY, _isc_id))
+/** @} */
+
+/**
+ * @name Convenience macro for Control Point procedure protection.
+ * @{
+ */
+
+/**
+ * @brief Single CP procedure opcode, auto-registered to a map (Type_ID 0x03).
+ *
+ * For multiple procedure opcodes on the same CP in the same map, use the
+ * low-level BT_ACS_RMAP_PROTECT_CP_IN_MAP() with multiple OP_ENTRY args.
+ *
+ * @param _name      C identifier (must be unique)
+ * @param _map_id    Restriction map ID
+ * @param _char_uuid Pointer to the CP characteristic UUID
+ * @param _opcode    Procedure opcode to protect
+ * @param _isc_id    Information Security Configuration ID
+ */
+#define BT_ACS_PROTECT_CP_PROC_IN_MAP(_name, _map_id, _char_uuid, _opcode, _isc_id)               \
+	BT_ACS_RMAP_PROTECT_CP_IN_MAP(_name, _map_id, _char_uuid,                                 \
+				      BT_ACS_RMAP_OP_ENTRY(_opcode, _isc_id))
 /** @} */
 
 /**

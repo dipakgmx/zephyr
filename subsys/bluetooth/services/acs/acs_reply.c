@@ -188,8 +188,7 @@ static int data_tx_encrypt_in_place(struct bt_acs_conn *acs_conn, uint16_t isc_i
 	sys_put_le(nonce_dst, &tx_counter, counter_size);
 
 	if (key_desc->aes.nonce_type == ACS_NONCE_SEQ_EVEN_ODD && prefix_size > 0U) {
-		memcpy(&nonce_dst[counter_size], key_desc_runtime->server_nonce_fixed,
-		       prefix_size);
+		memcpy(&nonce_dst[counter_size], key_desc_runtime->server_nonce_fixed, prefix_size);
 		sys_mem_swap(&nonce_dst[counter_size], prefix_size);
 	}
 

@@ -88,7 +88,7 @@ int acs_rmap_find_protected(uint16_t map_id, uint16_t resource_handle,
 bool acs_rmap_char_is_protected(uint16_t map_id, uint16_t att_handle,
 				enum bt_acs_direction direction);
 
-/** @brief Check whether a Control Point opcode requires ACS security. */
+/** @brief Check whether a Control Point procedure opcode requires ACS security. */
 bool acs_rmap_cp_opcode_is_protected(uint16_t map_id, uint16_t cp_handle, uint8_t opcode);
 
 /**

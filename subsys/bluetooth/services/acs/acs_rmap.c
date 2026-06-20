@@ -101,14 +101,6 @@ static void acs_rmap_foreach_char(const struct bt_acs_restriction_map *map, acs_
 	}
 }
 
-/**
- * @brief Iterate over all registered protected control point entries for a given restriction map,
- * invoking a callback for each.
- *
- * @param map The restriction map whose protected control point entries should be iterated over.
- * @param cb Callback function
- * @param user_data Pointer passed to callback
- */
 static void acs_rmap_foreach_cp(const struct bt_acs_restriction_map *map, acs_rmap_entry_cb_t cb,
 				void *user_data)
 {
@@ -225,6 +217,25 @@ int acs_rmap_find_protected(uint16_t map_id, uint16_t resource_handle,
 	return -ENOENT;
 }
 
+bool acs_rmap_cp_opcode_is_protected(uint16_t map_id, uint16_t cp_handle, uint8_t opcode)
+{
+	const struct bt_acs_rmap_protected *entry;
+	enum acs_rmap_resource_kind kind;
+
+	if (acs_rmap_find_protected(map_id, cp_handle, &kind, &entry) != 0 ||
+	    kind != ACS_RMAP_RESOURCE_CP) {
+		return false;
+	}
+
+	for (uint8_t j = 0; j < entry->num_ops; j++) {
+		if (entry->ops[j].opcode == (uint16_t)opcode) {
+			return entry->ops[j].isc_id != BT_ACS_ISC_ID_NONE;
+		}
+	}
+
+	return false;
+}
+
 bool acs_rmap_char_is_protected(uint16_t map_id, uint16_t att_handle,
 				enum bt_acs_direction direction)
 {
@@ -240,25 +251,6 @@ bool acs_rmap_char_is_protected(uint16_t map_id, uint16_t att_handle,
 		if (acs_att_opcode_matches_direction(entry->ops[j].opcode, direction) &&
 		    entry->ops[j].isc_id != BT_ACS_ISC_ID_NONE) {
 			return true;
-		}
-	}
-
-	return false;
-}
-
-bool acs_rmap_cp_opcode_is_protected(uint16_t map_id, uint16_t cp_handle, uint8_t opcode)
-{
-	const struct bt_acs_rmap_protected *entry;
-	enum acs_rmap_resource_kind kind;
-
-	if (acs_rmap_find_protected(map_id, cp_handle, &kind, &entry) != 0 ||
-	    kind != ACS_RMAP_RESOURCE_CP) {
-		return false;
-	}
-
-	for (uint8_t j = 0; j < entry->num_ops; j++) {
-		if (entry->ops[j].opcode == (uint16_t)opcode) {
-			return entry->ops[j].isc_id != BT_ACS_ISC_ID_NONE;
 		}
 	}
 
