@@ -197,7 +197,7 @@ int acs_cp_handle_set_client_nonce_fixed(struct acs_reply *reply, struct net_buf
 		return BT_ACS_CP_RESPONSE_OPCODE_NOT_SUPPORTED;
 	}
 
-	/* §4.4.3.18: reject only while a key exchange procedure is in progress. */
+	/* §4.4.3.18: reject while key exchange is ongoing or already successful. */
 	if (acs_kex_in_progress(acs_conn)) {
 		LOG_WRN("Set client nonce fixed: key exchange active");
 		return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE;
@@ -205,6 +205,12 @@ int acs_cp_handle_set_client_nonce_fixed(struct acs_reply *reply, struct net_buf
 
 	if (acs_crypto_key_runtime_lookup(acs_conn, key_id, &runtime) != 0) {
 		return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED;
+	}
+
+	if (runtime->psa_key_id != 0U) {
+		LOG_WRN("Set client nonce fixed: Key_ID 0x%04x already has an active key",
+			key_id);
+		return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE;
 	}
 
 	fixed_size = acs_key_desc_nonce_fixed_size(key_desc);

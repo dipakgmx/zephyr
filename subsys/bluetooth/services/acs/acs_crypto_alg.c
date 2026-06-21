@@ -125,7 +125,6 @@ static int acs_crypto_aead_decrypt(struct bt_acs_key_desc_runtime *key_desc_runt
 	}
 
 	acs_build_record_rx_nonce(key_desc_runtime, nonce);
-
 	status = psa_aead_decrypt(key_desc_runtime->psa_key_id,
 				  PSA_ALG_AEAD_WITH_SHORTENED_TAG(ACS_AEAD_BASE_ALG, tag_len),
 				  nonce, nonce_size, aad, aad_len, ciphertext, cipher_len,

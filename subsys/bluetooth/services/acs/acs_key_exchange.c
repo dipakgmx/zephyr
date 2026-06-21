@@ -550,8 +550,8 @@ static int acs_crypto_derive_kdf_child_key(struct bt_acs_conn *acs_conn)
 
 	parent_key = acs_key_exchange_established_key(acs_conn);
 	if (!parent_key) {
-		LOG_ERR("No established exchange key for KDF parent");
-		return -ENOENT;
+		LOG_WRN("No established exchange key for KDF parent");
+		return -EAGAIN;
 	}
 
 	ret = acs_crypto_key_runtime_lookup(acs_conn, ACS_KEY_ID_KDF, &kdf_key);
@@ -561,8 +561,8 @@ static int acs_crypto_derive_kdf_child_key(struct bt_acs_conn *acs_conn)
 	}
 
 	if (parent_key->derive_key_id == 0U) {
-		LOG_ERR("ECDH parent derive key missing");
-		return -ENOENT;
+		LOG_WRN("ECDH parent derive key missing");
+		return -EAGAIN;
 	}
 
 	/* Salt and info are stored in wire order (LSO) but HKDF requires BE input. */
@@ -948,6 +948,11 @@ int acs_key_exchange_kdf(struct bt_acs_conn *acs_conn, struct net_buf_simple *rs
 	/* Derive child key: HKDF(salt, ikm=parent_key, info) → child replaces parent_key */
 	err = acs_crypto_derive_kdf_child_key(acs_conn);
 	if (err) {
+		if (err == -EAGAIN) {
+			LOG_WRN("KDF child key derivation not applicable: %d", err);
+			return err;
+		}
+
 		LOG_ERR("KDF child key derivation failed: %d", err);
 		return -EIO;
 	}

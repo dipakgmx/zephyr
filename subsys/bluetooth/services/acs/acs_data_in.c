@@ -119,6 +119,11 @@ static int acs_data_in_validate(struct bt_acs_conn *acs_conn, struct net_buf_sim
 		return ACS_DATA_ERR_INCORRECT_SECURITY_CONFIG;
 	}
 
+	if (acs_key_desc_nonce_prefix_size(key_desc) > 0U && !(*key_desc_runtime)->client_nonce_set) {
+		LOG_WRN("client nonce fixed not set for ISC_ID 0x%04x",*isc_id);
+		return ACS_DATA_ERR_INCORRECT_SECURITY_CONFIG;
+	}
+
 	nonce_var_size = acs_key_desc_nonce_var_size(key_desc);
 	auth_tag_size = acs_key_desc_auth_tag_size(key_desc);
 
