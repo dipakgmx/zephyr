@@ -118,12 +118,6 @@ int acs_sec_mgmt_invalidate_key(struct acs_reply *reply, struct net_buf_simple *
 	uint8_t response_code;
 	int ret;
 
-	if (buf->len < sizeof(struct acs_cp_invalidate_key_req)) {
-		LOG_ERR("Invalid Invalidate Key operand length: need %zu, have %u",
-			sizeof(struct acs_cp_invalidate_key_req), buf->len);
-		return BT_ACS_CP_RESPONSE_INVALID_OPERAND;
-	}
-
 	/* Copy the packed operand out of the request buffer for aligned access. */
 	memcpy(&invalidate_req, net_buf_simple_pull_mem(buf, sizeof(invalidate_req)),
 	       sizeof(invalidate_req));
@@ -295,11 +289,6 @@ int acs_sec_mgmt_set_security_switch(struct acs_reply *reply, struct net_buf_sim
 	struct acs_cp_sec_switch_req switch_req;
 	uint8_t switch_state;
 
-	if (buf->len < sizeof(struct acs_cp_sec_switch_req)) {
-		LOG_ERR("Set Security Controls Switch operand too short: %u", buf->len);
-		return BT_ACS_CP_RESPONSE_INVALID_OPERAND;
-	}
-
 	if (!reply->conn) {
 		LOG_ERR("Set Security Controls Switch for unknown ACS connection");
 		return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED;
@@ -338,11 +327,6 @@ int acs_sec_mgmt_get_key_uri(struct acs_reply *reply, struct net_buf_simple *buf
 	uint16_t uri_len;
 	uint16_t key_id;
 	int err;
-
-	if (buf->len < sizeof(struct acs_cp_get_key_uri_req)) {
-		LOG_ERR("Get Key URI operand too short: %u", buf->len);
-		return BT_ACS_CP_RESPONSE_INVALID_OPERAND;
-	}
 
 	/* Copy the packed operand out of the request buffer for aligned access. */
 	memcpy(&key_uri_req, net_buf_simple_pull_mem(buf, sizeof(key_uri_req)),

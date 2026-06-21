@@ -547,10 +547,6 @@ int acs_cp_handle_get_restriction_map_descriptor(struct acs_reply *reply,
 	struct bt_acs_restriction_map map = {0};
 	int err;
 
-	if (buf->len != sizeof(struct acs_rmap_get_descriptor_req)) {
-		return BT_ACS_CP_RESPONSE_INVALID_OPERAND;
-	}
-
 	desc_req.map_id = net_buf_simple_pull_le16(buf);
 	desc_req.resource_handle_filter = net_buf_simple_pull_le16(buf);
 

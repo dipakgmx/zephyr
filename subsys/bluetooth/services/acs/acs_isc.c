@@ -8,6 +8,7 @@
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/sys/util.h>
 
+#include "acs_cp.h"
 #include "acs_internal.h"
 #include "acs_isc.h"
 #include "acs_key_desc.h"
@@ -70,9 +71,9 @@ int acs_isc_build_response(struct net_buf_simple *operand, struct net_buf_simple
 {
 	uint16_t filter_id;
 
-	if (operand->len < sizeof(filter_id)) {
+	if (operand->len < sizeof(struct acs_cp_get_isc_descriptor_req)) {
 		LOG_ERR("ISC operand too short: %u bytes (expected at least %zu)", operand->len,
-			sizeof(filter_id));
+			sizeof(struct acs_cp_get_isc_descriptor_req));
 		return -EINVAL;
 	}
 

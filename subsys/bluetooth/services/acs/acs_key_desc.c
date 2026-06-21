@@ -7,6 +7,7 @@
 #include <errno.h>
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/sys/util.h>
+#include "acs_cp.h"
 #include "acs_key_desc.h"
 #include "acs_internal.h"
 
@@ -291,7 +292,7 @@ int acs_key_desc_build_response(struct net_buf_simple *operand, struct net_buf_s
 	uint16_t filter_id;
 	int err;
 
-	if (operand->len < 2) {
+	if (operand->len < sizeof(struct acs_cp_get_key_descriptor_req)) {
 		return -EINVAL;
 	}
 

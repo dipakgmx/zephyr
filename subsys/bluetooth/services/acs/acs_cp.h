@@ -226,6 +226,34 @@ struct acs_kdf_req {
 } __packed;
 
 /**
+ * @brief Wire-format operand of the ACTIVATE_RESTRICTION_MAP opcode (§4.4.3.4).
+ */
+struct acs_cp_activate_restriction_map_req {
+	uint16_t map_id; /**< Restriction_Map_ID (uint16, LSO…MSO) */
+} __packed;
+
+/**
+ * @brief Wire-format operand of the GET_SERVICE_CHARACTERISTIC_UUIDS... opcode (§4.4.3.6).
+ */
+struct acs_cp_get_svc_char_uuids_req {
+	uint16_t resource_handle; /**< Characteristic Resource Handle (uint16, LSO…MSO) */
+} __packed;
+
+/**
+ * @brief Wire-format operand of the GET_KEY_DESCRIPTOR opcode (§4.4.3.8).
+ */
+struct acs_cp_get_key_descriptor_req {
+	uint16_t filter_id; /**< Key_ID filter, or all-records filter (uint16, LSO…MSO) */
+} __packed;
+
+/**
+ * @brief Wire-format operand of the GET_INFORMATION_SECURITY_CONFIGURATION_DESCRIPTOR opcode.
+ */
+struct acs_cp_get_isc_descriptor_req {
+	uint16_t filter_id; /**< ISC_ID filter, or all-records filter (uint16, LSO…MSO) */
+} __packed;
+
+/**
  * @brief Wire-format operand of the START_KEY_EXCHANGE opcode (§4.4.3.10, Table 4.49.)
  *
  */
@@ -268,9 +296,23 @@ struct acs_cp_ecdh_confirm_rand_req {
  * The AC_Client_Nonce_Fixed_Value length is descriptor-defined, not globally fixed:
  * the handler resolves the operand size from the referenced Key Descriptor record.
  */
+struct acs_cp_set_client_nonce_fixed_req {
+	uint16_t key_id;           /**< Key_ID (uint16, LSO…MSO) */
+	uint8_t nonce_fixed_val[]; /**< AC_Client_Nonce_Fixed_Value */
+} __packed;
 
 BUILD_ASSERT(sizeof(struct acs_cp_start_key_exchange_req) == 4,
 	     "START_KEY_EXCHANGE operand struct size mismatch");
+BUILD_ASSERT(sizeof(struct acs_cp_activate_restriction_map_req) == 2,
+	     "ACTIVATE_RESTRICTION_MAP operand struct size mismatch");
+BUILD_ASSERT(sizeof(struct acs_cp_get_svc_char_uuids_req) == 2,
+	     "GET_SERVICE_CHARACTERISTIC_UUIDS operand struct size mismatch");
+BUILD_ASSERT(sizeof(struct acs_cp_get_key_descriptor_req) == 2,
+	     "GET_KEY_DESCRIPTOR operand struct size mismatch");
+BUILD_ASSERT(sizeof(struct acs_cp_get_isc_descriptor_req) == 2,
+	     "GET_ISC_DESCRIPTOR operand struct size mismatch");
+BUILD_ASSERT(sizeof(struct acs_cp_set_client_nonce_fixed_req) == 2,
+	     "SET_CLIENT_NONCE_FIXED operand header size mismatch");
 BUILD_ASSERT(sizeof(struct acs_cp_ecdh_confirm_code_req) == 2 + ACS_CONFIRM_VALUE_SIZE,
 	     "ECDH_CONFIRM_CODE operand struct size mismatch");
 BUILD_ASSERT(sizeof(struct acs_cp_ecdh_confirm_rand_req) == 2 + ACS_CONFIRM_VALUE_SIZE,

@@ -17,94 +17,114 @@
 #include "acs_internal.h"
 #include "acs_cp_handlers.h"
 #include "acs_key_exchange.h"
+#include "acs_rmap.h"
 
 #include <zephyr/logging/log.h>
 LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
 
-static const uint8_t acs_cp_rsp_opcode[BT_ACS_CP_OPCODE_RFU] = {
-	[BT_ACS_CP_OPCODE_GET_ALL_ACTIVE_DESCRIPTORS] =
-		BT_ACS_CP_OPCODE_RESTRICTION_MAP_DESCRIPTOR_RESPONSE,
-	[BT_ACS_CP_OPCODE_GET_RESTRICTION_MAP_DESCRIPTOR] =
-		BT_ACS_CP_OPCODE_RESTRICTION_MAP_DESCRIPTOR_RESPONSE,
-	[BT_ACS_CP_OPCODE_GET_RESTRICTION_MAP_ID_LIST] =
-		BT_ACS_CP_OPCODE_RESTRICTION_MAP_ID_LIST_RESPONSE,
-	[BT_ACS_CP_OPCODE_GET_RESOURCE_HANDLE_UUID_MAP] =
-		BT_ACS_CP_OPCODE_RESOURCE_HANDLE_UUID_MAP_RESPONSE,
-	[BT_ACS_CP_OPCODE_GET_SERVICE_CHARACTERISTIC_UUIDS_CHAR_RESOURCE_HANDLE] =
-		BT_ACS_CP_OPCODE_SERVICE_CHARACTERISTIC_UUIDS_CHAR_RESOURCE_HANDLE_RESPONSE,
-	[BT_ACS_CP_OPCODE_GET_INFORMATION_SECURITY_CONFIGURATION_DESCRIPTOR] =
-		BT_ACS_CP_OPCODE_INFORMATION_SECURITY_CONFIGURATION_DESCRIPTOR_RESPONSE,
-	[BT_ACS_CP_OPCODE_GET_KEY_DESCRIPTOR] = BT_ACS_CP_OPCODE_KEY_DESCRIPTOR_RESPONSE,
-	[BT_ACS_CP_OPCODE_GET_CURRENT_KEY_LIST] = BT_ACS_CP_OPCODE_CURRENT_KEY_LIST_RESPONSE,
-	[BT_ACS_CP_OPCODE_GET_KEY_URI] = BT_ACS_CP_OPCODE_KEY_URI_RESPONSE,
-	[BT_ACS_CP_OPCODE_GET_FEATURE] = BT_ACS_CP_OPCODE_ACS_FEATURE_RESPONSE,
-	[BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH] = BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH_RESPONSE,
-	[BT_ACS_CP_OPCODE_ECDH_CONFIRM_CODE] =
-		BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH_CONFIRMATION_CODE_RESPONSE,
-	[BT_ACS_CP_OPCODE_ECDH_CONFIRM_RAND] =
-		BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH_CONFIRMATION_RANDOM_NUMBER_RESPONSE,
-	[BT_ACS_CP_OPCODE_KEY_EXCHANGE_KDF] = BT_ACS_CP_OPCODE_KEY_EXCHANGE_KDF_RESPONSE,
-};
-
-static uint16_t acs_cp_min_operand_size(uint8_t opcode)
+static int acs_cp_min_operand_size(uint8_t opcode, uint16_t *size)
 {
+	int err = 0;
+	*size = 0U;
+
 	switch (opcode) {
+	case BT_ACS_CP_OPCODE_GET_FEATURE:
+		break;
+#if IS_ENABLED(CONFIG_BT_ACS_ATT_MTU)
+	case BT_ACS_CP_OPCODE_ATT_MTU:
+		break;
+#endif
 #if (IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_CCM) &&                                          \
      IS_ENABLED(CONFIG_BT_ACS_CCM_NONCE_SEQ_DIFF_FIXED)) ||                                        \
 	IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_GCM) ||                                       \
 	IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_GMAC)
 	case BT_ACS_CP_OPCODE_SET_CLIENT_NONCE_FIXED:
-		return sizeof(uint16_t);
+		*size = sizeof(struct acs_cp_set_client_nonce_fixed_req);
+		break;
 #endif
 #if IS_ENABLED(CONFIG_BT_ACS_FEAT_AUTHORIZATION)
 	case BT_ACS_CP_OPCODE_ACTIVATE_RESTRICTION_MAP:
-		return sizeof(uint16_t);
+		*size = sizeof(struct acs_cp_activate_restriction_map_req);
+		break;
+	case BT_ACS_CP_OPCODE_GET_RESTRICTION_MAP_DESCRIPTOR:
+		*size = sizeof(struct acs_rmap_get_descriptor_req);
+		break;
+	case BT_ACS_CP_OPCODE_GET_RESTRICTION_MAP_ID_LIST:
+		break;
 #endif
 	case BT_ACS_CP_OPCODE_GET_SERVICE_CHARACTERISTIC_UUIDS_CHAR_RESOURCE_HANDLE:
-		return sizeof(uint16_t);
+		*size = sizeof(struct acs_cp_get_svc_char_uuids_req);
+		break;
 #if IS_ENABLED(CONFIG_BT_ACS_ANY_KEY_EXCHANGE)
 	case BT_ACS_CP_OPCODE_START_KEY_EXCHANGE:
-		return sizeof(struct acs_cp_start_key_exchange_req);
+		*size = sizeof(struct acs_cp_start_key_exchange_req);
+		break;
+	case BT_ACS_CP_OPCODE_GET_KEY_DESCRIPTOR:
+		*size = sizeof(struct acs_cp_get_key_descriptor_req);
+		break;
+	case BT_ACS_CP_OPCODE_GET_CURRENT_KEY_LIST:
+		break;
 #endif
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_ECDH)
 	case BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH:
-		return sizeof(uint16_t);
+		*size = sizeof(struct acs_ecdh_pubkey);
+		break;
 	case BT_ACS_CP_OPCODE_ECDH_CONFIRM_CODE:
-		return sizeof(struct acs_cp_ecdh_confirm_code_req);
+		*size = sizeof(struct acs_cp_ecdh_confirm_code_req);
+		break;
 	case BT_ACS_CP_OPCODE_ECDH_CONFIRM_RAND:
-		return sizeof(struct acs_cp_ecdh_confirm_rand_req);
+		*size = sizeof(struct acs_cp_ecdh_confirm_rand_req);
+		break;
 #endif
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF) || IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_ECDH)
 	case BT_ACS_CP_OPCODE_KEY_EXCHANGE_KDF:
-		return sizeof(struct acs_kdf_req);
-#endif
-#if IS_ENABLED(CONFIG_BT_ACS_ANY_KEY_EXCHANGE)
-	case BT_ACS_CP_OPCODE_GET_KEY_DESCRIPTOR:
-		return sizeof(uint16_t);
+		*size = sizeof(struct acs_kdf_req);
+		break;
 #endif
 #if IS_ENABLED(CONFIG_BT_ACS_FEAT_AUTHENTICATION)
 	case BT_ACS_CP_OPCODE_GET_INFORMATION_SECURITY_CONFIGURATION_DESCRIPTOR:
-		return sizeof(uint16_t);
+		*size = sizeof(struct acs_cp_get_isc_descriptor_req);
+		break;
 #endif
-#if IS_ENABLED(CONFIG_BT_ACS_FEAT_AUTHORIZATION)
-	case BT_ACS_CP_OPCODE_GET_RESTRICTION_MAP_DESCRIPTOR:
-		return sizeof(uint16_t);
+#if IS_ENABLED(CONFIG_BT_ACS_RESOURCE_HANDLE_UUID_MAP)
+	case BT_ACS_CP_OPCODE_GET_RESOURCE_HANDLE_UUID_MAP:
+		break;
+#endif
+#if IS_ENABLED(CONFIG_BT_ACS_DESCRIPTORS)
+	case BT_ACS_CP_OPCODE_GET_ALL_ACTIVE_DESCRIPTORS:
+		break;
 #endif
 #if IS_ENABLED(CONFIG_BT_ACS_INVALIDATE_ESTABLISHED_SECURITY)
 	case BT_ACS_CP_OPCODE_INVALIDATE_KEY:
-		return sizeof(uint16_t);
+		*size = sizeof(struct acs_cp_invalidate_key_req);
+		break;
+	case BT_ACS_CP_OPCODE_INVALIDATE_ALL_ESTABLISHED_SECURITY:
+		break;
+#endif
+#if IS_ENABLED(CONFIG_BT_ACS_ABORT)
+	case BT_ACS_CP_OPCODE_ABORT:
+		break;
 #endif
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_URI)
 	case BT_ACS_CP_OPCODE_GET_KEY_URI:
-		return sizeof(uint16_t);
+		*size = sizeof(struct acs_cp_get_key_uri_req);
+		break;
 #endif
 #if IS_ENABLED(CONFIG_BT_ACS_SET_SECURITY_CONTROLS_SWITCH)
 	case BT_ACS_CP_OPCODE_SET_SECURITY_CONTROLS_SWITCH:
-		return sizeof(uint8_t);
+		*size = sizeof(struct acs_cp_sec_switch_req);
+		break;
+#endif
+#if IS_ENABLED(CONFIG_BT_ACS_INITIATE_PAIRING)
+	case BT_ACS_CP_OPCODE_INITIATE_PAIRING:
+		break;
 #endif
 	default:
-		return 0U;
+		err = -ENOENT;
+		break;
 	}
+
+	return err;
 }
 
 int acs_cp_send_reply(struct acs_reply *reply)
@@ -283,15 +303,57 @@ static bool acs_cp_opcode_is_kex(uint8_t opcode)
 
 static int acs_cp_stage_response(struct acs_reply *reply, uint8_t opcode)
 {
-	uint8_t rsp_opcode;
+	uint8_t rsp_opcode = 0U;
 	struct net_buf *rsp_buf;
 
-	if (opcode == BT_ACS_CP_OPCODE_ATT_MTU) {
+	switch (opcode) {
+	case BT_ACS_CP_OPCODE_GET_ALL_ACTIVE_DESCRIPTORS:
+	case BT_ACS_CP_OPCODE_GET_RESTRICTION_MAP_DESCRIPTOR:
+		rsp_opcode = BT_ACS_CP_OPCODE_RESTRICTION_MAP_DESCRIPTOR_RESPONSE;
+		break;
+	case BT_ACS_CP_OPCODE_GET_RESTRICTION_MAP_ID_LIST:
+		rsp_opcode = BT_ACS_CP_OPCODE_RESTRICTION_MAP_ID_LIST_RESPONSE;
+		break;
+	case BT_ACS_CP_OPCODE_GET_RESOURCE_HANDLE_UUID_MAP:
+		rsp_opcode = BT_ACS_CP_OPCODE_RESOURCE_HANDLE_UUID_MAP_RESPONSE;
+		break;
+	case BT_ACS_CP_OPCODE_GET_SERVICE_CHARACTERISTIC_UUIDS_CHAR_RESOURCE_HANDLE:
+		rsp_opcode =
+			BT_ACS_CP_OPCODE_SERVICE_CHARACTERISTIC_UUIDS_CHAR_RESOURCE_HANDLE_RESPONSE;
+		break;
+	case BT_ACS_CP_OPCODE_GET_INFORMATION_SECURITY_CONFIGURATION_DESCRIPTOR:
+		rsp_opcode =
+			BT_ACS_CP_OPCODE_INFORMATION_SECURITY_CONFIGURATION_DESCRIPTOR_RESPONSE;
+		break;
+	case BT_ACS_CP_OPCODE_GET_KEY_DESCRIPTOR:
+		rsp_opcode = BT_ACS_CP_OPCODE_KEY_DESCRIPTOR_RESPONSE;
+		break;
+	case BT_ACS_CP_OPCODE_GET_CURRENT_KEY_LIST:
+		rsp_opcode = BT_ACS_CP_OPCODE_CURRENT_KEY_LIST_RESPONSE;
+		break;
+	case BT_ACS_CP_OPCODE_GET_KEY_URI:
+		rsp_opcode = BT_ACS_CP_OPCODE_KEY_URI_RESPONSE;
+		break;
+	case BT_ACS_CP_OPCODE_GET_FEATURE:
+		rsp_opcode = BT_ACS_CP_OPCODE_ACS_FEATURE_RESPONSE;
+		break;
+	case BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH:
+		rsp_opcode = BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH_RESPONSE;
+		break;
+	case BT_ACS_CP_OPCODE_ECDH_CONFIRM_CODE:
+		rsp_opcode = BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH_CONFIRMATION_CODE_RESPONSE;
+		break;
+	case BT_ACS_CP_OPCODE_ECDH_CONFIRM_RAND:
+		rsp_opcode = BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH_CONFIRMATION_RANDOM_NUMBER_RESPONSE;
+		break;
+	case BT_ACS_CP_OPCODE_KEY_EXCHANGE_KDF:
+		rsp_opcode = BT_ACS_CP_OPCODE_KEY_EXCHANGE_KDF_RESPONSE;
+		break;
+	case BT_ACS_CP_OPCODE_ATT_MTU:
 		rsp_opcode = BT_ACS_CP_OPCODE_ATT_MTU_RESPONSE;
-	} else if (opcode >= ARRAY_SIZE(acs_cp_rsp_opcode)) {
-		rsp_opcode = 0U;
-	} else {
-		rsp_opcode = acs_cp_rsp_opcode[opcode];
+		break;
+	default:
+		break;
 	}
 
 	if (rsp_opcode == 0U) {
@@ -314,6 +376,7 @@ int acs_cp_dispatch(const struct acs_frame *frame, struct bt_acs_conn *acs_conn,
 	struct net_buf_simple payload_simple;
 	struct net_buf_simple *payload = &payload_simple;
 	uint8_t opcode;
+	uint16_t min_operand_size;
 	int ret;
 	int err;
 
@@ -339,7 +402,8 @@ int acs_cp_dispatch(const struct acs_frame *frame, struct bt_acs_conn *acs_conn,
 	opcode = net_buf_simple_pull_u8(payload);
 	LOG_DBG("CP dispatch: opcode 0x%02x, operand len %u", opcode, payload->len);
 
-	if (payload->len < acs_cp_min_operand_size(opcode)) {
+	err = acs_cp_min_operand_size(opcode, &min_operand_size);
+	if (err == 0 && payload->len < min_operand_size) {
 		LOG_WRN("CP dispatch: opcode 0x%02x operand too short (%u)", opcode, payload->len);
 		ret = BT_ACS_CP_RESPONSE_INVALID_OPERAND;
 #if IS_ENABLED(CONFIG_BT_ACS_ANY_KEY_EXCHANGE)

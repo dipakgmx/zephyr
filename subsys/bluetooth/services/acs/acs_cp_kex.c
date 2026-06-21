@@ -60,12 +60,6 @@ int acs_cp_kex_exchange_kdf(struct acs_reply *reply, struct net_buf_simple *buf)
 	struct net_buf *rsp_buf;
 	int err;
 
-	if (buf->len != sizeof(struct acs_kdf_req)) {
-		LOG_WRN("Key exchange KDF operand invalid length: %u", buf->len);
-		acs_key_exchange_abort(acs_conn);
-		return BT_ACS_CP_RESPONSE_INVALID_OPERAND;
-	}
-
 	/* Copy the packed operand out of the request buffer for aligned access. */
 	memcpy(&req_data, net_buf_simple_pull_mem(buf, sizeof(req_data)), sizeof(req_data));
 	key_id = sys_le16_to_cpu(req_data.key_id);
@@ -353,12 +347,6 @@ int acs_cp_kex_exchange_ecdh(struct acs_reply *reply, struct net_buf_simple *buf
 		return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE;
 	}
 
-	if (buf->len != sizeof(acs_conn->kex->client_pubkey)) {
-		LOG_WRN("ECDH key exchange operand invalid length: %u", buf->len);
-		acs_key_exchange_abort(acs_conn);
-		return BT_ACS_CP_RESPONSE_INVALID_OPERAND;
-	}
-
 	/* Copy the packed operand out of the request buffer for aligned access. */
 	memcpy(&acs_conn->kex->client_pubkey, net_buf_simple_pull_mem(buf, buf->len),
 	       sizeof(acs_conn->kex->client_pubkey));
@@ -399,11 +387,6 @@ int acs_cp_kex_ecdh_confirm_code(struct acs_reply *reply, struct net_buf_simple 
 		return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE;
 	}
 
-	if (buf->len != sizeof(struct acs_cp_ecdh_confirm_code_req)) {
-		acs_key_exchange_abort(acs_conn);
-		return BT_ACS_CP_RESPONSE_INVALID_OPERAND;
-	}
-
 	/* Copy the packed operand out of the request buffer for aligned access. */
 	memcpy(&req_data, net_buf_simple_pull_mem(buf, sizeof(req_data)), sizeof(req_data));
 
@@ -442,11 +425,6 @@ int acs_cp_kex_ecdh_confirm_rand(struct acs_reply *reply, struct net_buf_simple 
 	if (!acs_kex_expects(acs_conn, ACS_KEX_AWAIT_CONFIRM_RAND)) {
 		acs_key_exchange_abort(acs_conn);
 		return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE;
-	}
-
-	if (buf->len != sizeof(struct acs_cp_ecdh_confirm_rand_req)) {
-		acs_key_exchange_abort(acs_conn);
-		return BT_ACS_CP_RESPONSE_INVALID_OPERAND;
 	}
 
 	/* Copy the packed operand out of the request buffer for aligned access. */

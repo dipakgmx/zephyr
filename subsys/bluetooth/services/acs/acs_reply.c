@@ -439,6 +439,8 @@ static bool acs_reply_continue(struct acs_reply *reply)
 	int err;
 
 	switch (reply->step) {
+	case ACS_REPLY_DONE:
+		return false;
 #if IS_ENABLED(CONFIG_BT_ACS_ANY_KEY_EXCHANGE)
 	case ACS_REPLY_KEX_OK:
 		reply->step = ACS_REPLY_KEX_COMPLETE;
@@ -478,7 +480,7 @@ static bool acs_reply_continue(struct acs_reply *reply)
 		return false;
 #endif
 	default:
-		reply->step = ACS_REPLY_DONE;
+		CODE_UNREACHABLE;
 		return false;
 	}
 

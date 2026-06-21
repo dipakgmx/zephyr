@@ -122,14 +122,9 @@ static const struct bt_acs_feature_rsp acs_features = {
 
 int acs_cp_handle_get_feature(struct acs_reply *reply, struct net_buf_simple *buf)
 {
-	if (buf->len != 0) {
-		return BT_ACS_CP_RESPONSE_INVALID_OPERAND;
-	}
-
+	ARG_UNUSED(buf);
 	LOG_DBG("feat=0x%08x prot=0x%04x", acs_features.features, acs_features.protection_methods);
-
 	net_buf_add_mem(reply->response, &acs_features, sizeof(acs_features));
-
 	return ACS_CP_RESULT_STAGED_REPLY;
 }
 
@@ -137,7 +132,6 @@ int acs_cp_handle_get_feature(struct acs_reply *reply, struct net_buf_simple *bu
 int acs_cp_handle_att_mtu(struct acs_reply *reply)
 {
 	uint16_t mtu = bt_gatt_get_mtu(reply->conn->conn) - 3U;
-
 	net_buf_add_le16(reply->response, mtu);
 	return ACS_CP_RESULT_STAGED_REPLY;
 }
@@ -150,23 +144,19 @@ static bool acs_client_nonce_fixed_is_unique(struct bt_acs_conn *acs_conn,
 {
 	for (size_t i = ACS_KEY_ID_COUNT; i < ACS_KEY_RUNTIME_COUNT; i++) {
 		const struct bt_acs_key_desc_runtime *other = &acs_conn->crypto.key_runtimes[i];
-
 		if (!other->key_desc) {
 			continue;
 		}
-
 		if (memcmp(runtime->client_nonce_fixed, other->server_nonce_fixed, fixed_size) ==
 		    0) {
 			return false;
 		}
-
 		if (other != runtime && other->client_nonce_set &&
 		    memcmp(runtime->client_nonce_fixed, other->client_nonce_fixed, fixed_size) ==
 			    0) {
 			return false;
 		}
 	}
-
 	return true;
 }
 
@@ -182,7 +172,6 @@ int acs_cp_handle_set_client_nonce_fixed(struct acs_reply *reply, struct net_buf
 		LOG_ERR("Request to set client nonce fixed received for unknown connection");
 		return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED;
 	}
-
 	key_id = sys_get_le16(buf->data);
 	key_desc = acs_key_desc_lookup(key_id);
 	if (!key_desc) {
@@ -213,13 +202,15 @@ int acs_cp_handle_set_client_nonce_fixed(struct acs_reply *reply, struct net_buf
 	}
 
 	fixed_size = acs_key_desc_nonce_fixed_size(key_desc);
-	if (buf->len != sizeof(uint16_t) + fixed_size) {
+	if (buf->len != sizeof(struct acs_cp_set_client_nonce_fixed_req) + fixed_size) {
 		LOG_WRN("Set client nonce fixed: size mismatch (got %u, expected %u)", buf->len,
-			(unsigned int)(sizeof(uint16_t) + fixed_size));
+			(unsigned int)(sizeof(struct acs_cp_set_client_nonce_fixed_req) +
+				       fixed_size));
 		return BT_ACS_CP_RESPONSE_INVALID_OPERAND;
 	}
 
-	memcpy(runtime->client_nonce_fixed, buf->data + sizeof(uint16_t), fixed_size);
+	memcpy(runtime->client_nonce_fixed,
+	       buf->data + sizeof(struct acs_cp_set_client_nonce_fixed_req), fixed_size);
 	sys_mem_swap(runtime->client_nonce_fixed, fixed_size);
 
 	if (!acs_client_nonce_fixed_is_unique(acs_conn, runtime, fixed_size)) {
