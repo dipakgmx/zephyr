@@ -257,6 +257,7 @@ int acs_doi_ccc_check(struct bt_conn *conn)
 static void acs_status_indicate_cb(struct bt_conn *conn, struct bt_gatt_indicate_params *params,
 				   uint8_t err)
 {
+	ARG_UNUSED(conn);
 	if (err) {
 		LOG_WRN("Status indication complete with error: %u", err);
 	}
@@ -428,7 +429,6 @@ int bt_acs_set_restriction_map(struct bt_conn *conn, uint16_t map_id)
 #if IS_ENABLED(CONFIG_BT_ACS_FEAT_AUTHORIZATION)
 	{
 		struct bt_acs_restriction_map map;
-
 		if (acs_rmap_lookup(map_id, &map) != 0) {
 			return -EINVAL;
 		}
@@ -436,12 +436,9 @@ int bt_acs_set_restriction_map(struct bt_conn *conn, uint16_t map_id)
 #endif
 
 	acs_conn = acs_conn_lookup(conn);
-
 	if (!acs_conn) {
 		return -ENOTCONN;
 	}
-
 	acs_conn->restriction_map_id = map_id;
-
 	return 0;
 }

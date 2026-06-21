@@ -56,12 +56,8 @@ void acs_reply_free(struct acs_reply *reply)
 	__ASSERT(atomic_get(&conn->reply_in_use[idx]) == 1,
 		 "acs_reply_free: double-free on slot %d", idx);
 
-	if (reply->request) {
-		acs_buf_free(reply->request);
-	}
-	if (reply->response) {
-		acs_buf_free(reply->response);
-	}
+	acs_buf_free(reply->request);
+	acs_buf_free(reply->response);
 	reply->aborted = false;
 	atomic_set(&conn->reply_in_use[idx], 0);
 }
@@ -496,7 +492,7 @@ static bool acs_reply_continue(struct acs_reply *reply)
 static void reply_continue_handler(struct k_work *work)
 {
 	struct bt_acs_conn *conn = CONTAINER_OF(work, struct bt_acs_conn, reply_continue_work);
-	struct acs_reply *reply = (struct acs_reply *)atomic_ptr_set(&conn->pending_continue, NULL);
+	struct acs_reply *reply = atomic_ptr_set(&conn->pending_continue, NULL);
 
 	if (!reply) {
 		return;

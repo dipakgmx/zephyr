@@ -54,10 +54,14 @@ static struct acs_session_cache_entry *session_cache_find(const bt_addr_le_t *ad
 	return NULL;
 }
 
-void acs_session_cache_save(const bt_addr_le_t *addr, const struct bt_acs_conn *acs_conn)
+void acs_session_cache_save(const struct bt_acs_conn *acs_conn)
 {
 	struct acs_session_cache_entry *entry;
 	bool has_key = false;
+
+	__ASSERT_NO_MSG(acs_conn != NULL && acs_conn->conn != NULL);
+
+	const bt_addr_le_t *addr = bt_conn_get_dst(acs_conn->conn);
 
 	for (size_t i = 0; i < ACS_KEY_ID_COUNT; i++) {
 		if (acs_conn->crypto.key_runtimes[i].psa_key_id != 0U) {
@@ -96,8 +100,11 @@ void acs_session_cache_save(const bt_addr_le_t *addr, const struct bt_acs_conn *
 	LOG_DBG("Saved ACS session to RAM cache for peer %s", bt_addr_le_str(addr));
 }
 
-int acs_session_cache_restore(const bt_addr_le_t *addr, struct bt_acs_conn *acs_conn)
+int acs_session_cache_restore(struct bt_acs_conn *acs_conn)
 {
+	__ASSERT_NO_MSG(acs_conn != NULL && acs_conn->conn != NULL);
+
+	const bt_addr_le_t *addr = bt_conn_get_dst(acs_conn->conn);
 	struct acs_session_cache_entry *entry = session_cache_find(addr);
 	const struct bt_acs_cb *cb;
 	int err;
@@ -344,13 +351,17 @@ static int acs_session_find_parent_key(const struct bt_acs_conn *acs_conn,
 	return -ENOENT;
 }
 
-void acs_session_store(const struct bt_conn *conn, const struct bt_acs_conn *acs_conn)
+void acs_session_store(const struct bt_acs_conn *acs_conn)
 {
 	struct bt_acs_key_desc_runtime *parent_key;
-	const bt_addr_le_t *addr = bt_conn_get_dst(conn);
 	struct bt_conn_info info;
 	size_t slot;
 	int err;
+
+	__ASSERT_NO_MSG(acs_conn != NULL && acs_conn->conn != NULL);
+
+	const struct bt_conn *conn = acs_conn->conn;
+	const bt_addr_le_t *addr = bt_conn_get_dst(conn);
 
 	err = acs_session_find_parent_key(acs_conn, &parent_key);
 	if (err) {
@@ -407,8 +418,11 @@ err_free_slot:
 	acs_slot_free_idx(slot);
 }
 
-void acs_session_restore(struct bt_conn *conn, struct bt_acs_conn *acs_conn)
+void acs_session_restore(struct bt_acs_conn *acs_conn)
 {
+	__ASSERT_NO_MSG(acs_conn != NULL && acs_conn->conn != NULL);
+
+	struct bt_conn *conn = acs_conn->conn;
 	const bt_addr_le_t *addr = bt_conn_get_dst(conn);
 	struct bt_acs_key_desc_runtime *established_key;
 	struct bt_acs_key_desc_runtime *parent_key;

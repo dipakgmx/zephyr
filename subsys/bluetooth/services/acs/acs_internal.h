@@ -173,11 +173,11 @@ struct bt_acs_conn *acs_conn_alloc(struct bt_conn *conn);
 /** @brief Release all resources held by @p acs_conn. */
 void acs_conn_cleanup(struct bt_acs_conn *acs_conn);
 
-/** @brief Save crypto state to the RAM session cache for @p addr. */
-void acs_session_cache_save(const bt_addr_le_t *addr, const struct bt_acs_conn *acs_conn);
+/** @brief Save crypto state to the RAM session cache for @p acs_conn's peer. */
+void acs_session_cache_save(const struct bt_acs_conn *acs_conn);
 
-/** @brief Restore crypto state from the RAM session cache for @p addr. */
-int acs_session_cache_restore(const bt_addr_le_t *addr, struct bt_acs_conn *acs_conn);
+/** @brief Restore crypto state from the RAM session cache for @p acs_conn's peer. */
+int acs_session_cache_restore(struct bt_acs_conn *acs_conn);
 
 /** @brief Clear the RAM session cache entry for @p addr. */
 void acs_session_cache_clear_peer(const bt_addr_le_t *addr);
@@ -186,8 +186,8 @@ void acs_session_cache_clear_peer(const bt_addr_le_t *addr);
 void acs_session_cache_clear_all_except(const bt_addr_le_t *keep_addr);
 
 #if defined(CONFIG_BT_SETTINGS)
-/** @brief Persist the parent ACS key for @p conn to PSA persistent storage. */
-void acs_session_store(struct bt_conn const *conn, struct bt_acs_conn const *acs_conn);
+/** @brief Persist the parent ACS key for @p acs_conn's peer to PSA persistent storage. */
+void acs_session_store(struct bt_acs_conn const *acs_conn);
 
 /** @brief Erase the stored parent key for @p conn's peer. */
 void acs_session_clear(struct bt_conn const *conn);
@@ -195,8 +195,8 @@ void acs_session_clear(struct bt_conn const *conn);
 /** @brief Erase stored parent keys for every peer except @p conn's peer. */
 void acs_session_clear_all_except(struct bt_conn const *conn);
 
-/** @brief Restore a previously stored parent key for @p conn from PSA storage. */
-void acs_session_restore(struct bt_conn *conn, struct bt_acs_conn *acs_conn);
+/** @brief Restore a previously stored parent key for @p acs_conn's peer from PSA storage. */
+void acs_session_restore(struct bt_acs_conn *acs_conn);
 
 /** @brief Register ACS's internal bond/auth-info callback. */
 void acs_session_register_auth_info_cb(void);

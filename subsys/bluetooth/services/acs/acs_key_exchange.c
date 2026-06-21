@@ -115,7 +115,7 @@ void acs_kex_finalize_success(struct bt_acs_conn *acs_conn)
 	}
 
 #if defined(CONFIG_BT_SETTINGS)
-	acs_session_store(acs_conn->conn, acs_conn);
+	acs_session_store(acs_conn);
 #endif
 
 	acs_status_indicate(acs_conn->conn);

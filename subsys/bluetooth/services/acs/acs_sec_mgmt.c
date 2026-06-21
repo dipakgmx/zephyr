@@ -156,7 +156,7 @@ int acs_sec_mgmt_invalidate_key(struct acs_reply *reply, struct net_buf_simple *
 		} else {
 			invalidate_kdf_child(reply->conn);
 #if defined(CONFIG_BT_SETTINGS)
-			acs_session_store(reply->conn->conn, reply->conn);
+			acs_session_store(reply->conn);
 #endif
 			{
 				const struct bt_acs_cb *cb = acs_cb_get();
@@ -178,7 +178,7 @@ int acs_sec_mgmt_invalidate_key(struct acs_reply *reply, struct net_buf_simple *
 			 * material.  Invalidating them is equivalent to invalidating the child. */
 			invalidate_kdf_child(reply->conn);
 #if defined(CONFIG_BT_SETTINGS)
-			acs_session_store(reply->conn->conn, reply->conn);
+			acs_session_store(reply->conn);
 #endif
 			{
 				const struct bt_acs_cb *cb = acs_cb_get();

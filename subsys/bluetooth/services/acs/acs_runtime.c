@@ -123,10 +123,8 @@ int acs_runtime_dispatch_protected_cp_frame(const struct acs_frame *frame,
 
 	err = acs_cp_dispatch(frame, acs_conn, reply);
 
-	if (reply->request) {
-		acs_buf_free(reply->request);
-		reply->request = NULL;
-	}
+	acs_buf_free(reply->request);
+	reply->request = NULL;
 
 	return err;
 }
@@ -144,10 +142,8 @@ static enum acs_req_access acs_rmap_resolve_request_access(uint16_t map_id, uint
 		struct bt_acs_restriction_map map;
 
 		if (acs_rmap_lookup(map_id, &map) == 0 &&
-		    map.default_isc_id != BT_ACS_ISC_ID_NONE &&
-		    map.default_isc_id == isc_id) {
-			return (payload_len > 0) ? ACS_REQ_ACCESS_WRITE
-						 : ACS_REQ_ACCESS_READ;
+		    map.default_isc_id != BT_ACS_ISC_ID_NONE && map.default_isc_id == isc_id) {
+			return (payload_len > 0) ? ACS_REQ_ACCESS_WRITE : ACS_REQ_ACCESS_READ;
 		}
 		return ACS_REQ_ACCESS_UNKNOWN;
 	}

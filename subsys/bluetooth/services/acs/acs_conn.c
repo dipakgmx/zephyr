@@ -16,7 +16,6 @@
 #include <zephyr/bluetooth/services/acs.h>
 #include <zephyr/logging/log.h>
 
-#include "common/bt_str.h"
 #include "acs_internal.h"
 #include "acs_key_exchange.h"
 
@@ -24,6 +23,7 @@ LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
 
 /** Pool for ACS working buffers (Data In/Out payloads, CP responses, status indications). */
 NET_BUF_POOL_FIXED_DEFINE(acs_buf_pool, ACS_BUF_COUNT, ACS_BUF_SIZE, 0, NULL);
+
 /** Per-connection ACS persistent state, indexed by connection slot. */
 static struct bt_acs_conn acs_conn_state[CONFIG_BT_MAX_CONN];
 
@@ -166,9 +166,9 @@ static void acs_bt_connected(struct bt_conn *conn, uint8_t err)
 	/* Try RAM cache first (survives disconnect, cleared on power-off).
 	 * Fall back to NVS restore (survives power-off, ECDH parent only).
 	 */
-	if (acs_session_cache_restore(bt_conn_get_dst(conn), acs_conn) != 0) {
+	if (acs_session_cache_restore(acs_conn) != 0) {
 #if defined(CONFIG_BT_SETTINGS)
-		acs_session_restore(conn, acs_conn);
+		acs_session_restore(acs_conn);
 #endif
 	}
 
@@ -199,11 +199,11 @@ static void acs_bt_disconnected(struct bt_conn *conn, uint8_t reason)
 	/* Save crypto state to RAM cache before cleanup destroys PSA handles.
 	 * This preserves keys, nonces and counters across disconnect/reconnect.
 	 */
-	acs_session_cache_save(bt_conn_get_dst(conn), acs_conn);
+	acs_session_cache_save(acs_conn);
 
 #if defined(CONFIG_BT_SETTINGS)
 	if (acs_session_established(acs_conn)) {
-		acs_session_store(conn, acs_conn);
+		acs_session_store(acs_conn);
 	}
 #endif
 

@@ -131,9 +131,7 @@ static void acs_req_work_handler(struct k_work *work)
 			continue;
 		}
 
-		if (reply->request) {
-			acs_buf_free(reply->request);
-			reply->request = NULL;
-		}
+		acs_buf_free(reply->request);
+		reply->request = NULL;
 	}
 }

@@ -208,8 +208,7 @@ int acs_cp_handle_set_client_nonce_fixed(struct acs_reply *reply, struct net_buf
 	}
 
 	if (runtime->psa_key_id != 0U) {
-		LOG_WRN("Set client nonce fixed: Key_ID 0x%04x already has an active key",
-			key_id);
+		LOG_WRN("Set client nonce fixed: Key_ID 0x%04x already has an active key", key_id);
 		return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE;
 	}
 
