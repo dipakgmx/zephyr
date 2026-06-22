@@ -82,12 +82,9 @@ struct bt_acs_conn *acs_conn_alloc(struct bt_conn *conn)
 	acs_doi_queue_init(acs_conn);
 #endif /* CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION */
 
-	acs_seg_tx_init(&acs_conn->cp_tx);
+	acs_seg_tx_init(&acs_conn->indicate_tx, true);
 #if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_NOTIFICATION)
-	acs_seg_notify_async_init(&acs_conn->notify_tx);
-#endif
-#if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION)
-	acs_seg_tx_init(&acs_conn->indicate_tx);
+	acs_seg_tx_init(&acs_conn->notify_tx, false);
 #endif
 
 	/* Initialise RX reassembly contexts */
@@ -118,7 +115,7 @@ void acs_conn_cleanup(struct bt_acs_conn *acs_conn)
 	 * references.
 	 */
 #if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_NOTIFICATION)
-	acs_seg_notify_async_reset(&acs_conn->notify_tx);
+	acs_seg_tx_reset(&acs_conn->notify_tx);
 #endif
 	acs_reply_abort_all(acs_conn);
 
@@ -130,10 +127,7 @@ void acs_conn_cleanup(struct bt_acs_conn *acs_conn)
 
 	atomic_set(&acs_conn->cp_locked, 0);
 	acs_conn->cp_abort_pending = false;
-	acs_seg_tx_reset(&acs_conn->cp_tx);
-#if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION)
 	acs_seg_tx_reset(&acs_conn->indicate_tx);
-#endif
 
 	/* Reset and release buffers from RX reassembly contexts */
 	acs_seg_rx_reset(&acs_conn->cp_rx);

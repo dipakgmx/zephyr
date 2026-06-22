@@ -42,9 +42,10 @@ acs_nonce_var_matches_runtime_prefix(const uint8_t *nonce_var,
 	return memcmp(&nonce_var[counter_size], expected_prefix, prefix_size) == 0;
 }
 
-int acs_require_data_out_subscription(struct bt_conn *conn, uint16_t resource_handle,
+int acs_require_data_out_subscription(struct bt_acs_conn *acs_conn, uint16_t resource_handle,
 				      uint16_t data_length)
 {
+	struct bt_conn *conn = acs_conn->conn;
 	struct acs_char_attr_ctx ctx = {
 		.value_handle = resource_handle,
 		.decl = NULL,

@@ -23,34 +23,38 @@ BUILD_ASSERT(!(IS_ENABLED(CONFIG_BT_ACS_FEAT_CONFIDENTIALITY) &&
 	     "CONFIG_BT_ACS_FEAT_CONFIDENTIALITY requires AES-GCM or AES-CCM data protection");
 
 /*
- * Default ISC records - compiled in when the corresponding algorithm Kconfig is enabled.
- * Applications may register additional ISC records with BT_ACS_ISC_DEFINE() in their
- * own source files; the library discovers all records via the bt_acs_isc_record iterable section.
+ * Implementation-assigned default ISC records (ACS v1.0 §4.4.3.7: non-zero,
+ * non-0xFFFF ISC IDs are assigned by the AC Server).  Compiled in when the
+ * corresponding algorithm Kconfig is enabled.  Applications may register
+ * additional ISC records with BT_ACS_ISC_DEFINE() in their own source files;
+ * the library discovers all records via the bt_acs_isc_record iterable section.
  */
 #if IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_GCM)
-BT_ACS_ISC_DEFINE(acs_isc_high_sec_gcm, .isc_id = ACS_ISC_ID_HIGH_SEC, .num_controls = 3,
+BT_ACS_ISC_DEFINE(acs_isc_high_sec_gcm, .isc_id = ACS_ISC_ID_HIGH_SEC_GCM, .num_controls = 3,
 		  .controls = {ACS_CTRL_NONCE, ACS_CTRL_MAC, ACS_CTRL_AUTH_ENC},
 		  .key_id = ACS_KEY_ID_GCM);
-#elif IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_CCM)
-BT_ACS_ISC_DEFINE(acs_isc_high_sec_ccm, .isc_id = ACS_ISC_ID_HIGH_SEC, .num_controls = 3,
+#endif
+
+#if IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_CCM)
+BT_ACS_ISC_DEFINE(acs_isc_high_sec_ccm, .isc_id = ACS_ISC_ID_HIGH_SEC_CCM, .num_controls = 2,
 		  .controls = {ACS_CTRL_NONCE, ACS_CTRL_MAC, ACS_CTRL_AUTH_ENC},
 		  .key_id = ACS_KEY_ID_CCM);
 #endif
 
 #if IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_GMAC)
-BT_ACS_ISC_DEFINE(acs_isc_integrity_gmac, .isc_id = ACS_ISC_ID_INTEGRITY, .num_controls = 3,
-		  .controls = {ACS_CTRL_NONCE, ACS_CTRL_MAC, ACS_CTRL_AUTH},
+BT_ACS_ISC_DEFINE(acs_isc_integrity_gmac, .isc_id = ACS_ISC_ID_INTEGRITY_GMAC, .num_controls = 3,
+		  .controls = {ACS_CTRL_NONCE, ACS_CTRL_AUTH, ACS_CTRL_MAC},
 		  .key_id = ACS_KEY_ID_GMAC);
 #endif
 
 #if IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_CMAC)
-BT_ACS_ISC_DEFINE(acs_isc_mac_only_cmac, .isc_id = ACS_ISC_ID_MAC_ONLY, .num_controls = 1,
+BT_ACS_ISC_DEFINE(acs_isc_mac_only_cmac, .isc_id = ACS_ISC_ID_MAC_ONLY_CMAC, .num_controls = 1,
 		  .controls = {ACS_CTRL_MAC}, .key_id = ACS_KEY_ID_CMAC);
 #endif
 
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_ECDH)
 BT_ACS_ISC_DEFINE(acs_isc_auth_ecdh, .isc_id = ACS_ISC_ID_AUTH, .num_controls = 2,
-		  .controls = {ACS_CTRL_NONCE, ACS_CTRL_MAC}, .key_id = ACS_KEY_ID_ECDH);
+		  .controls = {ACS_CTRL_NONCE, ACS_CTRL_AUTH}, .key_id = ACS_KEY_ID_ECDH);
 #endif
 
 /* Unencrypted fallback - always present */

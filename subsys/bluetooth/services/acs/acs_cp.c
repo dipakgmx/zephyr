@@ -105,11 +105,6 @@ static int acs_cp_min_operand_size(uint8_t opcode, uint16_t *size)
 	case BT_ACS_CP_OPCODE_ABORT:
 		break;
 #endif
-#if IS_ENABLED(CONFIG_BT_ACS_KEY_URI)
-	case BT_ACS_CP_OPCODE_GET_KEY_URI:
-		*size = sizeof(struct acs_cp_get_key_uri_req);
-		break;
-#endif
 #if IS_ENABLED(CONFIG_BT_ACS_SET_SECURITY_CONTROLS_SWITCH)
 	case BT_ACS_CP_OPCODE_SET_SECURITY_CONTROLS_SWITCH:
 		*size = sizeof(struct acs_cp_sec_switch_req);
@@ -172,6 +167,15 @@ int acs_cp_rsp_status(struct acs_reply *reply, uint8_t req_opcode, uint8_t code)
 
 	return acs_cp_send_reply(reply);
 }
+
+#if IS_ENABLED(CONFIG_BT_ACS_ATT_MTU)
+int acs_cp_handle_att_mtu(struct acs_reply *reply)
+{
+	uint16_t mtu = bt_gatt_get_mtu(reply->conn->conn) - 3U;
+	net_buf_add_le16(reply->response, mtu);
+	return ACS_CP_RESULT_STAGED_REPLY;
+}
+#endif /* CONFIG_BT_ACS_ATT_MTU */
 
 static int acs_cp_run_handler(uint8_t opcode, struct acs_reply *reply,
 			      struct net_buf_simple *payload)
@@ -269,11 +273,6 @@ static int acs_cp_run_handler(uint8_t opcode, struct acs_reply *reply,
 		return acs_sec_mgmt_set_security_switch(reply, payload);
 #endif
 
-#if IS_ENABLED(CONFIG_BT_ACS_KEY_URI)
-	case BT_ACS_CP_OPCODE_GET_KEY_URI:
-		return acs_sec_mgmt_get_key_uri(reply, payload);
-#endif
-
 #if IS_ENABLED(CONFIG_BT_ACS_INITIATE_PAIRING)
 	case BT_ACS_CP_OPCODE_INITIATE_PAIRING:
 		return acs_sec_mgmt_initiate_pairing(reply);
@@ -330,9 +329,6 @@ static int acs_cp_stage_response(struct acs_reply *reply, uint8_t opcode)
 		break;
 	case BT_ACS_CP_OPCODE_GET_CURRENT_KEY_LIST:
 		rsp_opcode = BT_ACS_CP_OPCODE_CURRENT_KEY_LIST_RESPONSE;
-		break;
-	case BT_ACS_CP_OPCODE_GET_KEY_URI:
-		rsp_opcode = BT_ACS_CP_OPCODE_KEY_URI_RESPONSE;
 		break;
 	case BT_ACS_CP_OPCODE_GET_FEATURE:
 		rsp_opcode = BT_ACS_CP_OPCODE_ACS_FEATURE_RESPONSE;
@@ -425,6 +421,8 @@ int acs_cp_dispatch(const struct acs_frame *frame, struct bt_acs_conn *acs_conn,
 
 	if (ret == ACS_CP_RESULT_NO_REPLY) {
 		acs_reply_free(reply);
+		/* cp_locked is only held by the plain CP path; protected path doesn't acquire it.
+		 */
 		if (prot_req == NULL) {
 			atomic_set(&acs_conn->cp_locked, 0);
 		}

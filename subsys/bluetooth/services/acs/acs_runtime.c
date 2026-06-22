@@ -22,8 +22,8 @@
 #include <zephyr/logging/log.h>
 LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
 
-static int acs_runtime_classify_frame(const struct acs_frame *frame, uint16_t map_id,
-				      enum acs_route_kind *kind)
+static int acs_runtime_resolve_frame(const struct acs_frame *frame, uint16_t map_id,
+				     enum acs_route_kind *kind, enum acs_req_access *access)
 {
 	__ASSERT_NO_MSG(frame != NULL);
 	__ASSERT_NO_MSG(kind != NULL);
@@ -50,13 +50,21 @@ static int acs_runtime_classify_frame(const struct acs_frame *frame, uint16_t ma
 			if (acs_rmap_lookup(map_id, &map) == 0 &&
 			    map.default_isc_id != BT_ACS_ISC_ID_NONE) {
 				*kind = ACS_ROUTE_PROTECTED_CHAR;
+				if (access) {
+					if (map.default_isc_id != frame->isc_id) {
+						*access = ACS_REQ_ACCESS_UNKNOWN;
+					} else {
+						*access = (frame->payload_len > 0)
+								  ? ACS_REQ_ACCESS_WRITE
+								  : ACS_REQ_ACCESS_READ;
+					}
+				}
 				return 0;
 			}
 			LOG_WRN("data-in handle 0x%04x not in restriction map %u",
 				frame->resource_handle, map_id);
 			return -ENOENT;
 		}
-		ARG_UNUSED(entry);
 
 		switch (hit) {
 		case ACS_RMAP_RESOURCE_CP:
@@ -64,6 +72,44 @@ static int acs_runtime_classify_frame(const struct acs_frame *frame, uint16_t ma
 			return 0;
 		case ACS_RMAP_RESOURCE_CHAR:
 			*kind = ACS_ROUTE_PROTECTED_CHAR;
+			if (access) {
+				bool can_read = false;
+				bool can_write = false;
+
+				for (uint8_t i = 0; i < entry->num_ops; i++) {
+					if (entry->ops[i].isc_id != frame->isc_id) {
+						continue;
+					}
+					switch (entry->ops[i].opcode) {
+					case BT_ACS_RMAP_OP_ATT_READ_REQ:
+					case BT_ACS_RMAP_OP_ATT_READ_BLOB_REQ:
+					case BT_ACS_RMAP_OP_ATT_READ_MULT_REQ:
+					case BT_ACS_RMAP_OP_ATT_READ_MULT_VL_REQ:
+						can_read = true;
+						break;
+					case BT_ACS_RMAP_OP_ATT_WRITE_REQ:
+					case BT_ACS_RMAP_OP_ATT_WRITE_CMD:
+					case BT_ACS_RMAP_OP_ATT_SIGNED_WRITE_CMD:
+					case BT_ACS_RMAP_OP_ATT_PREPARE_WRITE_REQ:
+					case BT_ACS_RMAP_OP_ATT_EXECUTE_WRITE_REQ:
+						can_write = true;
+						break;
+					default:
+						break;
+					}
+				}
+
+				if (can_write && !can_read) {
+					*access = ACS_REQ_ACCESS_WRITE;
+				} else if (can_read && !can_write) {
+					*access = ACS_REQ_ACCESS_READ;
+				} else if (can_read && can_write) {
+					*access = (frame->payload_len > 0) ? ACS_REQ_ACCESS_WRITE
+									   : ACS_REQ_ACCESS_READ;
+				} else {
+					*access = ACS_REQ_ACCESS_UNKNOWN;
+				}
+			}
 			return 0;
 		default:
 			LOG_WRN("handle 0x%04x not in restriction map %u", frame->resource_handle,
@@ -73,6 +119,7 @@ static int acs_runtime_classify_frame(const struct acs_frame *frame, uint16_t ma
 	}
 #else
 	ARG_UNUSED(map_id);
+	ARG_UNUSED(access);
 	LOG_WRN("data-in received but authorization disabled");
 	return -ENOENT;
 #endif
@@ -83,8 +130,10 @@ static int acs_runtime_classify_frame(const struct acs_frame *frame, uint16_t ma
  * request. The unwrap helper already pulled the transport header and trimmed
  * the buffer in place, so data/len describe the inner plaintext payload.
  */
-static void acs_reply_take_request_buf(struct acs_reply *reply, struct bt_acs_conn *acs_conn)
+static void acs_reply_take_request_buf(struct acs_reply *reply)
 {
+	struct bt_acs_conn *acs_conn = reply->conn;
+
 	reply->request = acs_conn->data_rx.buf;
 	acs_conn->data_rx.buf = NULL;
 }
@@ -119,7 +168,7 @@ int acs_runtime_dispatch_protected_cp_frame(const struct acs_frame *frame,
 	reply->channel = ACS_REPLY_DOI;
 	reply->resource_handle = frame->resource_handle;
 	reply->isc_id = frame->isc_id;
-	acs_reply_take_request_buf(reply, acs_conn);
+	acs_reply_take_request_buf(reply);
 
 	err = acs_cp_dispatch(frame, acs_conn, reply);
 
@@ -129,66 +178,9 @@ int acs_runtime_dispatch_protected_cp_frame(const struct acs_frame *frame,
 	return err;
 }
 
-#if defined(CONFIG_BT_ACS_FEAT_AUTHORIZATION)
-static enum acs_req_access acs_rmap_resolve_request_access(uint16_t map_id, uint16_t handle,
-							   uint16_t isc_id, uint16_t payload_len)
-{
-	const struct bt_acs_rmap_protected *entry;
-	enum acs_rmap_resource_kind kind;
-	bool can_read = false;
-	bool can_write = false;
-
-	if (acs_rmap_find_protected(map_id, handle, &kind, &entry) != 0) {
-		struct bt_acs_restriction_map map;
-
-		if (acs_rmap_lookup(map_id, &map) == 0 &&
-		    map.default_isc_id != BT_ACS_ISC_ID_NONE && map.default_isc_id == isc_id) {
-			return (payload_len > 0) ? ACS_REQ_ACCESS_WRITE : ACS_REQ_ACCESS_READ;
-		}
-		return ACS_REQ_ACCESS_UNKNOWN;
-	}
-
-	for (uint8_t i = 0; i < entry->num_ops; i++) {
-		if (entry->ops[i].isc_id != isc_id) {
-			continue;
-		}
-
-		switch (entry->ops[i].opcode) {
-		case BT_ACS_RMAP_OP_ATT_READ_REQ:
-		case BT_ACS_RMAP_OP_ATT_READ_BLOB_REQ:
-		case BT_ACS_RMAP_OP_ATT_READ_MULT_REQ:
-		case BT_ACS_RMAP_OP_ATT_READ_MULT_VL_REQ:
-			can_read = true;
-			break;
-		case BT_ACS_RMAP_OP_ATT_WRITE_REQ:
-		case BT_ACS_RMAP_OP_ATT_WRITE_CMD:
-		case BT_ACS_RMAP_OP_ATT_SIGNED_WRITE_CMD:
-		case BT_ACS_RMAP_OP_ATT_PREPARE_WRITE_REQ:
-		case BT_ACS_RMAP_OP_ATT_EXECUTE_WRITE_REQ:
-			can_write = true;
-			break;
-		default:
-			break;
-		}
-	}
-
-	if (can_write && !can_read) {
-		return ACS_REQ_ACCESS_WRITE;
-	}
-	if (can_read && !can_write) {
-		return ACS_REQ_ACCESS_READ;
-	}
-	if (can_read && can_write) {
-		/* Same ISC_ID covers both read and write - use payload as tiebreaker. */
-		return (payload_len > 0) ? ACS_REQ_ACCESS_WRITE : ACS_REQ_ACCESS_READ;
-	}
-
-	return ACS_REQ_ACCESS_UNKNOWN;
-}
-#endif /* CONFIG_BT_ACS_FEAT_AUTHORIZATION */
-
 int acs_runtime_dispatch_protected_char_frame(const struct acs_frame *frame,
-					      struct bt_acs_conn *acs_conn)
+					      struct bt_acs_conn *acs_conn,
+					      enum acs_req_access access)
 {
 	struct acs_reply *reply;
 	int err;
@@ -197,7 +189,7 @@ int acs_runtime_dispatch_protected_char_frame(const struct acs_frame *frame,
 	__ASSERT_NO_MSG(acs_conn != NULL);
 	__ASSERT_NO_MSG(acs_conn->data_rx.buf != NULL);
 
-	err = acs_require_data_out_subscription(acs_conn->conn, frame->resource_handle,
+	err = acs_require_data_out_subscription(acs_conn, frame->resource_handle,
 						frame->payload_len);
 	if (err == -EINVAL) {
 		LOG_WRN("required data-out CCC not enabled for handle 0x%04x",
@@ -218,18 +210,18 @@ int acs_runtime_dispatch_protected_char_frame(const struct acs_frame *frame,
 
 	reply->resource_handle = frame->resource_handle;
 	reply->isc_id = frame->isc_id;
-	acs_reply_take_request_buf(reply, acs_conn);
+	acs_reply_take_request_buf(reply);
 
 #if defined(CONFIG_BT_ACS_FEAT_AUTHORIZATION)
-	reply->access = acs_rmap_resolve_request_access(acs_conn->restriction_map_id,
-							frame->resource_handle, frame->isc_id,
-							frame->payload_len);
+	reply->access = access;
 	if (reply->access == ACS_REQ_ACCESS_UNKNOWN) {
 		LOG_ERR("no read/write op in rmap for handle 0x%04x isc 0x%04x",
 			frame->resource_handle, frame->isc_id);
 		acs_reply_free(reply);
 		return -ENOENT;
 	}
+#else
+	ARG_UNUSED(access);
 #endif
 
 	acs_request_queue_submit(acs_conn, reply);
@@ -240,6 +232,7 @@ int acs_runtime_dispatch_protected_char_frame(const struct acs_frame *frame,
 int acs_runtime_dispatch_frame(const struct acs_frame *frame, struct bt_acs_conn *acs_conn)
 {
 	enum acs_route_kind kind;
+	enum acs_req_access access = ACS_REQ_ACCESS_UNKNOWN;
 	uint16_t map_id;
 	int err;
 
@@ -250,7 +243,7 @@ int acs_runtime_dispatch_frame(const struct acs_frame *frame, struct bt_acs_conn
 	map_id = (frame->source_channel == ACS_SRC_CP) ? BT_ACS_RMAP_ID_NONE
 						       : acs_conn->restriction_map_id;
 
-	err = acs_runtime_classify_frame(frame, map_id, &kind);
+	err = acs_runtime_resolve_frame(frame, map_id, &kind, &access);
 	if (err != 0) {
 		LOG_WRN("handle 0x%04x not in restriction map", frame->resource_handle);
 		return ACS_DATA_ERR_RESOURCE_NOT_PROTECTED;
@@ -263,7 +256,7 @@ int acs_runtime_dispatch_frame(const struct acs_frame *frame, struct bt_acs_conn
 	case ACS_ROUTE_PROTECTED_SERVICE_CP:
 		return acs_runtime_dispatch_protected_cp_frame(frame, acs_conn);
 	case ACS_ROUTE_PROTECTED_CHAR:
-		return acs_runtime_dispatch_protected_char_frame(frame, acs_conn);
+		return acs_runtime_dispatch_protected_char_frame(frame, acs_conn, access);
 #endif
 	default:
 		return -EINVAL;

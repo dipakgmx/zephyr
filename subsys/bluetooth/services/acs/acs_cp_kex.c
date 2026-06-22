@@ -306,7 +306,7 @@ int acs_cp_kex_start(struct acs_reply *reply, struct net_buf_simple *buf)
 			oob_len = 0;
 			oob_err = cb->static_oob_get(reply->conn->conn, oob_buf, &oob_len);
 			if (oob_err || oob_len == 0 || oob_len > ACS_CONFIRM_VALUE_SIZE) {
-				LOG_WRN("start_key_exchange: static_oob_get failed: %d", oob_err);
+				LOG_WRN("static_oob_get failed: %d", oob_err);
 				acs_key_exchange_abort(acs_conn);
 				return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED;
 			}
@@ -382,7 +382,7 @@ int acs_cp_kex_ecdh_confirm_code(struct acs_reply *reply, struct net_buf_simple 
 	int err;
 
 	if (!acs_kex_expects(acs_conn, ACS_KEX_AWAIT_CONFIRM_CODE)) {
-		LOG_ERR("confirm_code: invalid KEX ordering");
+		LOG_ERR("invalid KEX ordering");
 		acs_key_exchange_abort(acs_conn);
 		return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE;
 	}

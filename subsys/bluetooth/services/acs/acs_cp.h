@@ -57,8 +57,6 @@ struct bt_acs_feature_rsp {
 	BIT(6) /**< ECDH Key Exchange Supported: AC Server supports exchanging keys using ECDH. */
 #define BT_ACS_FEATURE_KDF_KEY_EXCHANGE_SUPPORTED                                                  \
 	BIT(7) /**< KDF Key Exchange Supported: AC Server supports exchanging keys using KDF. */
-#define BT_ACS_FEATURE_KEY_URI_SUPPORTED                                                           \
-	BIT(8) /**< Key URI Supported: AC Server supports providing a key URI. */
 #define BT_ACS_FEATURE_INVALIDATE_ESTABLISHED_SECURITY_SUPPORTED                                   \
 	BIT(9) /**< Invalidate Established Security Supported: AC Server supports invalidating     \
 		  established security. */

@@ -77,9 +77,12 @@ int acs_runtime_dispatch_protected_cp_frame(const struct acs_frame *frame,
  * Resolves the required Data Out subscription, allocates a request context,
  * transfers ownership of @c acs_conn->data_rx.buf into the context, then
  * queues the work item that runs the application/auto-respond handler.
+ *
+ * @param access  Read/write classification resolved by the caller's rmap lookup.
  */
 int acs_runtime_dispatch_protected_char_frame(const struct acs_frame *frame,
-					      struct bt_acs_conn *acs_conn);
+					      struct bt_acs_conn *acs_conn,
+					      enum acs_req_access access);
 
 /**
  * @brief Resolve the Data Out subscription for a protected resource handle.
@@ -88,7 +91,7 @@ int acs_runtime_dispatch_protected_char_frame(const struct acs_frame *frame,
  * payloads only DON is checked. Returns 0 if the required CCC is configured,
  * @c -EINVAL when the CCC is missing, or other negative errno on lookup failure.
  */
-int acs_require_data_out_subscription(struct bt_conn *conn, uint16_t resource_handle,
+int acs_require_data_out_subscription(struct bt_acs_conn *acs_conn, uint16_t resource_handle,
 				      uint16_t data_length);
 
 #ifdef __cplusplus

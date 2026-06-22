@@ -103,45 +103,30 @@ struct acs_seg_rx_ctx {
 };
 
 /**
- * @brief Segmentation context for outbound TX indications.
+ * @brief Segmentation context for outbound TX (indication or notification).
  *
- * Manages segmented GATT indications on a single channel (CP or DOI).
+ * Manages segmented GATT indications or notifications on a single channel.
  * A pool buffer and completion callback are installed via acs_seg_tx_send();
- * the TX engine chains segments through a work item until all are confirmed.
+ * the TX engine chains segments through a work item until all are sent.
+ * The @c is_indicate flag selects bt_gatt_indicate() vs bt_gatt_notify_cb()
+ * at runtime (same pattern as HAS control_point_send).
  */
 struct acs_seg_tx_ctx {
-	struct bt_gatt_indicate_params ind_params; /**< Passed to bt_gatt_indicate() */
-	struct k_work tx_work;                     /**< Work item for chaining TX segments */
-	struct net_buf *buf;                       /**< Borrowed from pool; set before TX */
-	const struct bt_gatt_attr *tx_attr;        /**< Characteristic value attribute */
-	struct bt_conn *tx_conn;                   /**< Connection ref held during TX */
-	acs_seg_tx_completion_cb_t completion_cb;  /**< Completion callback */
-	void *completion_cb_data;                  /**< Opaque callback user data */
-	uint8_t tx_scratch[ACS_SEG_CTX_PDU_SIZE];  /**< PDU scratch: seg header + one chunk */
-	uint16_t tx_offset;                        /**< Bytes already indicated */
-	uint8_t tx_counter;                        /**< Rolling segment counter */
-	bool tx_in_flight;                         /**< Segment currently awaiting confirmation */
-};
-
-/**
- * @brief Segmentation context for outbound TX notifications.
- *
- * Manages segmented GATT notifications on a single channel. The TX engine
- * chains segments through a work item and advances on notify completion
- * callbacks until the full logical ACS payload is sent.
- */
-struct acs_seg_notify_ctx {
-	struct bt_gatt_notify_params notify_params; /**< Passed to bt_gatt_notify_cb() */
-	struct k_work tx_work;                      /**< Work item for chaining TX segments */
-	struct net_buf *buf;                        /**< Borrowed from pool; set before TX */
-	const struct bt_gatt_attr *tx_attr;         /**< Characteristic value attribute */
-	struct bt_conn *tx_conn;                    /**< Connection ref held during TX */
-	acs_seg_tx_completion_cb_t completion_cb;   /**< Completion callback */
-	void *completion_cb_data;                   /**< Opaque callback user data */
-	uint8_t tx_scratch[ACS_SEG_CTX_PDU_SIZE];   /**< PDU scratch: seg header + one chunk */
-	uint16_t tx_offset;                         /**< Bytes already notified */
-	uint8_t tx_counter;                         /**< Rolling segment counter */
-	bool tx_in_flight;                          /**< Segment currently awaiting completion */
+	union {
+		struct bt_gatt_indicate_params ind;
+		struct bt_gatt_notify_params ntf;
+	} params;
+	struct k_work tx_work;                    /**< Work item for chaining TX segments */
+	struct net_buf *buf;                      /**< Borrowed from pool; set before TX */
+	const struct bt_gatt_attr *tx_attr;       /**< Characteristic value attribute */
+	struct bt_conn *tx_conn;                  /**< Connection ref held during TX */
+	acs_seg_tx_completion_cb_t completion_cb; /**< Completion callback */
+	void *completion_cb_data;                 /**< Opaque callback user data */
+	uint8_t tx_scratch[ACS_SEG_CTX_PDU_SIZE]; /**< PDU scratch: seg header + one chunk */
+	uint16_t tx_offset;                       /**< Bytes already sent */
+	uint8_t tx_counter;                       /**< Rolling segment counter */
+	bool tx_in_flight;                        /**< Segment currently awaiting completion */
+	bool is_indicate;                         /**< true = indication, false = notification */
 };
 
 /**
@@ -156,45 +141,6 @@ struct acs_seg_notify_ctx {
  */
 int acs_seg_notify(struct bt_conn *conn, const struct bt_gatt_attr *attr, const uint8_t *data,
 		   uint16_t len);
-
-/**
- * @brief Initialise a TX notification context.
- *
- * Must be called once before first use. Arms the internal work item used to
- * chain multi-segment notifications through @ref bt_gatt_notify_cb.
- *
- * @param ctx  TX notification context to initialise.
- */
-void acs_seg_notify_async_init(struct acs_seg_notify_ctx *ctx);
-
-/**
- * @brief Reset and clean up a TX notification context.
- *
- * Cancels any pending work, releases the held connection reference and clears
- * the borrowed buffer/callback state. Safe to call on an already-clean
- * context.
- *
- * @param ctx  TX notification context to reset.
- */
-void acs_seg_notify_async_reset(struct acs_seg_notify_ctx *ctx);
-
-/**
- * @brief Arm a segmented notification and transfer buffer ownership to TX.
- *
- * The TX path borrows @p buf until it completes or fails.
- *
- * @param ctx   TX notification context.
- * @param conn  Connection to notify on (ref taken internally).
- * @param attr  GATT attribute to notify.
- * @param buf   Full payload buffer to send.
- * @param completion_cb Completion callback invoked after all chunks complete.
- * @param user_data Opaque callback user data.
- *
- * @return 0 on success, negative errno on failure.
- */
-int acs_seg_notify_async_send(struct acs_seg_notify_ctx *ctx, struct bt_conn *conn,
-			      const struct bt_gatt_attr *attr, struct net_buf *buf,
-			      acs_seg_tx_completion_cb_t completion_cb, void *user_data);
 
 /**
  * @brief Initialise an RX reassembly context.
@@ -244,17 +190,19 @@ enum acs_seg_rx_result acs_seg_rx_process(struct acs_seg_rx_ctx *ctx, const uint
 					  uint16_t len);
 
 /**
- * @brief Initialise a TX indication context.
+ * @brief Initialise a TX segmentation context.
  *
- * Must be called once before first use.  Arms the internal work item used
- * to chain multi-segment indications.
+ * Must be called once before first use.  Arms the internal work item.
+ * The @p indicate flag selects between indication and notification paths
+ * for the lifetime of this context.
  *
- * @param ctx  TX context to initialise.
+ * @param ctx       TX context to initialise.
+ * @param indicate  true for indications, false for notifications.
  */
-void acs_seg_tx_init(struct acs_seg_tx_ctx *ctx);
+void acs_seg_tx_init(struct acs_seg_tx_ctx *ctx, bool indicate);
 
 /**
- * @brief Reset and clean up a TX indication context.
+ * @brief Reset and clean up a TX segmentation context.
  *
  * Cancels any pending work, releases the held connection reference and
  * buffer.  Safe to call on an already-clean context.
@@ -264,15 +212,15 @@ void acs_seg_tx_init(struct acs_seg_tx_ctx *ctx);
 void acs_seg_tx_reset(struct acs_seg_tx_ctx *ctx);
 
 /**
- * @brief Arm a segmented indication and transfer buffer ownership to TX.
+ * @brief Arm a segmented transfer and submit the first segment.
  *
- * The TX path owns @p buf until it completes or fails.
+ * The TX path borrows @p buf until it completes or fails.
  *
- * @param ctx   TX indication context.
- * @param conn  Connection to indicate on (ref taken internally).
- * @param attr  GATT attribute to indicate.
+ * @param ctx   TX context (is_indicate already set via acs_seg_tx_init).
+ * @param conn  Connection (ref taken internally).
+ * @param attr  GATT attribute to indicate/notify on.
  * @param buf   Full payload buffer to send.
- * @param completion_cb Completion callback invoked after all segments are confirmed.
+ * @param completion_cb Completion callback invoked after all segments are sent.
  * @param user_data Opaque callback user data.
  *
  * @return 0 on success, negative errno on failure.

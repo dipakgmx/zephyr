@@ -4,18 +4,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include <errno.h>
-#include <string.h>
-
-#include <zephyr/sys/byteorder.h>
-#include <zephyr/bluetooth/conn.h>
-#include <zephyr/bluetooth/gatt.h>
 #include <zephyr/bluetooth/services/acs.h>
 
 #include "acs_cp.h"
-#include "acs_crypto.h"
 #include "acs_internal.h"
-#include "acs_key_desc.h"
 
 #include <zephyr/logging/log.h>
 LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
@@ -44,8 +36,6 @@ static const struct bt_acs_feature_rsp acs_features = {
 		(IS_ENABLED(CONFIG_BT_ACS_INITIATE_PAIRING)
 			 ? BT_ACS_FEATURE_INITIATION_OF_PAIRING_SUPPORTED
 			 : 0) |
-		(IS_ENABLED(CONFIG_BT_ACS_KEY_URI) ? BT_ACS_FEATURE_KEY_URI_SUPPORTED : 0) |
-
 		/* Key Exchange Methods */
 		(IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_ECDH)
 			 ? BT_ACS_FEATURE_ECDH_KEY_EXCHANGE_SUPPORTED
@@ -127,101 +117,3 @@ int acs_cp_handle_get_feature(struct acs_reply *reply, struct net_buf_simple *bu
 	net_buf_add_mem(reply->response, &acs_features, sizeof(acs_features));
 	return ACS_CP_RESULT_STAGED_REPLY;
 }
-
-#if IS_ENABLED(CONFIG_BT_ACS_ATT_MTU)
-int acs_cp_handle_att_mtu(struct acs_reply *reply)
-{
-	uint16_t mtu = bt_gatt_get_mtu(reply->conn->conn) - 3U;
-	net_buf_add_le16(reply->response, mtu);
-	return ACS_CP_RESULT_STAGED_REPLY;
-}
-#endif /* CONFIG_BT_ACS_ATT_MTU */
-
-#if IS_ENABLED(CONFIG_BT_ACS_HAS_NONCE_FIXED)
-static bool acs_client_nonce_fixed_is_unique(struct bt_acs_conn *acs_conn,
-					     const struct bt_acs_key_desc_runtime *runtime,
-					     uint8_t fixed_size)
-{
-	for (size_t i = ACS_KEY_ID_COUNT; i < ACS_KEY_RUNTIME_COUNT; i++) {
-		const struct bt_acs_key_desc_runtime *other = &acs_conn->crypto.key_runtimes[i];
-		if (!other->key_desc) {
-			continue;
-		}
-		if (memcmp(runtime->client_nonce_fixed, other->server_nonce_fixed, fixed_size) ==
-		    0) {
-			return false;
-		}
-		if (other != runtime && other->client_nonce_set &&
-		    memcmp(runtime->client_nonce_fixed, other->client_nonce_fixed, fixed_size) ==
-			    0) {
-			return false;
-		}
-	}
-	return true;
-}
-
-int acs_cp_handle_set_client_nonce_fixed(struct acs_reply *reply, struct net_buf_simple *buf)
-{
-	struct bt_acs_conn *acs_conn = reply->conn;
-	const struct bt_acs_key_desc_record *key_desc;
-	struct bt_acs_key_desc_runtime *runtime;
-	uint16_t key_id;
-	uint8_t fixed_size;
-
-	if (!acs_conn) {
-		LOG_ERR("Request to set client nonce fixed received for unknown connection");
-		return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED;
-	}
-	key_id = sys_get_le16(buf->data);
-	key_desc = acs_key_desc_lookup(key_id);
-	if (!key_desc) {
-		LOG_WRN("Set client nonce fixed: unknown Key_ID 0x%04x", key_id);
-		return BT_ACS_CP_RESPONSE_PARAMETER_OUT_OF_RANGE;
-	}
-
-	if (!acs_key_desc_has_nonce_record(key_desc) ||
-	    key_desc->aes.nonce_type != ACS_NONCE_SEQ_DIFF_FIXED) {
-		LOG_WRN("Set client nonce fixed: Key_ID 0x%04x does not support SEQ_DIFF_FIXED",
-			key_id);
-		return BT_ACS_CP_RESPONSE_OPCODE_NOT_SUPPORTED;
-	}
-
-	/* §4.4.3.18: reject while key exchange is ongoing or already successful. */
-	if (acs_kex_in_progress(acs_conn)) {
-		LOG_WRN("Set client nonce fixed: key exchange active");
-		return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE;
-	}
-
-	if (acs_crypto_key_runtime_lookup(acs_conn, key_id, &runtime) != 0) {
-		return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED;
-	}
-
-	if (runtime->psa_key_id != 0U) {
-		LOG_WRN("Set client nonce fixed: Key_ID 0x%04x already has an active key", key_id);
-		return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE;
-	}
-
-	fixed_size = acs_key_desc_nonce_fixed_size(key_desc);
-	if (buf->len != sizeof(struct acs_cp_set_client_nonce_fixed_req) + fixed_size) {
-		LOG_WRN("Set client nonce fixed: size mismatch (got %u, expected %u)", buf->len,
-			(unsigned int)(sizeof(struct acs_cp_set_client_nonce_fixed_req) +
-				       fixed_size));
-		return BT_ACS_CP_RESPONSE_INVALID_OPERAND;
-	}
-
-	memcpy(runtime->client_nonce_fixed,
-	       buf->data + sizeof(struct acs_cp_set_client_nonce_fixed_req), fixed_size);
-	sys_mem_swap(runtime->client_nonce_fixed, fixed_size);
-
-	if (!acs_client_nonce_fixed_is_unique(acs_conn, runtime, fixed_size)) {
-		LOG_WRN("Set client nonce fixed: value collides with existing nonce fixed");
-		memset(runtime->client_nonce_fixed, 0, sizeof(runtime->client_nonce_fixed));
-		return BT_ACS_CP_RESPONSE_INVALID_OPERAND;
-	}
-
-	runtime->client_nonce_set = true;
-	LOG_DBG("Stored client nonce fixed for Key_ID 0x%04x (%u bytes)", key_id, fixed_size);
-
-	return BT_ACS_CP_RESPONSE_SUCCESS;
-}
-#endif /* BT_ACS_HAS_NONCE_FIXED */

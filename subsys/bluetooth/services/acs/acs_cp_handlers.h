@@ -85,22 +85,6 @@ struct acs_cp_sec_switch_req {
 int acs_sec_mgmt_set_security_switch(struct acs_reply *reply, struct net_buf_simple *buf);
 #endif /* CONFIG_BT_ACS_SET_SECURITY_CONTROLS_SWITCH */
 
-#if IS_ENABLED(CONFIG_BT_ACS_KEY_URI)
-/** @brief Get Key URI request operand (Table 4.57). */
-struct acs_cp_get_key_uri_req {
-	uint16_t key_id; /* little-endian */
-} __packed;
-
-/** @brief Key URI Response fixed header (Table 4.58). */
-struct acs_cp_key_uri_rsp_hdr {
-	uint16_t key_id; /* little-endian */
-			 /* uint8_t uri[uri_len] follows */
-} __packed;
-
-/** @brief Handle Get Key URI CP request (§4.4.3.15). */
-int acs_sec_mgmt_get_key_uri(struct acs_reply *reply, struct net_buf_simple *buf);
-#endif /* CONFIG_BT_ACS_KEY_URI */
-
 /** @brief Handle Get ACS Feature CP request (§4.4.3.16). */
 int acs_cp_handle_get_feature(struct acs_reply *reply, struct net_buf_simple *buf);
 

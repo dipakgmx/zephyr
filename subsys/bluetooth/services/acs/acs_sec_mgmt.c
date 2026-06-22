@@ -109,6 +109,22 @@ static void invalidate_kdf_child(struct bt_acs_conn *acs_conn)
 	acs_crypto_invalidate_algorithm_keys(acs_conn);
 	acs_conn->status_flags &= ~BT_ACS_STATUS_SECURITY_ESTABLISHED;
 }
+
+static void invalidate_kdf_and_notify(struct bt_acs_conn *acs_conn)
+{
+	invalidate_kdf_child(acs_conn);
+#if defined(CONFIG_BT_SETTINGS)
+	acs_session_store(acs_conn);
+#endif
+	{
+		const struct bt_acs_cb *cb = acs_cb_get();
+
+		if (cb && cb->security_invalidated) {
+			cb->security_invalidated(acs_conn->conn);
+		}
+	}
+	acs_status_indicate(acs_conn->conn);
+}
 #endif
 
 int acs_sec_mgmt_invalidate_key(struct acs_reply *reply, struct net_buf_simple *buf)
@@ -148,18 +164,7 @@ int acs_sec_mgmt_invalidate_key(struct acs_reply *reply, struct net_buf_simple *
 			 * Applicable" */
 			response_code = BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE;
 		} else {
-			invalidate_kdf_child(reply->conn);
-#if defined(CONFIG_BT_SETTINGS)
-			acs_session_store(reply->conn);
-#endif
-			{
-				const struct bt_acs_cb *cb = acs_cb_get();
-
-				if (cb && cb->security_invalidated) {
-					cb->security_invalidated(reply->conn->conn);
-				}
-			}
-			acs_status_indicate(reply->conn->conn);
+			invalidate_kdf_and_notify(reply->conn);
 			response_code = BT_ACS_CP_RESPONSE_SUCCESS;
 			LOG_DBG("KDF child key invalidated");
 		}
@@ -168,20 +173,7 @@ int acs_sec_mgmt_invalidate_key(struct acs_reply *reply, struct net_buf_simple *
 
 		ret = acs_crypto_key_runtime_lookup(reply->conn, ACS_KEY_ID_KDF, &kdf_key);
 		if (ret == 0 && kdf_key->psa_key_id != 0U) {
-			/* Algorithm keys (GCM, CCM, …) use the KDF child as their actual key
-			 * material.  Invalidating them is equivalent to invalidating the child. */
-			invalidate_kdf_child(reply->conn);
-#if defined(CONFIG_BT_SETTINGS)
-			acs_session_store(reply->conn);
-#endif
-			{
-				const struct bt_acs_cb *cb = acs_cb_get();
-
-				if (cb && cb->security_invalidated) {
-					cb->security_invalidated(reply->conn->conn);
-				}
-			}
-			acs_status_indicate(reply->conn->conn);
+			invalidate_kdf_and_notify(reply->conn);
 			response_code = BT_ACS_CP_RESPONSE_SUCCESS;
 			LOG_DBG("Algorithm key 0x%04x invalidated (KDF child destroyed, parent "
 				"retained)",
@@ -260,7 +252,7 @@ int acs_sec_mgmt_abort(struct acs_reply *reply)
 		return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE;
 	}
 
-	can_commit = !acs_conn->cp_tx.tx_in_flight;
+	can_commit = !acs_conn->indicate_tx.tx_in_flight;
 
 	if (!can_commit) {
 		if (reply->channel != ACS_REPLY_CP) {
@@ -313,61 +305,6 @@ int acs_sec_mgmt_set_security_switch(struct acs_reply *reply, struct net_buf_sim
 }
 
 #endif /* CONFIG_BT_ACS_SET_SECURITY_CONTROLS_SWITCH */
-
-#if IS_ENABLED(CONFIG_BT_ACS_KEY_URI)
-
-int acs_sec_mgmt_get_key_uri(struct acs_reply *reply, struct net_buf_simple *buf)
-{
-	struct acs_cp_get_key_uri_req key_uri_req;
-	struct acs_cp_key_uri_rsp_hdr *hdr;
-	const struct bt_acs_cb *cb;
-	struct net_buf_simple *rsp_buf;
-	uint8_t *uri_ptr;
-	uint16_t uri_max;
-	uint16_t uri_len;
-	uint16_t key_id;
-	int err;
-
-	/* Copy the packed operand out of the request buffer for aligned access. */
-	memcpy(&key_uri_req, net_buf_simple_pull_mem(buf, sizeof(key_uri_req)),
-	       sizeof(key_uri_req));
-	key_id = sys_le16_to_cpu(key_uri_req.key_id);
-	cb = acs_cb_get();
-
-	if (!cb || !cb->key_uri_get) {
-		LOG_WRN("Get Key URI for key_id=0x%04x but no callback is registered", key_id);
-		return BT_ACS_CP_RESPONSE_PARAMETER_OUT_OF_RANGE;
-	}
-
-	if (!reply->conn) {
-		LOG_ERR("Get Key URI for key_id=0x%04x with no ACS connection context", key_id);
-		return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED;
-	}
-
-	rsp_buf = &reply->response->b;
-
-	hdr = net_buf_simple_add(rsp_buf, sizeof(struct acs_cp_key_uri_rsp_hdr));
-	hdr->key_id = sys_cpu_to_le16(key_id);
-
-	uri_max = MIN(net_buf_simple_tailroom(rsp_buf), (uint16_t)CONFIG_BT_ACS_KEY_URI_MAX_LEN);
-	uri_ptr = rsp_buf->data + rsp_buf->len;
-	uri_len = 0;
-
-	err = cb->key_uri_get(reply->conn->conn, key_id, uri_ptr, uri_max, &uri_len);
-
-	if (err || uri_len == 0) {
-		LOG_DBG("key_uri_get key_id=0x%04x err=%d", key_id, err);
-		return BT_ACS_CP_RESPONSE_PARAMETER_OUT_OF_RANGE;
-	}
-
-	net_buf_simple_add(rsp_buf, uri_len);
-
-	LOG_DBG("Key URI response: key_id=0x%04x uri_len=%u", key_id, uri_len);
-
-	return ACS_CP_RESULT_STAGED_REPLY;
-}
-
-#endif /* CONFIG_BT_ACS_KEY_URI */
 
 #if IS_ENABLED(CONFIG_BT_ACS_INITIATE_PAIRING)
 

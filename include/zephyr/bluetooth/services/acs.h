@@ -85,10 +85,6 @@ enum bt_acs_cp_opcode {
 	BT_ACS_CP_OPCODE_ABORT = 0x15,
 	/** Sets the state of the security controls switch. */
 	BT_ACS_CP_OPCODE_SET_SECURITY_CONTROLS_SWITCH = 0x16,
-	/** Requests the URI that can be used to get the AC Server key. */
-	BT_ACS_CP_OPCODE_GET_KEY_URI = 0x17,
-	/** Used by the AC Server to provide the key URI. */
-	BT_ACS_CP_OPCODE_KEY_URI_RESPONSE = 0x18,
 	/** Requests the features and capabilities supported by the AC Server. */
 	BT_ACS_CP_OPCODE_GET_FEATURE = 0x19,
 	/** Used by the AC Server to provide the supported features and capabilities. */
@@ -301,8 +297,8 @@ struct bt_acs_rmap_char_reg {
  *   // sample_cts.c
  *   BT_ACS_RMAP_PROTECT_CHAR_IN_MAP(cts_current_time, 0x0001, BT_UUID_CTS_CURRENT_TIME,
  *       BT_ACS_RMAP_OP_ENTRY(BT_ACS_RMAP_OP_ATT_READ,   BT_ACS_ISC_ID_NONE),
- *       BT_ACS_RMAP_OP_ENTRY(BT_ACS_RMAP_OP_ATT_WRITE,  BT_ACS_ISC_ID_HIGH_SEC),
- *       BT_ACS_RMAP_OP_ENTRY(BT_ACS_RMAP_OP_ATT_NOTIFY, BT_ACS_ISC_ID_HIGH_SEC));
+ *       BT_ACS_RMAP_OP_ENTRY(BT_ACS_RMAP_OP_ATT_WRITE,  BT_ACS_ISC_ID_HIGH_SEC_GCM),
+ *       BT_ACS_RMAP_OP_ENTRY(BT_ACS_RMAP_OP_ATT_NOTIFY, BT_ACS_ISC_ID_HIGH_SEC_GCM));
  *
  *   // main.c — entries auto-discovered via iterable section
  *   BT_ACS_RESTRICTION_MAP_DEFINE(secured_map, .map_id = 0x0001, ...);
@@ -343,8 +339,8 @@ struct bt_acs_rmap_char_reg {
  * Example (multi-opcode CP — use the low-level macro directly):
  * @code
  *   BT_ACS_RMAP_PROTECT_CP_IN_MAP(dts_cp, 0x0001, BT_UUID_DTS_CONTROL_POINT,
- *       BT_ACS_RMAP_OP_ENTRY(0x01, BT_ACS_ISC_ID_HIGH_SEC),
- *       BT_ACS_RMAP_OP_ENTRY(0x03, BT_ACS_ISC_ID_HIGH_SEC));
+ *       BT_ACS_RMAP_OP_ENTRY(0x01, BT_ACS_ISC_ID_HIGH_SEC_GCM),
+ *       BT_ACS_RMAP_OP_ENTRY(0x03, BT_ACS_ISC_ID_HIGH_SEC_GCM));
  *
  *   // CP entries auto-discovered — no extra map fields needed:
  *   BT_ACS_RESTRICTION_MAP_DEFINE(secured_map, .map_id = 0x0001, ...);
@@ -371,38 +367,48 @@ struct bt_acs_rmap_char_reg {
 #endif
 
 /**
- * @name Well-known Information Security Configuration IDs
+ * @name Implementation-assigned Information Security Configuration IDs
  *
- * These ISC IDs correspond to the ISC records registered internally and
- * are the values passed as
- * @c _isc_id to BT_ACS_RMAP_OP_ENTRY() and the convenience macros below.
+ * Per ACS v1.0 §4.4.3.7, ISC IDs other than 0x0000 and 0xFFFF are
+ * implementation-specific and assigned by the AC Server.  The values
+ * below are this implementation's default assignments, registered via
+ * BT_ACS_ISC_DEFINE() in acs_isc.c.  Applications may override or
+ * extend them.
+ *
+ * Passed as @c _isc_id to BT_ACS_RMAP_OP_ENTRY() and the convenience
+ * macros.
  *
  * @{
  */
-/** No ISC required; resource is unprotected (Default_ISC = 0, §4.4.3.2). */
-#define BT_ACS_ISC_ID_NONE      0x0000
-/** High security: Nonce + Authenticated Encryption, optionally with explicit MAC for AES-CCM. */
-#define BT_ACS_ISC_ID_HIGH_SEC  0x0001
-/** Authentication only: Nonce + MAC (requires ECDH key exchange). */
-#define BT_ACS_ISC_ID_AUTH      0x0002
-/** Unencrypted fallback: no cryptographic protection (always present). */
-#define BT_ACS_ISC_ID_UNENC     0x0003
-/** Integrity + authentication, no confidentiality (GMAC). */
-#define BT_ACS_ISC_ID_INTEGRITY 0x0004
-/** MAC-only authentication, no nonce, no confidentiality (CMAC). */
-#define BT_ACS_ISC_ID_MAC_ONLY  0x0005
+/** ISC ID 0x0000: resource not protected by ACS (spec-defined, §3.5.2). */
+#define BT_ACS_ISC_ID_NONE         0x0000
+/** Nonce, Authenticated And Encrypted Protected Resource Request Or Response (AES-128-GCM). */
+#define BT_ACS_ISC_ID_HIGH_SEC_GCM   0x0001
+/** Nonce, Authenticated Protected Resource Request Or Response (ECDH-derived key). */
+#define BT_ACS_ISC_ID_AUTH            0x0002
+/** Unencrypted Protected Resource Request Or Response. */
+#define BT_ACS_ISC_ID_UNENC           0x0003
+/** Nonce, Authenticated Protected Resource Request Or Response, MAC (AES-128-GMAC). */
+#define BT_ACS_ISC_ID_INTEGRITY_GMAC  0x0004
+/** MAC (AES-128-CMAC). */
+#define BT_ACS_ISC_ID_MAC_ONLY_CMAC   0x0005
+/** Nonce, Authenticated And Encrypted Protected Resource Request Or Response (AES-128-CCM). */
+#define BT_ACS_ISC_ID_HIGH_SEC_CCM    0x0006
 
 /**
- * @brief Default ISC ID: best-available protection based on compiled algorithms.
+ * @brief Product-policy convenience macro: resolves to the strongest
+ * ISC ID available in this build.
  *
- * Resolves at compile time to the strongest available ISC record so applications
- * don't need to duplicate per-algorithm #if chains.  Priority (strongest first):
- *   CONFIDENTIALITY → HIGH_SEC, GMAC → INTEGRITY, AUTH → AUTH, else → UNENC.
+ * Not a spec concept — the client only sees the actual ISC IDs exposed
+ * through the ACS descriptors.  This macro lets applications avoid
+ * per-algorithm #if chains when a single "best available" ISC suffices.
  */
-#if IS_ENABLED(CONFIG_BT_ACS_FEAT_CONFIDENTIALITY)
-#define BT_ACS_ISC_ID_DEFAULT BT_ACS_ISC_ID_HIGH_SEC
+#if IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_GCM)
+#define BT_ACS_ISC_ID_DEFAULT BT_ACS_ISC_ID_HIGH_SEC_GCM
+#elif IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_CCM)
+#define BT_ACS_ISC_ID_DEFAULT BT_ACS_ISC_ID_HIGH_SEC_CCM
 #elif IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_GMAC)
-#define BT_ACS_ISC_ID_DEFAULT BT_ACS_ISC_ID_INTEGRITY
+#define BT_ACS_ISC_ID_DEFAULT BT_ACS_ISC_ID_INTEGRITY_GMAC
 #elif IS_ENABLED(CONFIG_BT_ACS_FEAT_AUTHENTICATION)
 #define BT_ACS_ISC_ID_DEFAULT BT_ACS_ISC_ID_AUTH
 #elif IS_ENABLED(CONFIG_BT_ACS_FEAT_AUTHORIZATION)
@@ -574,28 +580,6 @@ struct bt_acs_cb {
 	 */
 	int (*static_oob_get)(struct bt_conn *conn, uint8_t *oob_out, uint16_t *oob_len);
 
-#if IS_ENABLED(CONFIG_BT_ACS_KEY_URI)
-	/**
-	 * @brief Application provides the URI for a given key ID.
-	 *
-	 * Called when an AC Client sends opcode 0x17 (Get Key URI).
-	 * Write the URI string (UTF-8, no NUL terminator) into @p uri_buf
-	 * and set @p uri_len to the number of bytes written.
-	 *
-	 * Required when @kconfig{CONFIG_BT_ACS_KEY_URI} is enabled.
-	 *
-	 * @param conn        Connection object.
-	 * @param key_id      Key_ID from the Get Key URI request (host byte order).
-	 * @param uri_buf     Buffer to write the URI into.
-	 * @param uri_max_len Maximum bytes available in uri_buf
-	 *                    (= CONFIG_BT_ACS_KEY_URI_MAX_LEN).
-	 * @param uri_len     Set to actual URI byte count on return.
-	 * @return 0 on success, -ENOENT if this key_id has no URI
-	 *         (server will respond with Parameter Out Of Range).
-	 */
-	int (*key_uri_get)(struct bt_conn *conn, uint16_t key_id, uint8_t *uri_buf,
-			   uint16_t uri_max_len, uint16_t *uri_len);
-#endif /* CONFIG_BT_ACS_KEY_URI */
 };
 
 /**

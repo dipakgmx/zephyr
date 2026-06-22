@@ -99,9 +99,10 @@ static void cp_tx_done(struct bt_conn *bt_conn, const struct bt_gatt_attr *attr,
 
 #if IS_ENABLED(CONFIG_BT_ACS_FEAT_AUTHENTICATION)
 
-static int data_tx_encrypt_in_place(struct bt_acs_conn *acs_conn, uint16_t isc_id,
-				    struct net_buf *buf)
+static int data_tx_encrypt_in_place(struct acs_reply *reply, struct net_buf *buf)
 {
+	struct bt_acs_conn *acs_conn = reply->conn;
+	uint16_t isc_id = reply->isc_id;
 	uint8_t *plaintext;
 	uint16_t plain_len;
 	uint16_t cipher_len = 0;
@@ -226,9 +227,8 @@ static void data_tx_don_drain_work(struct k_work *work)
 			return;
 		}
 
-		err = acs_seg_notify_async_send(&acs_conn->notify_tx, acs_conn->conn,
-						acs_attr_don(), reply->response, don_tx_done,
-						reply);
+		err = acs_seg_tx_send(&acs_conn->notify_tx, acs_conn->conn, acs_attr_don(),
+				      reply->response, don_tx_done, reply);
 		if (!err) {
 			return;
 		}
@@ -279,7 +279,7 @@ static int data_tx_send_notify(struct acs_reply *reply)
 	acs_conn = reply->conn;
 	buf = reply->response;
 
-	err = data_tx_encrypt_in_place(acs_conn, reply->isc_id, buf);
+	err = data_tx_encrypt_in_place(reply, buf);
 	if (err) {
 		LOG_WRN("DON encrypt failed for handle 0x%04x: %d", reply->resource_handle, err);
 		return err;
@@ -397,7 +397,7 @@ static int data_tx_send_indicate(struct acs_reply *reply)
 	acs_conn = reply->conn;
 	buf = reply->response;
 
-	err = data_tx_encrypt_in_place(acs_conn, reply->isc_id, buf);
+	err = data_tx_encrypt_in_place(reply, buf);
 	if (err) {
 		LOG_WRN("DOI encrypt failed for handle 0x%04x: %d", reply->resource_handle, err);
 		return err;
@@ -418,7 +418,7 @@ int acs_reply_submit(struct acs_reply *reply)
 
 	switch (reply->channel) {
 	case ACS_REPLY_CP:
-		return acs_seg_tx_send(&reply->conn->cp_tx, reply->conn->conn, acs_attr_cp(),
+		return acs_seg_tx_send(&reply->conn->indicate_tx, reply->conn->conn, acs_attr_cp(),
 				       reply->response, cp_tx_done, reply);
 #if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_NOTIFICATION)
 	case ACS_REPLY_DON:
@@ -561,7 +561,7 @@ void acs_abort_commit(struct bt_acs_conn *conn)
 
 	conn->cp_abort_pending = false;
 
-	k_work_cancel_sync(&conn->cp_tx.tx_work, &sync);
+	k_work_cancel_sync(&conn->indicate_tx.tx_work, &sync);
 
 	if (acs_kex_in_progress(conn)) {
 		acs_key_exchange_abort(conn);

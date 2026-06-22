@@ -28,12 +28,13 @@
  */
 #define BT_ACS_ISC_ALL_RECORDS_FILTER 0xFFFF
 
-/* Named ISC record IDs (assigned by AC Server; registered via BT_ACS_ISC_DEFINE()) */
-#define ACS_ISC_ID_HIGH_SEC  0x0001 /**< Confidentiality + integrity + auth (GCM/CCM) */
-#define ACS_ISC_ID_AUTH      0x0002 /**< Auth-only: Nonce + MAC (ECDH required) */
-#define ACS_ISC_ID_UNENC     0x0003 /**< Unencrypted fallback (always present) */
-#define ACS_ISC_ID_INTEGRITY 0x0004 /**< Integrity + auth, no confidentiality (GMAC) */
-#define ACS_ISC_ID_MAC_ONLY  0x0005 /**< MAC-only authentication, no nonce (CMAC) */
+/* Implementation-assigned ISC IDs (§4.4.3.7: all non-zero, non-0xFFFF IDs are local). */
+#define ACS_ISC_ID_HIGH_SEC_GCM   0x0001 /**< Nonce, Auth-And-Encrypted (AES-128-GCM) */
+#define ACS_ISC_ID_AUTH           0x0002 /**< Nonce, Authenticated (ECDH-derived key) */
+#define ACS_ISC_ID_UNENC          0x0003 /**< Unencrypted Protected Resource */
+#define ACS_ISC_ID_INTEGRITY_GMAC 0x0004 /**< Nonce, Authenticated, MAC (AES-128-GMAC) */
+#define ACS_ISC_ID_MAC_ONLY_CMAC  0x0005 /**< MAC (AES-128-CMAC) */
+#define ACS_ISC_ID_HIGH_SEC_CCM   0x0006 /**< Nonce, Auth-And-Encrypted (AES-128-CCM) */
 
 /**
  * @brief ISC descriptor record header (Table 4.5 / §4.1.2).

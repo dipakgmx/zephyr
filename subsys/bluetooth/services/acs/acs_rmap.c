@@ -464,10 +464,10 @@ static void rmap_dump_entry(const char *kind, const struct bt_acs_rmap_protected
 		bt_uuid_to_str(uuid, uuid_str, sizeof(uuid_str));
 	}
 
-	LOG_DBG("rmap:   protected %s handle=0x%04x uuid=%s num_ops=%u", kind, p->resource_handle,
-		uuid_str, p->num_ops);
+	LOG_DBG("protected %s handle=0x%04x uuid=%s num_ops=%u", kind, p->resource_handle, uuid_str,
+		p->num_ops);
 	for (uint8_t j = 0; j < p->num_ops; j++) {
-		LOG_DBG("rmap:     op=0x%04x -> isc=0x%04x", p->ops[j].opcode, p->ops[j].isc_id);
+		LOG_DBG("  op=0x%04x -> isc=0x%04x", p->ops[j].opcode, p->ops[j].isc_id);
 	}
 }
 
@@ -495,7 +495,7 @@ int acs_rmap_resolve_handles(void)
 
 		if (handle == 0) {
 			bt_uuid_to_str(reg->char_uuid, uuid_str, sizeof(uuid_str));
-			LOG_WRN("rmap: could not resolve handle for char uuid=%s", uuid_str);
+			LOG_WRN("could not resolve handle for char uuid=%s", uuid_str);
 			failed++;
 		} else {
 			reg->entry->resource_handle = handle;
@@ -507,7 +507,7 @@ int acs_rmap_resolve_handles(void)
 
 		if (handle == 0) {
 			bt_uuid_to_str(reg->char_uuid, uuid_str, sizeof(uuid_str));
-			LOG_WRN("rmap: could not resolve handle for CP uuid=%s", uuid_str);
+			LOG_WRN("could not resolve handle for CP uuid=%s", uuid_str);
 			failed++;
 		} else {
 			reg->entry->resource_handle = handle;
@@ -515,12 +515,12 @@ int acs_rmap_resolve_handles(void)
 	}
 
 	if (failed > 0) {
-		LOG_ERR("rmap: %d resource(s) could not be resolved", failed);
+		LOG_ERR("%d resource(s) could not be resolved", failed);
 		return -ENOENT;
 	}
 
 	STRUCT_SECTION_FOREACH(bt_acs_restriction_map, map) {
-		LOG_DBG("rmap: map_id=0x%04x map_isc=0x%04x default_isc=0x%04x", map->map_id,
+		LOG_DBG("map_id=0x%04x map_isc=0x%04x default_isc=0x%04x", map->map_id,
 			map->map_isc_id, map->default_isc_id);
 
 		acs_rmap_foreach_char(map, rmap_dump_char_cb, NULL);

@@ -76,8 +76,10 @@ static void acs_kex_free(struct bt_acs_conn *acs_conn)
 		return;
 	}
 
+#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_ECDH)
 	acs_psa_destroy_key(&kex->ecdh_key_id);
 	acs_psa_destroy_key(&kex->derived_key_id);
+#endif
 
 	acs_conn->kex = NULL;
 	mbedtls_platform_zeroize(kex, sizeof(*kex));
@@ -403,7 +405,13 @@ int acs_derive_nonce_state(struct bt_acs_key_desc_runtime *runtime,
 			}
 		}
 		if (nonce_unset) {
-			sys_rand_get(runtime->server_nonce_fixed, prefix_size);
+			psa_status_t rand_status;
+
+			rand_status = psa_generate_random(runtime->server_nonce_fixed, prefix_size);
+			if (rand_status != PSA_SUCCESS) {
+				LOG_ERR("nonce fixed random generation failed: %d", rand_status);
+				return -EIO;
+			}
 			sys_mem_swap(runtime->server_nonce_fixed, prefix_size);
 		}
 	}
@@ -434,67 +442,66 @@ int acs_crypto_activate_key(struct bt_acs_conn *acs_conn,
  * Code=HMAC(ConfKey,Random). Coords supplied in LE (wire format); reversed to BE internally. Pass
  * NULL for Y on Curve25519.
  */
-static int acs_ecdh_confirm_code_compute(const uint8_t *server_x_le, const uint8_t *server_y_le,
-					 const uint8_t *client_x_le, const uint8_t *client_y_le,
-					 size_t coord_size, const uint8_t *ecdh_key,
-					 size_t ecdh_key_len,
+static int acs_ecdh_confirm_code_compute(struct bt_acs_kex_ctx *kex, const uint8_t *server_x_le,
+					 const uint8_t *server_y_le, const uint8_t *client_x_le,
+					 const uint8_t *client_y_le, size_t coord_size,
+					 const uint8_t *ecdh_key, size_t ecdh_key_len,
 					 const uint8_t auth_value[ACS_CONFIRM_VALUE_SIZE],
 					 const uint8_t random[ACS_CONFIRM_VALUE_SIZE],
 					 uint8_t confirm_out[ACS_CONFIRM_VALUE_SIZE])
 {
 	int ret;
 	const uint8_t zero_key[PSA_HASH_LENGTH(PSA_ALG_SHA_256)] = {0};
-	uint8_t salt[PSA_HASH_LENGTH(PSA_ALG_SHA_256)];
-	uint8_t pubkey_concat[CONFIG_BT_ACS_ECDH_COORD_SIZE * 4];
 	size_t pubkey_concat_len = 0;
-	uint8_t confirmation_key[PSA_HASH_LENGTH(PSA_ALG_SHA_256)];
-	uint8_t ecdh_auth[CONFIG_BT_ACS_ECDH_COORD_SIZE + ACS_CONFIRM_VALUE_SIZE];
 
 	/* Step 1: Salt = HMAC(Zero, PKsx_BE||PKsy_BE||PKcx_BE||PKcy_BE) */
-	sys_memcpy_swap(&pubkey_concat[pubkey_concat_len], server_x_le, coord_size);
+	sys_memcpy_swap(&kex->confirm_pubkey_concat[pubkey_concat_len], server_x_le, coord_size);
 	pubkey_concat_len += coord_size;
 
 	if (server_y_le != NULL) {
-		sys_memcpy_swap(&pubkey_concat[pubkey_concat_len], server_y_le, coord_size);
+		sys_memcpy_swap(&kex->confirm_pubkey_concat[pubkey_concat_len], server_y_le,
+				coord_size);
 		pubkey_concat_len += coord_size;
 	}
 
-	sys_memcpy_swap(&pubkey_concat[pubkey_concat_len], client_x_le, coord_size);
+	sys_memcpy_swap(&kex->confirm_pubkey_concat[pubkey_concat_len], client_x_le, coord_size);
 	pubkey_concat_len += coord_size;
 
 	if (client_y_le != NULL) {
-		sys_memcpy_swap(&pubkey_concat[pubkey_concat_len], client_y_le, coord_size);
+		sys_memcpy_swap(&kex->confirm_pubkey_concat[pubkey_concat_len], client_y_le,
+				coord_size);
 		pubkey_concat_len += coord_size;
 	}
 
-	ret = acs_hmac_sha256(zero_key, sizeof(zero_key), pubkey_concat, pubkey_concat_len, salt);
+	ret = acs_hmac_sha256(zero_key, sizeof(zero_key), kex->confirm_pubkey_concat,
+			      pubkey_concat_len, kex->confirm_salt);
 	if (ret != 0) {
 		LOG_ERR("HMAC-SHA-256 failed in deriving confirmation salt: %d", ret);
 		goto cleanup;
 	}
 
 	/* Step 2: ConfirmationKey = HMAC(Salt, ECDHKey || AuthValue) */
-	memcpy(&ecdh_auth[0], ecdh_key, ecdh_key_len);
-	memcpy(&ecdh_auth[ecdh_key_len], auth_value, ACS_CONFIRM_VALUE_SIZE);
+	memcpy(&kex->confirm_ecdh_auth[0], ecdh_key, ecdh_key_len);
+	memcpy(&kex->confirm_ecdh_auth[ecdh_key_len], auth_value, ACS_CONFIRM_VALUE_SIZE);
 
-	ret = acs_hmac_sha256(salt, sizeof(salt), ecdh_auth, ecdh_key_len + ACS_CONFIRM_VALUE_SIZE,
-			      confirmation_key);
+	ret = acs_hmac_sha256(kex->confirm_salt, sizeof(kex->confirm_salt), kex->confirm_ecdh_auth,
+			      ecdh_key_len + ACS_CONFIRM_VALUE_SIZE, kex->confirm_key);
 	if (ret != 0) {
 		LOG_ERR("HMAC-SHA-256 failed in deriving confirmation key: %d", ret);
 		goto cleanup;
 	}
 
 	/** Step 3: ConfirmationCode = HMAC(ConfirmationKey, RandomNumber) **/
-	ret = acs_hmac_sha256(confirmation_key, sizeof(confirmation_key), random,
+	ret = acs_hmac_sha256(kex->confirm_key, sizeof(kex->confirm_key), random,
 			      ACS_CONFIRM_VALUE_SIZE, confirm_out);
 	if (ret != 0) {
 		LOG_ERR("HMAC-SHA-256 failed in deriving confirmation code: %d", ret);
 	}
 
 cleanup:
-	mbedtls_platform_zeroize(salt, sizeof(salt));
-	mbedtls_platform_zeroize(confirmation_key, sizeof(confirmation_key));
-	mbedtls_platform_zeroize(ecdh_auth, sizeof(ecdh_auth));
+	mbedtls_platform_zeroize(kex->confirm_salt, sizeof(kex->confirm_salt));
+	mbedtls_platform_zeroize(kex->confirm_key, sizeof(kex->confirm_key));
+	mbedtls_platform_zeroize(kex->confirm_ecdh_auth, sizeof(kex->confirm_ecdh_auth));
 	return ret;
 }
 
@@ -778,7 +785,16 @@ int acs_key_exchange_ecdh_confirm_code(struct bt_acs_conn *acs_conn, struct net_
 		return err;
 	}
 
-	sys_rand_get(acs_conn->kex->server_random, sizeof(acs_conn->kex->server_random));
+	{
+		psa_status_t rand_status;
+
+		rand_status = psa_generate_random(acs_conn->kex->server_random,
+						  sizeof(acs_conn->kex->server_random));
+		if (rand_status != PSA_SUCCESS) {
+			LOG_ERR("server random generation failed: %d", rand_status);
+			return -EIO;
+		}
+	}
 
 	{
 		psa_status_t status;
@@ -791,7 +807,7 @@ int acs_key_exchange_ecdh_confirm_code(struct bt_acs_conn *acs_conn, struct net_
 		}
 	}
 
-	err = acs_ecdh_confirm_code_compute(acs_conn->kex->server_pubkey.x,
+	err = acs_ecdh_confirm_code_compute(acs_conn->kex, acs_conn->kex->server_pubkey.x,
 #if CONFIG_BT_ACS_ECDH_HAS_Y
 					    acs_conn->kex->server_pubkey.y,
 #else
@@ -865,7 +881,7 @@ int acs_key_exchange_ecdh_confirm_rand(struct bt_acs_conn *acs_conn,
 		return -EINVAL;
 	}
 
-	err = acs_ecdh_confirm_code_compute(acs_conn->kex->server_pubkey.x,
+	err = acs_ecdh_confirm_code_compute(acs_conn->kex, acs_conn->kex->server_pubkey.x,
 #if CONFIG_BT_ACS_ECDH_HAS_Y
 					    acs_conn->kex->server_pubkey.y,
 #else

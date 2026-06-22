@@ -16,6 +16,7 @@
 #include <psa/crypto.h>
 
 #include "acs_internal.h"
+#include "acs_cp.h"
 #include "acs_isc.h"
 #include "acs_key_desc.h"
 #include "acs_crypto.h"
@@ -107,9 +108,7 @@ void acs_crypto_init_slots(struct bt_acs_conn *acs_conn)
 		}
 
 		if (slot >= ACS_KEY_RUNTIME_COUNT) {
-			LOG_ERR("No runtime slot for algorithm record Key_ID 0x%04x - raise "
-				"CONFIG_BT_ACS_MAX_NONCE_RECORDS",
-				rec->key_id);
+			LOG_ERR("No runtime slot for algorithm record Key_ID 0x%04x", rec->key_id);
 			break;
 		}
 		runtime = &acs_conn->crypto.key_runtimes[slot++];
@@ -231,7 +230,14 @@ int acs_crypto_get_server_nonce_fixed(struct bt_acs_conn *acs_conn, uint16_t key
 			}
 		}
 		if (nonce_unset) {
-			sys_rand_get(key_desc_runtime->server_nonce_fixed, fixed_size);
+			psa_status_t rand_status;
+
+			rand_status = psa_generate_random(key_desc_runtime->server_nonce_fixed,
+							  fixed_size);
+			if (rand_status != PSA_SUCCESS) {
+				LOG_ERR("nonce fixed random generation failed: %d", rand_status);
+				return -EIO;
+			}
 			sys_mem_swap(key_desc_runtime->server_nonce_fixed, fixed_size);
 		}
 	}
@@ -678,7 +684,7 @@ void acs_crypto_release_exchange_keys(struct bt_acs_conn *acs_conn)
  * rebind paths so the copy target matches the imported policy exactly.
  */
 static int acs_crypto_set_record_key_policy(psa_key_attributes_t *attrs,
-					    const struct bt_acs_key_desc_runtime *key_desc_runtime,
+					    struct bt_acs_key_desc_runtime *key_desc_runtime,
 					    psa_key_usage_t usage)
 {
 	switch (key_desc_runtime->key_desc->type_id) {
@@ -686,9 +692,9 @@ static int acs_crypto_set_record_key_policy(psa_key_attributes_t *attrs,
 	case ACS_KEY_REC_AES_128_CCM:
 		psa_set_key_usage_flags(attrs,
 					PSA_KEY_USAGE_ENCRYPT | PSA_KEY_USAGE_DECRYPT | usage);
-		psa_set_key_algorithm(
-			attrs, PSA_ALG_AEAD_WITH_SHORTENED_TAG(
-				       PSA_ALG_CCM, key_desc_runtime->key_desc->aes.mac_size));
+		key_desc_runtime->psa_alg = PSA_ALG_AEAD_WITH_SHORTENED_TAG(
+			PSA_ALG_CCM, key_desc_runtime->key_desc->aes.mac_size);
+		psa_set_key_algorithm(attrs, key_desc_runtime->psa_alg);
 		break;
 #endif
 #if IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_GCM) ||                                           \
@@ -697,16 +703,17 @@ static int acs_crypto_set_record_key_policy(psa_key_attributes_t *attrs,
 	case ACS_KEY_REC_AES_128_GMAC:
 		psa_set_key_usage_flags(attrs,
 					PSA_KEY_USAGE_ENCRYPT | PSA_KEY_USAGE_DECRYPT | usage);
-		psa_set_key_algorithm(
-			attrs, PSA_ALG_AEAD_WITH_SHORTENED_TAG(
-				       PSA_ALG_GCM, key_desc_runtime->key_desc->aes.mac_size));
+		key_desc_runtime->psa_alg = PSA_ALG_AEAD_WITH_SHORTENED_TAG(
+			PSA_ALG_GCM, key_desc_runtime->key_desc->aes.mac_size);
+		psa_set_key_algorithm(attrs, key_desc_runtime->psa_alg);
 		break;
 #endif
 #if IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_CMAC)
 	case ACS_KEY_REC_AES_128_CMAC:
 		psa_set_key_usage_flags(attrs, PSA_KEY_USAGE_SIGN_MESSAGE |
 						       PSA_KEY_USAGE_VERIFY_MESSAGE | usage);
-		psa_set_key_algorithm(attrs, PSA_ALG_CMAC);
+		key_desc_runtime->psa_alg = PSA_ALG_CMAC;
+		psa_set_key_algorithm(attrs, key_desc_runtime->psa_alg);
 		break;
 #endif
 	default:
@@ -822,3 +829,95 @@ void acs_crypto_invalidate_algorithm_keys(struct bt_acs_conn *acs_conn)
 		runtime->rx_nonce_counter = 0U;
 	}
 }
+
+#if IS_ENABLED(CONFIG_BT_ACS_HAS_NONCE_FIXED)
+static bool acs_client_nonce_fixed_is_unique(struct bt_acs_conn *acs_conn,
+					     const struct bt_acs_key_desc_runtime *runtime,
+					     uint8_t fixed_size)
+{
+	for (size_t i = ACS_KEY_ID_COUNT; i < ACS_KEY_RUNTIME_COUNT; i++) {
+		const struct bt_acs_key_desc_runtime *other = &acs_conn->crypto.key_runtimes[i];
+		if (!other->key_desc) {
+			continue;
+		}
+		if (acs_key_desc_nonce_fixed_size(other->key_desc) != fixed_size) {
+			continue;
+		}
+		if (memcmp(runtime->client_nonce_fixed, other->server_nonce_fixed, fixed_size) ==
+		    0) {
+			return false;
+		}
+		if (other != runtime && other->client_nonce_set &&
+		    memcmp(runtime->client_nonce_fixed, other->client_nonce_fixed, fixed_size) ==
+			    0) {
+			return false;
+		}
+	}
+	return true;
+}
+
+int acs_cp_handle_set_client_nonce_fixed(struct acs_reply *reply, struct net_buf_simple *buf)
+{
+	struct bt_acs_conn *acs_conn = reply->conn;
+	const struct bt_acs_key_desc_record *key_desc;
+	struct bt_acs_key_desc_runtime *runtime;
+	uint16_t key_id;
+	uint8_t fixed_size;
+
+	if (!acs_conn) {
+		LOG_ERR("Request to set client nonce fixed received for unknown connection");
+		return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED;
+	}
+	key_id = sys_get_le16(buf->data);
+	key_desc = acs_key_desc_lookup(key_id);
+	if (!key_desc) {
+		LOG_WRN("Set client nonce fixed: unknown Key_ID 0x%04x", key_id);
+		return BT_ACS_CP_RESPONSE_PARAMETER_OUT_OF_RANGE;
+	}
+
+	if (!acs_key_desc_has_nonce_record(key_desc) ||
+	    key_desc->aes.nonce_type != ACS_NONCE_SEQ_DIFF_FIXED) {
+		LOG_WRN("Set client nonce fixed: Key_ID 0x%04x does not support SEQ_DIFF_FIXED",
+			key_id);
+		return BT_ACS_CP_RESPONSE_OPCODE_NOT_SUPPORTED;
+	}
+
+	/* §4.4.3.18: reject while key exchange is ongoing or already successful. */
+	if (acs_kex_in_progress(acs_conn)) {
+		LOG_WRN("Set client nonce fixed: key exchange active");
+		return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE;
+	}
+
+	if (acs_crypto_key_runtime_lookup(acs_conn, key_id, &runtime) != 0) {
+		return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED;
+	}
+
+	if (runtime->psa_key_id != 0U) {
+		LOG_WRN("Set client nonce fixed: Key_ID 0x%04x already has an active key", key_id);
+		return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE;
+	}
+
+	fixed_size = acs_key_desc_nonce_fixed_size(key_desc);
+	if (buf->len != sizeof(struct acs_cp_set_client_nonce_fixed_req) + fixed_size) {
+		LOG_WRN("Set client nonce fixed: size mismatch (got %u, expected %u)", buf->len,
+			(unsigned int)(sizeof(struct acs_cp_set_client_nonce_fixed_req) +
+				       fixed_size));
+		return BT_ACS_CP_RESPONSE_INVALID_OPERAND;
+	}
+
+	memcpy(runtime->client_nonce_fixed,
+	       buf->data + sizeof(struct acs_cp_set_client_nonce_fixed_req), fixed_size);
+	sys_mem_swap(runtime->client_nonce_fixed, fixed_size);
+
+	if (!acs_client_nonce_fixed_is_unique(acs_conn, runtime, fixed_size)) {
+		LOG_WRN("Set client nonce fixed: value collides with existing nonce fixed");
+		memset(runtime->client_nonce_fixed, 0, sizeof(runtime->client_nonce_fixed));
+		return BT_ACS_CP_RESPONSE_INVALID_OPERAND;
+	}
+
+	runtime->client_nonce_set = true;
+	LOG_DBG("Stored client nonce fixed for Key_ID 0x%04x (%u bytes)", key_id, fixed_size);
+
+	return BT_ACS_CP_RESPONSE_SUCCESS;
+}
+#endif /* BT_ACS_HAS_NONCE_FIXED */

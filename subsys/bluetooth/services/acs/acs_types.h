@@ -136,6 +136,8 @@ struct bt_acs_key_desc_runtime {
 	psa_key_id_t psa_key_id;
 	/** Derivation-capable twin for exchange-key slots. */
 	psa_key_id_t derive_key_id;
+	/** Cached PSA algorithm for this record's encrypt/decrypt ops (0 for exchange keys). */
+	psa_algorithm_t psa_alg;
 	/** AC Server nonce fixed value for this Key_ID (runtime order for nonce build). */
 	uint8_t server_nonce_fixed[ACS_MAX_NONCE_FIXED_SIZE];
 	/** AC Client nonce fixed value for this Key_ID (runtime order for nonce build). */
@@ -155,8 +157,15 @@ acs_key_desc_runtime_key_id(const struct bt_acs_key_desc_runtime *key_desc_runti
 								: 0U;
 }
 
+/** Number of algorithm-record runtime slots derived from enabled algorithms. */
+#define ACS_ALGO_RECORD_COUNT                                                                      \
+	(IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_GCM) +                                       \
+	 IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_CCM) +                                       \
+	 IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_GMAC) +                                      \
+	 IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_CMAC))
+
 /** Total unified key-runtime slots: exchange keys + algorithm records. */
-#define ACS_KEY_RUNTIME_COUNT (ACS_KEY_ID_COUNT + CONFIG_BT_ACS_MAX_NONCE_RECORDS)
+#define ACS_KEY_RUNTIME_COUNT (ACS_KEY_ID_COUNT + ACS_ALGO_RECORD_COUNT)
 
 /**
  * @brief Persistent per-connection ACS crypto state.
@@ -231,14 +240,20 @@ struct bt_acs_kex_ctx {
 #if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_ECDH) || IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_KDF)
 	struct bt_acs_kdf_params kdf; /**< KDF parameters (Table 4.76) */
 #endif
+	struct acs_cp_start_key_exchange_req start_kex; /**< Cached START_KEY_EXCHANGE operand */
+#if IS_ENABLED(CONFIG_BT_ACS_KEY_EXCHANGE_ECDH)
 	struct acs_ecdh_pubkey server_pubkey; /**< Server ephemeral public key */
 	struct acs_ecdh_pubkey client_pubkey; /**< Client public key */
 	psa_key_id_t ecdh_key_id;    /**< PSA key identifier for the server ephemeral private key */
 	psa_key_id_t derived_key_id; /**< PSA key for shared secret / ECDHKey (never in app RAM) */
-	struct acs_cp_start_key_exchange_req start_kex; /**< Cached START_KEY_EXCHANGE operand */
 	uint8_t auth_value[ACS_CONFIRM_VALUE_SIZE];     /**< AuthValue (confirmation number) */
 	uint8_t server_random[ACS_CONFIRM_VALUE_SIZE];  /**< Server random nonce */
 	uint8_t client_confirm[ACS_CONFIRM_VALUE_SIZE]; /**< Client confirmation code */
+	uint8_t confirm_pubkey_concat[CONFIG_BT_ACS_ECDH_COORD_SIZE * 4];
+	uint8_t confirm_ecdh_auth[CONFIG_BT_ACS_ECDH_COORD_SIZE + ACS_CONFIRM_VALUE_SIZE];
+	uint8_t confirm_salt[ACS_CONFIRM_VALUE_SIZE];
+	uint8_t confirm_key[ACS_CONFIRM_VALUE_SIZE];
+#endif
 };
 
 /** Resolved request access kind for a protected characteristic request. */
@@ -264,14 +279,14 @@ enum acs_req_access {
 struct acs_reply {
 	sys_snode_t node;               /**< TX queue linkage */
 	struct bt_acs_conn *conn;       /**< Owning connection (always valid while allocated) */
-	bool aborted;                   /**< Set by abort_all, checked by completion cb */
-	enum acs_reply_channel channel; /**< ACS_REPLY_CP / DOI / DON */
-	enum acs_reply_step step;       /**< What to do after current indication confirms */
-	uint16_t resource_handle;       /**< 0 for plain CP */
-	uint16_t isc_id;                /**< 0 for plain CP */
-	enum acs_req_access access;     /**< Read/write for protected char requests */
 	struct net_buf *request;        /**< Decrypted input (NULL for plain CP) */
 	struct net_buf *response;       /**< Staged reply buffer */
+	enum acs_req_access access;     /**< Read/write for protected char requests */
+	enum acs_reply_channel channel; /**< ACS_REPLY_CP / DOI / DON */
+	enum acs_reply_step step;       /**< What to do after current indication confirms */
+	bool aborted;                   /**< Set by abort_all, checked by completion cb */
+	uint16_t resource_handle;       /**< 0 for plain CP */
+	uint16_t isc_id;                /**< 0 for plain CP */
 };
 
 /**
@@ -285,33 +300,24 @@ struct bt_acs_conn {
 	struct bt_acs_kex_ctx *kex;          /**< In-progress key exchange, NULL when idle */
 	uint8_t status_data[3];              /**< Embedded status indication payload */
 	struct bt_gatt_indicate_params status_indicate_params; /**< Status indication params */
-
 	atomic_t cp_locked;    /**< Plain-CP busy gate: 1 while a procedure is active */
 	bool cp_abort_pending; /**< Plain-CP deferred-abort flag (indication in flight) */
-
 	struct acs_reply replies[ACS_REPLY_SLOTS]; /**< Per-connection reply pool */
 	atomic_t reply_in_use[ACS_REPLY_SLOTS];    /**< Allocation flags for reply pool */
-
-	atomic_ptr_t pending_continue;     /**< Reply awaiting continuation */
-	struct k_work reply_continue_work; /**< Deferred continuation handler */
-
-	struct acs_seg_tx_ctx cp_tx; /**< Plain CP indication transport context */
-#if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_NOTIFICATION)
-	struct acs_seg_notify_ctx notify_tx; /**< DON notification segmentation context */
-#endif
-#if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION)
-	struct acs_seg_tx_ctx indicate_tx; /**< DOI indication segmentation context */
-#endif
-	struct acs_seg_rx_ctx cp_rx;   /**< CP path RX reassembly context */
-	struct acs_seg_rx_ctx data_rx; /**< Data In path RX reassembly context */
-	struct k_fifo request_fifo;    /**< Pending protected request FIFO */
-	struct k_work request_work;    /**< Protected request dispatch worker */
+	atomic_ptr_t pending_continue;             /**< Reply awaiting continuation */
+	struct k_work reply_continue_work;         /**< Deferred continuation handler */
+	struct acs_seg_tx_ctx indicate_tx; /**< Shared indication context (plain CP + DOI) */
+	struct acs_seg_rx_ctx cp_rx;       /**< CP path RX reassembly context */
+	struct acs_seg_rx_ctx data_rx;     /**< Data In path RX reassembly context */
+	struct k_fifo request_fifo;        /**< Pending protected request FIFO */
+	struct k_work request_work;        /**< Protected request dispatch worker */
 #if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_INDICATION)
 	struct k_fifo tx_indicate_fifo; /**< Pending Data Out Indicate response FIFO */
 	struct k_work doi_drain_work;   /**< DOI drain worker */
 	atomic_ptr_t active_indication; /**< Currently in-flight DOI response slot */
 #endif
 #if IS_ENABLED(CONFIG_BT_ACS_PROTECTED_RESOURCE_NOTIFICATION)
+	struct acs_seg_tx_ctx notify_tx;  /**< DON notification segmentation context */
 	struct k_fifo tx_notify_fifo;     /**< Pending Data Out Notify response FIFO */
 	struct k_work don_drain_work;     /**< DON drain worker */
 	atomic_ptr_t active_notification; /**< Currently in-flight DON response slot */

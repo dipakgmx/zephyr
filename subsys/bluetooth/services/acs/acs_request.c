@@ -56,7 +56,7 @@ static int acs_auto_respond(struct acs_reply *reply)
 	bt_gatt_foreach_attr(resource_handle - 1U, resource_handle, acs_find_char_attrs_cb, &ctx);
 
 	if (!ctx.value) {
-		LOG_WRN("auto_respond: no GATT attr at handle 0x%04x", resource_handle);
+		LOG_WRN("no GATT attr at handle 0x%04x", resource_handle);
 		return -ENOENT;
 	}
 
@@ -71,7 +71,7 @@ static int acs_auto_respond(struct acs_reply *reply)
 		}
 		ssize_t written = ctx.value->write(conn, ctx.value, data, len, 0, 0);
 		if (written < 0) {
-			LOG_ERR("auto_respond: write handler error %d", (int)written);
+			LOG_ERR("write handler error %d", (int)written);
 			return written;
 		}
 	}
@@ -81,7 +81,7 @@ static int acs_auto_respond(struct acs_reply *reply)
 		struct net_buf *rsp_buf = acs_prepare_reply_buf(reply);
 
 		if (!rsp_buf) {
-			LOG_ERR("auto_respond: response pool exhausted "
+			LOG_ERR("response pool exhausted "
 				"(handle 0x%04x)",
 				resource_handle);
 			return -ENOMEM;
@@ -89,7 +89,7 @@ static int acs_auto_respond(struct acs_reply *reply)
 
 		if (props & BT_GATT_CHRC_READ) {
 			if (!ctx.value->read) {
-				LOG_WRN("auto_respond: attr 0x%04x has no read "
+				LOG_WRN("attr 0x%04x has no read "
 					"handler",
 					resource_handle);
 				return -ENOTSUP;
@@ -98,7 +98,7 @@ static int acs_auto_respond(struct acs_reply *reply)
 			n = ctx.value->read(conn, ctx.value, net_buf_tail(rsp_buf),
 					    net_buf_tailroom(rsp_buf), 0);
 			if (n < 0) {
-				LOG_ERR("auto_respond: read handler error %d", (int)n);
+				LOG_ERR("read handler error %d", (int)n);
 				return n;
 			}
 

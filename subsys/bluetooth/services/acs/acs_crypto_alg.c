@@ -19,12 +19,6 @@ LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
 
 BUILD_ASSERT(CONFIG_BT_ACS_SESSION_KEY_SIZE == 16, "AES-128 session key fixed at 16 bytes");
 
-#if IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_CCM)
-#define ACS_AEAD_BASE_ALG PSA_ALG_CCM
-#elif IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_GCM)
-#define ACS_AEAD_BASE_ALG PSA_ALG_GCM
-#endif
-
 #if IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_CMAC)
 #define ACS_PSA_CMAC_TAG_LEN ACS_CRYPTO_AUTH_TAG_SIZE
 #endif
@@ -86,9 +80,8 @@ static int acs_crypto_aead_encrypt(struct bt_acs_key_desc_runtime *key_desc_runt
 
 	acs_build_record_tx_nonce(key_desc_runtime, nonce);
 
-	status = psa_aead_encrypt(key_desc_runtime->psa_key_id,
-				  PSA_ALG_AEAD_WITH_SHORTENED_TAG(ACS_AEAD_BASE_ALG, tag_len),
-				  nonce, nonce_size, NULL, 0, plaintext, plain_len, ciphertext,
+	status = psa_aead_encrypt(key_desc_runtime->psa_key_id, key_desc_runtime->psa_alg, nonce,
+				  nonce_size, NULL, 0, plaintext, plain_len, ciphertext,
 				  plain_len + tag_len, &out_len);
 	if (status != PSA_SUCCESS) {
 		LOG_ERR("encrypt failed: status=%d, len=%u, tx_nonce_counter=0x%016llx", status,
@@ -125,10 +118,9 @@ static int acs_crypto_aead_decrypt(struct bt_acs_key_desc_runtime *key_desc_runt
 	}
 
 	acs_build_record_rx_nonce(key_desc_runtime, nonce);
-	status = psa_aead_decrypt(key_desc_runtime->psa_key_id,
-				  PSA_ALG_AEAD_WITH_SHORTENED_TAG(ACS_AEAD_BASE_ALG, tag_len),
-				  nonce, nonce_size, aad, aad_len, ciphertext, cipher_len,
-				  plaintext, cipher_len - tag_len, &out_len);
+	status = psa_aead_decrypt(key_desc_runtime->psa_key_id, key_desc_runtime->psa_alg, nonce,
+				  nonce_size, aad, aad_len, ciphertext, cipher_len, plaintext,
+				  cipher_len - tag_len, &out_len);
 	if (status != PSA_SUCCESS) {
 		LOG_ERR("decrypt failed: %d (cipher_len=%u tag_len=%u nonce_len=%u aad_len=%u "
 			"rx_nonce_counter=%llu)",
