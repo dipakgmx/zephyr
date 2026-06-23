@@ -184,6 +184,7 @@ static int data_tx_encrypt_in_place(struct acs_reply *reply, struct net_buf *buf
 		memmove(plaintext + auth_tag_size, plaintext, plain_len);
 		memcpy(plaintext, tag_tmp, auth_tag_size);
 	}
+	net_buf_add(buf, auth_tag_size);
 
 	uint8_t *hdr = net_buf_push(buf, nonce_var_size + sizeof(uint16_t));
 	uint8_t *nonce_dst = hdr + sizeof(uint16_t);
