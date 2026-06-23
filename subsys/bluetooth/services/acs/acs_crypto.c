@@ -420,32 +420,17 @@ int acs_crypto_compute_shared_secret(struct bt_acs_conn *acs_conn)
 #endif /* IS_ENABLED(CONFIG_BT_ACS_ANY_KEY_EXCHANGE) */
 
 /*
- * Apply the exchange-key PSA policy (type, algorithm, usage) for the build's
- * configured data-protection algorithm.  Shared by the import and the
- * persistence copy paths so the copy target can never drift from the imported
- * key's policy - psa_copy_key requires a common permitted algorithm.
+ * Apply the exchange-key PSA policy.  The exchange key is AES-128 material
+ * that exists to be exported and re-imported with per-record algorithm
+ * policies in acs_crypto_bind_algorithm_keys().  It carries no algorithm
+ * constraint itself — each child record sets its own algorithm at import.
+ * Persistence copies (psa_copy_key between exchange keys) work because both
+ * sides share this same PSA_ALG_NONE policy.
  */
 static void acs_crypto_set_exchange_key_policy(psa_key_attributes_t *attrs, psa_key_usage_t usage)
 {
-#if IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_CMAC)
-	psa_set_key_usage_flags(attrs,
-				PSA_KEY_USAGE_SIGN_MESSAGE | PSA_KEY_USAGE_VERIFY_MESSAGE | usage);
-	psa_set_key_algorithm(attrs, PSA_ALG_CMAC);
-#elif IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_CCM)
-	psa_set_key_usage_flags(attrs, PSA_KEY_USAGE_ENCRYPT | PSA_KEY_USAGE_DECRYPT | usage);
-	psa_set_key_algorithm(
-		attrs, PSA_ALG_AEAD_WITH_SHORTENED_TAG(PSA_ALG_CCM, CONFIG_BT_ACS_CCM_MAC_SIZE));
-#elif IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_GMAC)
-	psa_set_key_usage_flags(attrs, PSA_KEY_USAGE_ENCRYPT | PSA_KEY_USAGE_DECRYPT | usage);
-	psa_set_key_algorithm(attrs, PSA_ALG_AEAD_WITH_SHORTENED_TAG(
-					     PSA_ALG_GCM, PSA_AEAD_TAG_LENGTH(PSA_KEY_TYPE_AES, 128,
-									      PSA_ALG_GCM)));
-#else
-	psa_set_key_usage_flags(attrs, PSA_KEY_USAGE_ENCRYPT | PSA_KEY_USAGE_DECRYPT | usage);
-	psa_set_key_algorithm(attrs, PSA_ALG_AEAD_WITH_SHORTENED_TAG(
-					     PSA_ALG_GCM, PSA_AEAD_TAG_LENGTH(PSA_KEY_TYPE_AES, 128,
-									      PSA_ALG_GCM)));
-#endif
+	psa_set_key_usage_flags(attrs, usage);
+	psa_set_key_algorithm(attrs, PSA_ALG_NONE);
 	psa_set_key_type(attrs, PSA_KEY_TYPE_AES);
 }
 
@@ -763,6 +748,9 @@ int acs_crypto_bind_algorithm_keys(struct bt_acs_conn *acs_conn,
 				   struct bt_acs_key_desc_runtime *parent)
 {
 	uint16_t parent_key_id;
+	uint8_t key_material[CONFIG_BT_ACS_SESSION_KEY_SIZE];
+	size_t key_len;
+	psa_status_t status;
 
 	__ASSERT_NO_MSG(acs_conn != NULL);
 	__ASSERT_NO_MSG(parent != NULL);
@@ -770,41 +758,47 @@ int acs_crypto_bind_algorithm_keys(struct bt_acs_conn *acs_conn,
 
 	parent_key_id = acs_key_desc_runtime_key_id(parent);
 
+	status = psa_export_key(parent->psa_key_id, key_material, sizeof(key_material), &key_len);
+	if (status != PSA_SUCCESS) {
+		LOG_ERR("parent key export for bind failed: %d", status);
+		return -EIO;
+	}
+
 	for (size_t i = ACS_KEY_ID_COUNT; i < ACS_KEY_RUNTIME_COUNT; i++) {
 		struct bt_acs_key_desc_runtime *runtime = &acs_conn->crypto.key_runtimes[i];
 		psa_key_attributes_t attrs = PSA_KEY_ATTRIBUTES_INIT;
-		psa_status_t status;
 		int err;
 
 		if (!runtime->key_desc || runtime->current_key_id != parent_key_id) {
 			continue;
 		}
 
-		/* psa_copy_key allocates a fresh PSA id; destroy any stale child
-		 * key on this slot first or it leaks in the PSA keystore.
-		 */
 		acs_crypto_destroy_key(runtime);
 
 		err = acs_crypto_set_record_key_policy(&attrs, runtime, 0U);
 		if (err) {
+			mbedtls_platform_zeroize(key_material, sizeof(key_material));
 			return err;
 		}
 		psa_set_key_lifetime(&attrs, PSA_KEY_LIFETIME_VOLATILE);
 
-		status = psa_copy_key(parent->psa_key_id, &attrs, &runtime->psa_key_id);
+		status = psa_import_key(&attrs, key_material, key_len, &runtime->psa_key_id);
 		if (status != PSA_SUCCESS) {
-			LOG_ERR("record key copy for Key_ID 0x%04x failed: %d",
+			LOG_ERR("record key import for Key_ID 0x%04x failed: %d",
 				acs_key_desc_runtime_key_id(runtime), status);
 			runtime->psa_key_id = 0U;
+			mbedtls_platform_zeroize(key_material, sizeof(key_material));
 			return -EIO;
 		}
 
 		err = acs_derive_nonce_state(runtime, parent);
 		if (err) {
+			mbedtls_platform_zeroize(key_material, sizeof(key_material));
 			return err;
 		}
 	}
 
+	mbedtls_platform_zeroize(key_material, sizeof(key_material));
 	return 0;
 }
 

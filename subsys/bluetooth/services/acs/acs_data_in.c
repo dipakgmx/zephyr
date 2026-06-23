@@ -195,7 +195,19 @@ static int acs_data_in_decrypt(struct bt_acs_conn *acs_conn, struct net_buf_simp
 	__ASSERT_NO_MSG(resource_handle != NULL);
 
 	/* Step 1: wire LSO → PSA MSO. */
-	sys_mem_swap(buf->data, buf->len);
+	uint8_t type_id = key_desc_runtime->key_desc->type_id;
+
+	if ((IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_GMAC) &&
+	     type_id == ACS_KEY_REC_AES_128_GMAC) ||
+	    (IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_CMAC) &&
+	     type_id == ACS_KEY_REC_AES_128_CMAC)) {
+		uint8_t tag_len = acs_key_desc_auth_tag_size(key_desc_runtime->key_desc);
+		uint16_t data_len = buf->len - tag_len;
+		sys_mem_swap(buf->data, data_len);
+		sys_mem_swap(&buf->data[data_len], tag_len);
+	} else {
+		sys_mem_swap(buf->data, buf->len);
+	}
 
 	/* Decrypt using the received counter as the nonce variable part. Commit the
 	 * advanced receive state only if authentication succeeds. */

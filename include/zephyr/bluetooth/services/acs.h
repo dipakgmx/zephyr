@@ -384,8 +384,6 @@ struct bt_acs_rmap_char_reg {
 #define BT_ACS_ISC_ID_NONE         0x0000
 /** Nonce, Authenticated And Encrypted Protected Resource Request Or Response (AES-128-GCM). */
 #define BT_ACS_ISC_ID_HIGH_SEC_GCM   0x0001
-/** Nonce, Authenticated Protected Resource Request Or Response (ECDH-derived key). */
-#define BT_ACS_ISC_ID_AUTH            0x0002
 /** Unencrypted Protected Resource Request Or Response. */
 #define BT_ACS_ISC_ID_UNENC           0x0003
 /** Nonce, Authenticated Protected Resource Request Or Response, MAC (AES-128-GMAC). */
@@ -409,10 +407,8 @@ struct bt_acs_rmap_char_reg {
 #define BT_ACS_ISC_ID_DEFAULT BT_ACS_ISC_ID_HIGH_SEC_CCM
 #elif IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_GMAC)
 #define BT_ACS_ISC_ID_DEFAULT BT_ACS_ISC_ID_INTEGRITY_GMAC
-#elif IS_ENABLED(CONFIG_BT_ACS_FEAT_AUTHENTICATION)
-#define BT_ACS_ISC_ID_DEFAULT BT_ACS_ISC_ID_AUTH
-#elif IS_ENABLED(CONFIG_BT_ACS_FEAT_AUTHORIZATION)
-#define BT_ACS_ISC_ID_DEFAULT BT_ACS_ISC_ID_UNENC
+#elif IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_CMAC)
+#define BT_ACS_ISC_ID_DEFAULT BT_ACS_ISC_ID_MAC_ONLY_CMAC
 #else
 #define BT_ACS_ISC_ID_DEFAULT BT_ACS_ISC_ID_UNENC
 #endif

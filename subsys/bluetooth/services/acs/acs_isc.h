@@ -30,7 +30,6 @@
 
 /* Implementation-assigned ISC IDs (§4.4.3.7: all non-zero, non-0xFFFF IDs are local). */
 #define ACS_ISC_ID_HIGH_SEC_GCM   0x0001 /**< Nonce, Auth-And-Encrypted (AES-128-GCM) */
-#define ACS_ISC_ID_AUTH           0x0002 /**< Nonce, Authenticated (ECDH-derived key) */
 #define ACS_ISC_ID_UNENC          0x0003 /**< Unencrypted Protected Resource */
 #define ACS_ISC_ID_INTEGRITY_GMAC 0x0004 /**< Nonce, Authenticated, MAC (AES-128-GMAC) */
 #define ACS_ISC_ID_MAC_ONLY_CMAC  0x0005 /**< MAC (AES-128-CMAC) */

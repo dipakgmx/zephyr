@@ -275,7 +275,7 @@ static int acs_crypto_gmac_encrypt(struct bt_acs_key_desc_runtime *key_desc_runt
 
 	acs_build_record_tx_nonce(key_desc_runtime, nonce);
 
-	status = psa_aead_encrypt(key_desc_runtime->psa_key_id, ACS_PSA_GMAC_ALG, nonce,
+	status = psa_aead_encrypt(key_desc_runtime->psa_key_id, key_desc_runtime->psa_alg, nonce,
 				  acs_key_desc_nonce_size(key_desc_runtime->key_desc), plaintext,
 				  plain_len, NULL, 0, tag, sizeof(tag), &tag_len);
 	if (status != PSA_SUCCESS) {
@@ -324,7 +324,7 @@ static int acs_crypto_gmac_decrypt(struct bt_acs_key_desc_runtime *key_desc_runt
 	data_len = cipher_len - ACS_PSA_GMAC_TAG_LEN;
 	acs_build_record_rx_nonce(key_desc_runtime, nonce);
 
-	status = psa_aead_decrypt(key_desc_runtime->psa_key_id, ACS_PSA_GMAC_ALG, nonce,
+	status = psa_aead_decrypt(key_desc_runtime->psa_key_id, key_desc_runtime->psa_alg, nonce,
 				  acs_key_desc_nonce_size(key_desc_runtime->key_desc), ciphertext,
 				  data_len, &ciphertext[data_len], ACS_PSA_GMAC_TAG_LEN, NULL, 0,
 				  &out_len);

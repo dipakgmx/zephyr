@@ -167,14 +167,23 @@ static int data_tx_encrypt_in_place(struct acs_reply *reply, struct net_buf *buf
 
 	__ASSERT_NO_MSG(cipher_len == plain_len + auth_tag_size);
 
-	uint8_t tag_tmp[ACS_MAX_AUTH_TAG_SIZE];
+	if ((IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_GMAC) &&
+	     key_desc->type_id == ACS_KEY_REC_AES_128_GMAC) ||
+	    (IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_CMAC) &&
+	     key_desc->type_id == ACS_KEY_REC_AES_128_CMAC)) {
+		/* Wire order: Auth(LE) || MAC(LE) — swap each field in place */
+		sys_mem_swap(plaintext, plain_len);
+		sys_mem_swap(&plaintext[plain_len], auth_tag_size);
+	} else {
+		/* Wire order: MAC(LE) || CT(LE) — move tag before ciphertext */
+		uint8_t tag_tmp[ACS_MAX_AUTH_TAG_SIZE];
 
-	memcpy(tag_tmp, plaintext + plain_len, auth_tag_size);
-	sys_mem_swap(tag_tmp, auth_tag_size);
-	sys_mem_swap(plaintext, plain_len);
-	memmove(plaintext + auth_tag_size, plaintext, plain_len);
-	memcpy(plaintext, tag_tmp, auth_tag_size);
-	net_buf_add(buf, auth_tag_size);
+		memcpy(tag_tmp, plaintext + plain_len, auth_tag_size);
+		sys_mem_swap(tag_tmp, auth_tag_size);
+		sys_mem_swap(plaintext, plain_len);
+		memmove(plaintext + auth_tag_size, plaintext, plain_len);
+		memcpy(plaintext, tag_tmp, auth_tag_size);
+	}
 
 	uint8_t *hdr = net_buf_push(buf, nonce_var_size + sizeof(uint16_t));
 	uint8_t *nonce_dst = hdr + sizeof(uint16_t);

@@ -395,6 +395,7 @@ int acs_derive_nonce_state(struct bt_acs_key_desc_runtime *runtime,
 	}
 #endif
 
+#if IS_ENABLED(CONFIG_BT_ACS_HAS_NONCE_FIXED)
 	{
 		bool nonce_unset = true;
 
@@ -415,6 +416,7 @@ int acs_derive_nonce_state(struct bt_acs_key_desc_runtime *runtime,
 			sys_mem_swap(runtime->server_nonce_fixed, prefix_size);
 		}
 	}
+#endif
 
 	return 0;
 }
