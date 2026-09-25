@@ -10,18 +10,17 @@
 #include <zephyr/bluetooth/services/cts.h>
 #include <zephyr/bluetooth/services/acs.h>
 
-#include "sample_acs_isc.h"
+#include "sample_acs.h"
 #include "sample_cts.h"
 
-/* Write and notify are protected; read is unprotected because it is not listed.
- * Both maps carry the same resource policy.
+/* Write and notify are protected in both maps. Read is left off the public map's
+ * record, so it stays unprotected there; the secret map protects it too.
  */
-BT_ACS_RMAP_DECLARE_CHAR_OPS(cts_public, SAMPLE_ACS_RMAP_PUBLIC_ID, BT_UUID_CTS_CURRENT_TIME,
-			     SAMPLE_ACS_ISC_ID, BT_ACS_RMAP_OP_ATT_WRITE_REQ,
-			     BT_ACS_RMAP_OP_ATT_NOTIFY);
-BT_ACS_RMAP_DECLARE_CHAR_OPS(cts_secret, SAMPLE_ACS_RMAP_SECRET_ID, BT_UUID_CTS_CURRENT_TIME,
-			     SAMPLE_ACS_ISC_ID, BT_ACS_RMAP_OP_ATT_WRITE_REQ,
-			     BT_ACS_RMAP_OP_ATT_NOTIFY);
+BT_ACS_RMAP_CHAR_DEFINE(cts_public, public_map, BT_UUID_CTS_CURRENT_TIME, SAMPLE_ACS_ISC_ID,
+			BT_ACS_RMAP_OP_ATT_WRITE_REQ, BT_ACS_RMAP_OP_ATT_NOTIFY);
+BT_ACS_RMAP_CHAR_DEFINE(cts_secret, secret_map, BT_UUID_CTS_CURRENT_TIME, SAMPLE_ACS_ISC_ID,
+			BT_ACS_RMAP_OP_ATT_READ_REQ, BT_ACS_RMAP_OP_ATT_WRITE_REQ,
+			BT_ACS_RMAP_OP_ATT_NOTIFY);
 
 static struct bt_cts_time_format stored_time;
 static bool time_is_set;
@@ -88,5 +87,11 @@ void sample_cts_notify(uint8_t reason)
 	}
 
 	cts_time.reason = reason;
-	(void)bt_acs_notify_uuid(NULL, BT_UUID_CTS_CURRENT_TIME, &cts_time, sizeof(cts_time));
+	const struct bt_acs_output_params params = {
+		.uuid = BT_UUID_CTS_CURRENT_TIME,
+		.data = &cts_time,
+		.len = sizeof(cts_time),
+	};
+
+	(void)bt_acs_notify(NULL, &params);
 }

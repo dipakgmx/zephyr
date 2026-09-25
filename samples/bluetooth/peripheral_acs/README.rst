@@ -32,14 +32,16 @@ ACS uses *restriction maps* to declare which GATT resources require which
 Information Security Configuration (ISC).  Resources that are not listed in a
 map take the map's default ISC, so only protected resources need declaring.
 
-The library always registers two maps:
+The library registers no map of its own.  This sample defines two in
+:file:`src/main.c`:
 
-* **Map 0** -- reserved for direct, non-mediated access.
-* **Map 1** -- the unprotected map, where every resource sits at ISC 0.
+* ``public_map`` (ID 1) -- its descriptor is readable without keys, so a
+  first-time client can learn what is protected.  It is the map active at
+  start, selected with ``BT_ACS_INITIAL_RESTRICTION_MAP()``.
+* ``secret_map`` (ID 2) -- its descriptor is only readable over the ACS Data
+  path, and it also protects reads of the current time.
 
-This sample adds its own protected map as
-``CONFIG_BT_ACS_ACTIVE_RMAP_ID`` (2 by default), made active on every
-connection.  Its entries are declared next to the services they protect, in
+The protected resources are declared next to the services they protect, in
 :file:`src/sample_cts.c` and :file:`src/sample_hrs.c`.
 
 Requirements

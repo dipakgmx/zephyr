@@ -20,33 +20,36 @@
 #include <zephyr/bluetooth/services/acs.h>
 #include <zephyr/bluetooth/services/cts.h>
 
-#include "sample_acs_isc.h"
+#include "sample_acs.h"
 #include "sample_cts.h"
 #include "sample_hrs.h"
 
 /* Public descriptor: reachable on the plain ACS CP, so a first-time client can
- * discover what is protected and which ISC it needs.
+ * discover what is protected and which ISC it needs. Active at start.
  */
-BT_ACS_RESTRICTION_MAP_DEFINE(public_map, SAMPLE_ACS_RMAP_PUBLIC_ID, BT_ACS_ISC_ID_NONE,
-			      BT_ACS_ISC_ID_NONE);
+BT_ACS_RESTRICTION_MAP_DEFINE(public_map, SAMPLE_ACS_RMAP_PUBLIC_ID,
+			      BT_ACS_ISC_ID_NONE,  /* map descriptor */
+			      BT_ACS_ISC_ID_NONE); /* resources not listed */
+BT_ACS_INITIAL_RESTRICTION_MAP(public_map);
 
 /* Protected descriptor: reading or activating it requires the ACS Data path. */
-BT_ACS_RESTRICTION_MAP_DEFINE(secret_map, SAMPLE_ACS_RMAP_SECRET_ID, SAMPLE_ACS_ISC_ID,
-			      BT_ACS_ISC_ID_NONE);
+BT_ACS_RESTRICTION_MAP_DEFINE(secret_map, SAMPLE_ACS_RMAP_SECRET_ID,
+			      SAMPLE_ACS_ISC_ID,   /* map descriptor */
+			      BT_ACS_ISC_ID_NONE); /* resources not listed */
 
 /* Get ISC Descriptor (0x0B) and Get Key Descriptor (0x0D) stay absent here:
  * protecting either would move Get All Active Descriptors onto the ACS Data
  * path under the public map and strand a client with no keys.
  */
 #if IS_ENABLED(CONFIG_SAMPLE_ACS_PROTECT_SECURITY_OPS)
-BT_ACS_RMAP_DECLARE_ACS_CP_OPS(acs_cp_public, SAMPLE_ACS_RMAP_PUBLIC_ID, SAMPLE_ACS_ISC_ID,
-			       BT_ACS_CP_OPCODE_INVALIDATE_ALL_ESTABLISHED_SECURITY,
-			       BT_ACS_CP_OPCODE_SET_SECURITY_CONTROLS_SWITCH);
+BT_ACS_RMAP_ACS_CP_DEFINE(acs_cp_public, public_map, SAMPLE_ACS_ISC_ID,
+			  BT_ACS_CP_OPCODE_INVALIDATE_ALL_ESTABLISHED_SECURITY,
+			  BT_ACS_CP_OPCODE_SET_SECURITY_CONTROLS_SWITCH);
 #endif
 
-BT_ACS_RMAP_DECLARE_ACS_CP_OPS(acs_cp_secret, SAMPLE_ACS_RMAP_SECRET_ID, SAMPLE_ACS_ISC_ID,
-			       BT_ACS_CP_OPCODE_INVALIDATE_ALL_ESTABLISHED_SECURITY,
-			       BT_ACS_CP_OPCODE_SET_SECURITY_CONTROLS_SWITCH);
+BT_ACS_RMAP_ACS_CP_DEFINE(acs_cp_secret, secret_map, SAMPLE_ACS_ISC_ID,
+			  BT_ACS_CP_OPCODE_INVALIDATE_ALL_ESTABLISHED_SECURITY,
+			  BT_ACS_CP_OPCODE_SET_SECURITY_CONTROLS_SWITCH);
 
 static void acs_security_established(struct bt_conn *conn)
 {
@@ -64,13 +67,12 @@ static void acs_security_invalidated(struct bt_conn *conn)
 	printk("ACS security invalidated for %s\n", addr);
 }
 
-static void acs_output_oob_number(struct bt_conn *conn, uint8_t action, uint32_t oob_number)
+static void acs_output_oob_number(struct bt_conn *conn, uint32_t number)
 {
 	char addr[BT_ADDR_LE_STR_LEN];
 
 	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
-	printk("ACS confirmation for %s: action 0x%02x, show %u to the AC Client\n", addr, action,
-	       oob_number);
+	printk("ACS confirmation for %s: show %u to the AC Client\n", addr, number);
 }
 
 #if IS_ENABLED(CONFIG_BT_ACS_CONFIRMATION_INPUT_NUMERIC) ||                                        \
@@ -78,21 +80,21 @@ static void acs_output_oob_number(struct bt_conn *conn, uint8_t action, uint32_t
 /* No input device, so the tester enters this fixed number on the AC Client. */
 #define SAMPLE_ACS_INPUT_OOB_NUMBER 1U
 
-static void acs_input_oob_request(struct bt_conn *conn, uint8_t action)
+static void acs_input_oob_request(struct bt_conn *conn, enum bt_acs_input_oob_action action)
 {
-	const uint8_t oob = SAMPLE_ACS_INPUT_OOB_NUMBER;
 	char addr[BT_ADDR_LE_STR_LEN];
 	int err;
 
 	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
 
-	err = bt_acs_set_oob_number(conn, &oob, sizeof(oob));
+	err = bt_acs_input_oob_number(conn, SAMPLE_ACS_INPUT_OOB_NUMBER);
 	if (err) {
 		printk("ACS confirmation input for %s failed: %d\n", addr, err);
 		return;
 	}
 
-	printk("ACS confirmation input for %s: action 0x%02x, answered %u\n", addr, action, oob);
+	printk("ACS confirmation input for %s (%s): answered %u\n", addr,
+	       action == BT_ACS_INPUT_OOB_PUSH ? "push" : "numeric", SAMPLE_ACS_INPUT_OOB_NUMBER);
 }
 #endif
 

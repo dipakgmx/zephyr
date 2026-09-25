@@ -11,29 +11,27 @@
 #include <zephyr/bluetooth/services/hrs.h>
 #include <zephyr/bluetooth/services/acs.h>
 
-#include "sample_acs_isc.h"
+#include "sample_acs.h"
 #include "sample_hrs.h"
 
 /* Heart Rate Measurement Flags, bit 3 (HRS 1.0 §3.1.1.1). */
 #define HRS_FLAG_ENERGY_EXPENDED_PRESENT 0x08U
 
-/* Both maps carry the same resource policy. */
-BT_ACS_RMAP_DECLARE_CHAR_OPS(hrs_body_sensor_public, SAMPLE_ACS_RMAP_PUBLIC_ID,
-			     BT_UUID_HRS_BODY_SENSOR, SAMPLE_ACS_ISC_ID,
-			     BT_ACS_RMAP_OP_ATT_READ_REQ);
-BT_ACS_RMAP_DECLARE_CHAR_OPS(hrs_body_sensor_secret, SAMPLE_ACS_RMAP_SECRET_ID,
-			     BT_UUID_HRS_BODY_SENSOR, SAMPLE_ACS_ISC_ID,
-			     BT_ACS_RMAP_OP_ATT_READ_REQ);
+/* Both maps protect the heart rate resources alike. */
+BT_ACS_RMAP_CHAR_DEFINE(hrs_body_sensor_public, public_map, BT_UUID_HRS_BODY_SENSOR,
+			SAMPLE_ACS_ISC_ID, BT_ACS_RMAP_OP_ATT_READ_REQ);
+BT_ACS_RMAP_CHAR_DEFINE(hrs_body_sensor_secret, secret_map, BT_UUID_HRS_BODY_SENSOR,
+			SAMPLE_ACS_ISC_ID, BT_ACS_RMAP_OP_ATT_READ_REQ);
 
-BT_ACS_RMAP_DECLARE_CHAR_OPS(hrs_measurement_public, SAMPLE_ACS_RMAP_PUBLIC_ID,
-			     BT_UUID_HRS_MEASUREMENT, SAMPLE_ACS_ISC_ID, BT_ACS_RMAP_OP_ATT_NOTIFY);
-BT_ACS_RMAP_DECLARE_CHAR_OPS(hrs_measurement_secret, SAMPLE_ACS_RMAP_SECRET_ID,
-			     BT_UUID_HRS_MEASUREMENT, SAMPLE_ACS_ISC_ID, BT_ACS_RMAP_OP_ATT_NOTIFY);
+BT_ACS_RMAP_CHAR_DEFINE(hrs_measurement_public, public_map, BT_UUID_HRS_MEASUREMENT,
+			SAMPLE_ACS_ISC_ID, BT_ACS_RMAP_OP_ATT_NOTIFY);
+BT_ACS_RMAP_CHAR_DEFINE(hrs_measurement_secret, secret_map, BT_UUID_HRS_MEASUREMENT,
+			SAMPLE_ACS_ISC_ID, BT_ACS_RMAP_OP_ATT_NOTIFY);
 
-BT_ACS_RMAP_DECLARE_CP_OPS(hrs_cp_public, SAMPLE_ACS_RMAP_PUBLIC_ID, BT_UUID_HRS_CONTROL_POINT,
-			   SAMPLE_ACS_ISC_ID, BT_HRS_CONTROL_POINT_RESET_ENERGY_EXPANDED_REQ);
-BT_ACS_RMAP_DECLARE_CP_OPS(hrs_cp_secret, SAMPLE_ACS_RMAP_SECRET_ID, BT_UUID_HRS_CONTROL_POINT,
-			   SAMPLE_ACS_ISC_ID, BT_HRS_CONTROL_POINT_RESET_ENERGY_EXPANDED_REQ);
+BT_ACS_RMAP_CP_DEFINE(hrs_cp_public, public_map, BT_UUID_HRS_CONTROL_POINT, SAMPLE_ACS_ISC_ID,
+		      BT_HRS_CONTROL_POINT_RESET_ENERGY_EXPANDED_REQ);
+BT_ACS_RMAP_CP_DEFINE(hrs_cp_secret, secret_map, BT_UUID_HRS_CONTROL_POINT, SAMPLE_ACS_ISC_ID,
+		      BT_HRS_CONTROL_POINT_RESET_ENERGY_EXPANDED_REQ);
 
 static uint32_t energy_expended;
 
@@ -72,5 +70,11 @@ void sample_hrs_notify(uint16_t bpm, uint32_t ee_kj)
 	measurement[1] = (uint8_t)bpm;
 	sys_put_le16((uint16_t)energy_expended, &measurement[2]);
 
-	(void)bt_acs_notify_uuid(NULL, BT_UUID_HRS_MEASUREMENT, measurement, sizeof(measurement));
+	const struct bt_acs_output_params params = {
+		.uuid = BT_UUID_HRS_MEASUREMENT,
+		.data = measurement,
+		.len = sizeof(measurement),
+	};
+
+	(void)bt_acs_notify(NULL, &params);
 }
