@@ -51,6 +51,12 @@ struct bt_acs_kex_ctx *acs_kex_alloc(struct bt_acs_conn *acs_conn)
 	return kex;
 }
 
+void acs_kex_set_auth_value(struct bt_acs_kex_ctx *kex, uint32_t number)
+{
+	memset(kex->auth_value, 0, sizeof(kex->auth_value));
+	sys_put_be32(number, &kex->auth_value[sizeof(kex->auth_value) - sizeof(number)]);
+}
+
 /*
  * Generate the ephemeral ECDH key pair and export its public coordinates to
  * kex->server_pubkey in little-endian wire order.
@@ -583,8 +589,8 @@ static bool acs_kex_opcode_is_step(uint8_t opcode)
 	switch (opcode) {
 	case BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH:
 	case BT_ACS_CP_OPCODE_KEY_EXCHANGE_KDF:
-	case BT_ACS_CP_OPCODE_ECDH_CONFIRM_CODE:
-	case BT_ACS_CP_OPCODE_ECDH_CONFIRM_RAND:
+	case BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH_CONFIRMATION_CODE:
+	case BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH_CONFIRMATION_RANDOM_NUMBER:
 		return true;
 	default:
 		return false;

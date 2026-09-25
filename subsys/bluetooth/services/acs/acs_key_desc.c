@@ -17,153 +17,126 @@
 
 LOG_MODULE_DECLARE(bt_acs, CONFIG_BT_ACS_LOG_LEVEL);
 
-#define ACS_KEY_DESC_PK_FMT ACS_PK_FMT_UNCOMPRESSED
-
-/* ECDH uses Curve P-256 and HKDF-SHA-256 without appended KDF_Info. */
-#define ACS_KEY_DESC_CURVE ACS_CURVE_P256
-#define ACS_KEY_DESC_KDF   ACS_KDF_SHA256
-
-/* Default key descriptor records selected by Kconfig. */
+/* Security algorithm records take their key from the KDF key (Table 4.45). */
 #define ACS_KEY_DESC_ALG_PARENT_KEY_ID ACS_KEY_ID_KDF
 
-BT_ACS_KEY_DESC_DEFINE(acs_key_desc_ecdh, .type_id = ACS_KEY_REC_ECDH, .key_id = ACS_KEY_ID_ECDH,
-		       .ecdh = {
-			       .server_pk_fmt = ACS_KEY_DESC_PK_FMT,
-			       .client_pk_fmt = ACS_KEY_DESC_PK_FMT,
-			       .curve = ACS_KEY_DESC_CURVE,
-			       .kdf = ACS_KEY_DESC_KDF,
-		       });
+/* The sequence number of a nonce is a 64-bit counter (Table 4.47). */
+BUILD_ASSERT(ACS_GCM_NONCE_VAR_SIZE == sizeof(uint64_t) &&
+	     ACS_CCM_NONCE_VAR_SIZE == sizeof(uint64_t) &&
+	     ACS_GMAC_NONCE_VAR_SIZE == sizeof(uint64_t));
 
-#if IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_CCM)
-BT_ACS_KEY_DESC_DEFINE(acs_key_desc_ccm, .type_id = ACS_KEY_REC_AES_128_CCM,
-		       .key_id = ACS_KEY_ID_CCM,
-		       .aes = {
-			       .parent_key_id = ACS_KEY_DESC_ALG_PARENT_KEY_ID,
-			       .msg_type = ACS_MSG_TYPE_PROTECTED,
-			       .mac_size = ACS_CCM_MAC_SIZE,
-			       .nonce_type = ACS_CCM_NONCE_TYPE,
-			       .nonce_size = ACS_CCM_NONCE_SIZE,
-			       .nonce_var_size = ACS_CCM_NONCE_VAR_SIZE,
-			       .nonce_fixed_size = ACS_CCM_NONCE_FIXED_SIZE,
-		       });
-#endif
-
+/*
+ * Key descriptor records (Table 4.36): the ECDH and KDF key exchanges, then one
+ * security algorithm record per enabled algorithm. acs_key_desc_alg_record()
+ * relies on the algorithm records coming last.
+ */
+static const struct bt_acs_key_desc_record acs_key_desc_records[] = {
+	{
+		.type_id = ACS_KEY_REC_ECDH,
+		.key_id = ACS_KEY_ID_ECDH,
+		/*
+		 * Curve P-256 and HKDF SHA-256 128-bit (ACP 1.0 §4.1.1.1, Table 4.44
+		 * 0x00): KDF_Info is HKDF's info input, with nothing concatenated to it.
+		 */
+		.ecdh = {
+			.server_pk_fmt = ACS_PK_FMT_UNCOMPRESSED,
+			.client_pk_fmt = ACS_PK_FMT_UNCOMPRESSED,
+			.curve = ACS_CURVE_P256,
+			.kdf = ACS_KDF_SHA256,
+		},
+	},
+	{
+		.type_id = ACS_KEY_REC_KDF,
+		.key_id = ACS_KEY_ID_KDF,
+		.kdf = {
+			.parent_key_id = ACS_KEY_ID_ECDH,
+			.kdf_algorithm = ACS_KDF_SHA256,
+		},
+	},
 #if IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_GCM)
-BT_ACS_KEY_DESC_DEFINE(acs_key_desc_gcm, .type_id = ACS_KEY_REC_AES_128_GCM,
-		       .key_id = ACS_KEY_ID_GCM,
-		       .aes = {
-			       .parent_key_id = ACS_KEY_DESC_ALG_PARENT_KEY_ID,
-			       .msg_type = ACS_MSG_TYPE_PROTECTED,
-			       .mac_size = ACS_CRYPTO_AUTH_TAG_SIZE,
-			       .nonce_type = ACS_NONCE_SEQ_DIFF_FIXED,
-			       .nonce_size = ACS_GCM_NONCE_SIZE,
-			       .nonce_var_size = ACS_GCM_NONCE_VAR_SIZE,
-			       .nonce_fixed_size = ACS_GCM_NONCE_FIXED_SIZE,
-		       });
+	{
+		.type_id = ACS_KEY_REC_AES_128_GCM,
+		.key_id = ACS_KEY_ID_GCM,
+		.aes = {
+			.parent_key_id = ACS_KEY_DESC_ALG_PARENT_KEY_ID,
+			.msg_type = ACS_MSG_TYPE_PROTECTED,
+			.mac_size = ACS_CRYPTO_AUTH_TAG_SIZE,
+			.nonce_type = ACS_NONCE_SEQ_DIFF_FIXED,
+			.nonce_size = ACS_GCM_NONCE_SIZE,
+			.nonce_var_size = ACS_GCM_NONCE_VAR_SIZE,
+			.nonce_fixed_size = ACS_GCM_NONCE_FIXED_SIZE,
+		},
+	},
 #endif
-
-#if IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_CMAC)
-BT_ACS_KEY_DESC_DEFINE(acs_key_desc_cmac, .type_id = ACS_KEY_REC_AES_128_CMAC,
-		       .key_id = ACS_KEY_ID_CMAC,
-		       .aes = {
-			       .parent_key_id = ACS_KEY_DESC_ALG_PARENT_KEY_ID,
-			       .msg_type = ACS_MSG_TYPE_PROTECTED,
-			       .mac_size = ACS_CRYPTO_AUTH_TAG_SIZE,
-			       .nonce_type = ACS_NONCE_PROFILE_DEF,
-			       .nonce_size = 0U,
-			       .nonce_var_size = 0U,
-			       .nonce_fixed_size = 0U,
-		       });
+#if IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_CCM)
+	{
+		.type_id = ACS_KEY_REC_AES_128_CCM,
+		.key_id = ACS_KEY_ID_CCM,
+		.aes = {
+			.parent_key_id = ACS_KEY_DESC_ALG_PARENT_KEY_ID,
+			.msg_type = ACS_MSG_TYPE_PROTECTED,
+			.mac_size = ACS_CCM_MAC_SIZE,
+			.nonce_type = ACS_CCM_NONCE_TYPE,
+			.nonce_size = ACS_CCM_NONCE_SIZE,
+			.nonce_var_size = ACS_CCM_NONCE_VAR_SIZE,
+			.nonce_fixed_size = ACS_CCM_NONCE_FIXED_SIZE,
+		},
+	},
 #endif
-
 #if IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_GMAC)
-BT_ACS_KEY_DESC_DEFINE(acs_key_desc_gmac, .type_id = ACS_KEY_REC_AES_128_GMAC,
-		       .key_id = ACS_KEY_ID_GMAC,
-		       .aes = {
-			       .parent_key_id = ACS_KEY_DESC_ALG_PARENT_KEY_ID,
-			       .msg_type = ACS_MSG_TYPE_PROTECTED,
-			       .mac_size = ACS_CRYPTO_AUTH_TAG_SIZE,
-			       .nonce_type = ACS_NONCE_SEQ_DIFF_FIXED,
-			       .nonce_size = ACS_GMAC_NONCE_SIZE,
-			       .nonce_var_size = ACS_GMAC_NONCE_VAR_SIZE,
-			       .nonce_fixed_size = ACS_GMAC_NONCE_FIXED_SIZE,
-		       });
+	{
+		.type_id = ACS_KEY_REC_AES_128_GMAC,
+		.key_id = ACS_KEY_ID_GMAC,
+		.aes = {
+			.parent_key_id = ACS_KEY_DESC_ALG_PARENT_KEY_ID,
+			.msg_type = ACS_MSG_TYPE_PROTECTED,
+			.mac_size = ACS_CRYPTO_AUTH_TAG_SIZE,
+			.nonce_type = ACS_NONCE_SEQ_DIFF_FIXED,
+			.nonce_size = ACS_GMAC_NONCE_SIZE,
+			.nonce_var_size = ACS_GMAC_NONCE_VAR_SIZE,
+			.nonce_fixed_size = ACS_GMAC_NONCE_FIXED_SIZE,
+		},
+	},
 #endif
+#if IS_ENABLED(CONFIG_BT_ACS_DATA_PROTECTION_AES_CMAC)
+	{
+		.type_id = ACS_KEY_REC_AES_128_CMAC,
+		.key_id = ACS_KEY_ID_CMAC,
+		.aes = {
+			.parent_key_id = ACS_KEY_DESC_ALG_PARENT_KEY_ID,
+			.msg_type = ACS_MSG_TYPE_PROTECTED,
+			.mac_size = ACS_CRYPTO_AUTH_TAG_SIZE,
+			.nonce_type = ACS_NONCE_PROFILE_DEF,
+		},
+	},
+#endif
+};
 
-BT_ACS_KEY_DESC_DEFINE(acs_key_desc_kdf_rec, .type_id = ACS_KEY_REC_KDF, .key_id = ACS_KEY_ID_KDF,
-		       .kdf = {
-			       /* The KDF child is derived from the ECDH key. */
-			       .parent_key_id = ACS_KEY_ID_ECDH,
-			       .kdf_algorithm = ACS_KEY_DESC_KDF,
-		       });
+BUILD_ASSERT(ARRAY_SIZE(acs_key_desc_records) == ACS_KEY_ID_COUNT + ACS_SEC_ALG_COUNT,
+	     "one security algorithm record per enabled algorithm");
+
+/* Get Key Descriptor for all records fits one message; an algorithm record is the largest. */
+BUILD_ASSERT(ARRAY_SIZE(acs_key_desc_records) *
+			     (sizeof(struct acs_desc_rec_hdr) +
+			      ACS_KEY_DESC_AES_ALG_MANDATORY_SIZE + ACS_MAX_NONCE_PREFIX_SIZE) <=
+		     ACS_MESSAGE_MAX_OPERAND,
+	     "Key Descriptor Response exceeds one message");
+
+const struct bt_acs_key_desc_record *acs_key_desc_alg_record(size_t index)
+{
+	__ASSERT_NO_MSG(index < ACS_SEC_ALG_COUNT);
+
+	return &acs_key_desc_records[ACS_KEY_ID_COUNT + index];
+}
 
 const struct bt_acs_key_desc_record *acs_key_desc_lookup(uint16_t key_id)
 {
-	STRUCT_SECTION_FOREACH(bt_acs_key_desc_record, rec) {
+	ARRAY_FOR_EACH_PTR(acs_key_desc_records, rec) {
 		if (rec->key_id == key_id) {
 			return rec;
 		}
 	}
 	return NULL;
-}
-
-int acs_key_desc_validate_records(void)
-{
-	size_t algo_records = 0;
-
-	STRUCT_SECTION_FOREACH(bt_acs_key_desc_record, rec) {
-		if (rec->key_id == 0U || rec->key_id == BT_ACS_GET_KEY_DESC_ALL_RECORDS_FILTER) {
-			LOG_ERR("key descriptor uses reserved Key_ID 0x%04x", rec->key_id);
-			return -EINVAL;
-		}
-
-		/* Lookup returns the first match, so duplicates resolve by link order. */
-		if (acs_key_desc_lookup(rec->key_id) != rec) {
-			LOG_ERR("duplicate key descriptor Key_ID 0x%04x", rec->key_id);
-			return -EINVAL;
-		}
-
-		/* The ECDH key is the root and the KDF key its only child. */
-		if (rec->type_id == ACS_KEY_REC_KDF &&
-		    (rec->key_id != ACS_KEY_ID_KDF || rec->kdf.parent_key_id != ACS_KEY_ID_ECDH)) {
-			LOG_ERR("KDF record 0x%04x must be Key_ID 0x%04x with parent 0x%04x",
-				rec->key_id, ACS_KEY_ID_KDF, ACS_KEY_ID_ECDH);
-			return -EINVAL;
-		}
-
-		if (!acs_key_desc_is_algorithm_record(rec)) {
-			continue;
-		}
-
-		/* Security algorithm keys are derived by the KDF key exchange. */
-		if (rec->aes.parent_key_id != ACS_KEY_ID_KDF) {
-			LOG_ERR("algorithm record 0x%04x must have parent Key_ID 0x%04x",
-				rec->key_id, ACS_KEY_ID_KDF);
-			return -EINVAL;
-		}
-
-		/* Sequence numbers are 64-bit counters behind a fixed prefix (Table 4.47). */
-		if (acs_key_desc_has_nonce_record(rec) &&
-		    (rec->aes.nonce_type != ACS_NONCE_SEQ_DIFF_FIXED ||
-		     acs_key_desc_nonce_var_size(rec) != sizeof(uint64_t) ||
-		     acs_key_desc_nonce_fixed_size(rec) > ACS_MAX_NONCE_PREFIX_SIZE)) {
-			LOG_ERR("algorithm record 0x%04x needs Nonce_Type %u, an 8-octet variable "
-				"part and at most %u fixed octets",
-				rec->key_id, ACS_NONCE_SEQ_DIFF_FIXED, ACS_MAX_NONCE_PREFIX_SIZE);
-			return -EINVAL;
-		}
-
-		algo_records++;
-	}
-
-	/* Every security algorithm record needs its state on each connection. */
-	if (algo_records > ACS_SEC_ALG_COUNT) {
-		LOG_ERR("%zu security algorithm records exceed %u per-connection slots",
-			algo_records, ACS_SEC_ALG_COUNT);
-		return -ENOSPC;
-	}
-
-	return 0;
 }
 
 bool acs_key_desc_is_algorithm_record(const struct bt_acs_key_desc_record *rec)
@@ -281,13 +254,13 @@ static int append_record(const struct bt_acs_key_desc_record *rec, struct net_bu
 	return 0;
 }
 
-int acs_key_desc_build_response(uint16_t filter_id, struct net_buf *buf,
-				struct bt_acs_conn *acs_conn)
+uint8_t acs_key_desc_build_response(uint16_t filter_id, struct net_buf *buf,
+				    struct bt_acs_conn *acs_conn)
 {
 	bool found = false;
 	int err;
 
-	STRUCT_SECTION_FOREACH(bt_acs_key_desc_record, rec) {
+	ARRAY_FOR_EACH_PTR(acs_key_desc_records, rec) {
 		if (filter_id != BT_ACS_GET_KEY_DESC_ALL_RECORDS_FILTER &&
 		    filter_id != rec->key_id) {
 			continue;
@@ -296,22 +269,21 @@ int acs_key_desc_build_response(uint16_t filter_id, struct net_buf *buf,
 		found = true;
 		err = append_record(rec, buf, acs_conn);
 		if (err) {
-			return err;
+			return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED;
 		}
 	}
 
 	if (!found) {
 		LOG_WRN("ACS Key Desc: no record found for filter 0x%04X", filter_id);
-		return -ENOENT;
+		return BT_ACS_CP_RESPONSE_NO_RECORDS_FOUND;
 	}
 
-	return 0;
+	return BT_ACS_CP_RESPONSE_SUCCESS;
 }
 
 uint8_t acs_cp_handle_get_key_descriptor(struct acs_reply *reply, struct net_buf_simple *buf)
 {
 	uint16_t filter_id;
-	int err;
 
 	if (buf->len < sizeof(struct acs_cp_get_key_descriptor_req)) {
 		return BT_ACS_CP_RESPONSE_INVALID_OPERAND;
@@ -319,10 +291,5 @@ uint8_t acs_cp_handle_get_key_descriptor(struct acs_reply *reply, struct net_buf
 
 	filter_id = net_buf_simple_pull_le16(buf);
 
-	err = acs_key_desc_build_response(filter_id, reply->response, reply->conn);
-	if (err) {
-		return errno_to_acs_status(err);
-	}
-
-	return BT_ACS_CP_RESPONSE_SUCCESS;
+	return acs_key_desc_build_response(filter_id, reply->response, reply->conn);
 }

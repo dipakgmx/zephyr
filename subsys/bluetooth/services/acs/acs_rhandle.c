@@ -290,11 +290,9 @@ uint8_t acs_cp_handle_get_resource_handle_uuid_map(struct acs_reply *reply,
 	ARG_UNUSED(payload);
 
 	acs_rhandle_foreach(rhandle_build_visit, &ctx);
-	if (ctx.err) {
-		return errno_to_acs_status(ctx.err);
-	}
 
-	return BT_ACS_CP_RESPONSE_SUCCESS;
+	return (ctx.err == 0) ? BT_ACS_CP_RESPONSE_SUCCESS
+			      : BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED;
 }
 
 /* Write the service UUID, then the characteristic UUID, each preceded by its byte count. */
@@ -303,19 +301,15 @@ uint8_t acs_cp_handle_get_svc_char_uuids(struct acs_reply *reply, struct net_buf
 	uint16_t resource_handle = net_buf_simple_pull_le16(buf);
 	struct net_buf *response = reply->response;
 	struct acs_rhandle_resource resource;
-	int err;
 
-	err = acs_rhandle_get(resource_handle, &resource);
-	if (err == -ENOENT) {
+	if (acs_rhandle_get(resource_handle, &resource) != 0) {
 		LOG_WRN("Resource handle 0x%04x not found", resource_handle);
 		return BT_ACS_CP_RESPONSE_PARAMETER_OUT_OF_RANGE;
-	} else if (err) {
-		return errno_to_acs_status(err);
 	}
 
 	if (net_buf_tailroom(response) <
 	    (size_t)(1U + uuid_wire_size(resource.svc_uuid) + 1U + uuid_wire_size(resource.uuid))) {
-		return errno_to_acs_status(-ENOMEM);
+		return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED;
 	}
 
 	buf_add_uuid(response, resource.svc_uuid);

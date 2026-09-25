@@ -44,7 +44,7 @@ struct acs_cp_opcode_info {
 };
 
 static const struct acs_cp_opcode_info acs_cp_opcodes[] = {
-	{BT_ACS_CP_OPCODE_GET_FEATURE, 0U, BT_ACS_CP_OPCODE_ACS_FEATURE_RESPONSE,
+	{BT_ACS_CP_OPCODE_GET_ACS_FEATURE, 0U, BT_ACS_CP_OPCODE_ACS_FEATURE_RESPONSE,
 	 acs_cp_handle_get_feature},
 	{BT_ACS_CP_OPCODE_ATT_MTU, 0U, BT_ACS_CP_OPCODE_ATT_MTU_RESPONSE, acs_cp_handle_att_mtu},
 #if IS_ENABLED(CONFIG_BT_ACS_HAS_NONCE_FIXED)
@@ -81,10 +81,12 @@ static const struct acs_cp_opcode_info acs_cp_opcodes[] = {
 	 BT_ACS_CP_OPCODE_KEY_EXCHANGE_KDF_RESPONSE, acs_cp_kex_exchange_kdf},
 	{BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH, ACS_ECDH_PUBKEY_MIN_OPERAND,
 	 BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH_RESPONSE, acs_cp_kex_exchange_ecdh},
-	{BT_ACS_CP_OPCODE_ECDH_CONFIRM_CODE, sizeof(struct acs_cp_ecdh_confirm_code_req),
+	{BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH_CONFIRMATION_CODE,
+	 sizeof(struct acs_cp_ecdh_confirm_code_req),
 	 BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH_CONFIRMATION_CODE_RESPONSE,
 	 acs_cp_kex_ecdh_confirm_code},
-	{BT_ACS_CP_OPCODE_ECDH_CONFIRM_RAND, sizeof(struct acs_cp_ecdh_confirm_rand_req),
+	{BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH_CONFIRMATION_RANDOM_NUMBER,
+	 sizeof(struct acs_cp_ecdh_confirm_rand_req),
 	 BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH_CONFIRMATION_RANDOM_NUMBER_RESPONSE,
 	 acs_cp_kex_ecdh_confirm_rand},
 #endif

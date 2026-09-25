@@ -41,7 +41,7 @@ static struct net_buf *add_descriptor_response(struct acs_reply *reply, uint8_t 
 uint8_t acs_cp_all_active_get(struct acs_reply *reply, struct net_buf_simple *payload)
 {
 	struct net_buf *buf;
-	int err;
+	uint8_t rc;
 
 	ARG_UNUSED(payload);
 
@@ -49,10 +49,10 @@ uint8_t acs_cp_all_active_get(struct acs_reply *reply, struct net_buf_simple *pa
 	if (buf == NULL) {
 		return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED;
 	}
-	err = acs_rmap_build_descriptor_response(reply->rmap, ACS_RMAP_FILTER_ALL, buf);
-	if (err) {
-		LOG_ERR("Get All Active Descriptors: restriction map failed (%d)", err);
-		return errno_to_acs_status(err);
+	rc = acs_rmap_build_descriptor_response(reply->rmap, ACS_RMAP_FILTER_ALL, buf);
+	if (rc != BT_ACS_CP_RESPONSE_SUCCESS) {
+		LOG_ERR("Get All Active Descriptors: restriction map failed (0x%02x)", rc);
+		return rc;
 	}
 
 	buf = add_descriptor_response(
@@ -60,21 +60,21 @@ uint8_t acs_cp_all_active_get(struct acs_reply *reply, struct net_buf_simple *pa
 	if (buf == NULL) {
 		return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED;
 	}
-	err = acs_isc_build_response(BT_ACS_ISC_ALL_RECORDS_FILTER, buf);
-	if (err) {
-		LOG_ERR("Get All Active Descriptors: ISC descriptor failed (%d)", err);
-		return errno_to_acs_status(err);
+	rc = acs_isc_build_response(BT_ACS_ISC_ALL_RECORDS_FILTER, buf);
+	if (rc != BT_ACS_CP_RESPONSE_SUCCESS) {
+		LOG_ERR("Get All Active Descriptors: ISC descriptor failed (0x%02x)", rc);
+		return rc;
 	}
 
 	buf = add_descriptor_response(reply, BT_ACS_CP_OPCODE_KEY_DESCRIPTOR_RESPONSE);
 	if (buf == NULL) {
 		return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED;
 	}
-	err = acs_key_desc_build_response(BT_ACS_GET_KEY_DESC_ALL_RECORDS_FILTER, buf,
-					  reply->conn);
-	if (err) {
-		LOG_ERR("Get All Active Descriptors: key descriptor failed (%d)", err);
-		return errno_to_acs_status(err);
+	rc = acs_key_desc_build_response(BT_ACS_GET_KEY_DESC_ALL_RECORDS_FILTER, buf,
+					 reply->conn);
+	if (rc != BT_ACS_CP_RESPONSE_SUCCESS) {
+		LOG_ERR("Get All Active Descriptors: key descriptor failed (0x%02x)", rc);
+		return rc;
 	}
 
 	return BT_ACS_CP_RESPONSE_SUCCESS;

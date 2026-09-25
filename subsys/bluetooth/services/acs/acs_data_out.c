@@ -32,15 +32,6 @@ static void data_tx_done(struct bt_conn *bt_conn, const struct bt_gatt_attr *att
 			 void *user_data);
 #endif
 
-/* Service-initiated protected output. */
-struct acs_output_spec {
-	const void *data;
-	uint16_t len;
-	enum acs_reply_channel channel;
-	bt_acs_output_func_t func;
-	void *user_data;
-};
-
 #if IS_ENABLED(CONFIG_BT_ACS_FEAT_AUTHENTICATION)
 static void acs_reply_output_complete(struct acs_reply *reply, int err)
 {
@@ -211,8 +202,10 @@ static uint16_t output_isc_id(const struct bt_acs_rmap_resource *resource, uint1
 }
 
 static int acs_send_protected_output_to_conn(struct bt_acs_conn *acs_conn,
-					     const struct bt_acs_rmap_resource *resource, uint16_t isc_id,
-					     const struct acs_output_spec *spec)
+					     const struct bt_acs_rmap_resource *resource,
+					     uint16_t isc_id,
+					     const struct bt_acs_output_params *params,
+					     enum acs_reply_channel channel)
 {
 	struct acs_sec_alg *alg;
 	struct acs_reply *reply;
@@ -236,7 +229,7 @@ static int acs_send_protected_output_to_conn(struct bt_acs_conn *acs_conn,
 		return -EACCES;
 	}
 
-	err = (spec->channel == ACS_REPLY_DON) ? acs_don_ccc_check(acs_conn->conn)
+	err = (channel == ACS_REPLY_DON) ? acs_don_ccc_check(acs_conn->conn)
 					       : acs_doi_ccc_check(acs_conn->conn);
 	if (err) {
 		return -EACCES;
@@ -247,12 +240,12 @@ static int acs_send_protected_output_to_conn(struct bt_acs_conn *acs_conn,
 		return -ENOMEM;
 	}
 
-	reply->channel = spec->channel;
-	reply->resource_handle = resource->resource_handle;
+	reply->channel = channel;
+	reply->resource_handle = resource->bound.resource_handle;
 	reply->isc_id = isc_id;
 	reply->alg = alg;
-	reply->output_func = spec->func;
-	reply->output_user_data = spec->user_data;
+	reply->output_func = params->func;
+	reply->output_user_data = params->user_data;
 
 	buf = acs_reply_add_message(reply);
 	if (buf == NULL) {
@@ -262,13 +255,13 @@ static int acs_send_protected_output_to_conn(struct bt_acs_conn *acs_conn,
 
 	/* Check the payload before adding it to the channel queue. */
 	if (net_buf_tailroom(buf) <
-	    (size_t)spec->len + acs_key_desc_auth_tag_size(alg->key_desc)) {
+	    (size_t)params->len + acs_key_desc_auth_tag_size(alg->key_desc)) {
 		acs_reply_free(reply);
 		return -EMSGSIZE;
 	}
 
-	if (spec->len > 0U) {
-		net_buf_add_mem(buf, spec->data, spec->len);
+	if (params->len > 0U) {
+		net_buf_add_mem(buf, params->data, params->len);
 	}
 
 	err = acs_reply_submit(reply);
@@ -282,7 +275,8 @@ static int acs_send_protected_output_to_conn(struct bt_acs_conn *acs_conn,
 /* Result of sending protected output to every connected peer. */
 struct output_fanout_ctx {
 	const struct bt_acs_rmap_resource *resource;
-	const struct acs_output_spec *spec;
+	const struct bt_acs_output_params *params;
+	enum acs_reply_channel channel;
 	uint16_t isc_id;
 	int err;
 };
@@ -298,7 +292,8 @@ static void send_output_to_conn(struct bt_conn *conn, void *data)
 		return;
 	}
 
-	ret = acs_send_protected_output_to_conn(acs_conn, ctx->resource, ctx->isc_id, ctx->spec);
+	ret = acs_send_protected_output_to_conn(acs_conn, ctx->resource, ctx->isc_id, ctx->params,
+						ctx->channel);
 	if (ret == 0) {
 		ctx->err = 0;
 	} else if (ctx->err == -ENOTCONN) {
@@ -306,10 +301,10 @@ static void send_output_to_conn(struct bt_conn *conn, void *data)
 	}
 }
 
-/* Resolve by UUID when set, else by attr (mirrors bt_gatt_indicate()). */
-static int acs_send_protected_output_lookup(struct bt_conn *conn, const struct bt_uuid *char_uuid,
-					    const struct bt_gatt_attr *attr,
-					    const struct acs_output_spec *spec)
+/* Resolve the resource by UUID when set, else by attr (mirrors bt_gatt_indicate()). */
+static int acs_send_protected_output(struct bt_conn *conn,
+				     const struct bt_acs_output_params *params,
+				     enum acs_reply_channel channel)
 {
 	const struct bt_acs_restriction_map *active_map;
 	const struct bt_acs_rmap_resource *resource;
@@ -317,7 +312,8 @@ static int acs_send_protected_output_lookup(struct bt_conn *conn, const struct b
 	uint16_t att_opcode;
 	uint16_t isc_id;
 
-	if ((char_uuid == NULL && attr == NULL) || (spec->data == NULL && spec->len > 0U)) {
+	if ((params->uuid == NULL && params->attr == NULL) ||
+	    (params->data == NULL && params->len > 0U)) {
 		return -EINVAL;
 	}
 
@@ -326,13 +322,13 @@ static int acs_send_protected_output_lookup(struct bt_conn *conn, const struct b
 		return -ENOENT;
 	}
 
-	if (char_uuid != NULL) {
-		resource = acs_rmap_resource_by_uuid(active_map, char_uuid);
+	if (params->uuid != NULL) {
+		resource = acs_rmap_resource_by_uuid(active_map, params->uuid);
 	} else {
-		uint16_t attr_handle = bt_gatt_attr_value_handle(attr);
+		uint16_t attr_handle = bt_gatt_attr_value_handle(params->attr);
 
 		if (attr_handle == 0U) {
-			attr_handle = bt_gatt_attr_get_handle(attr);
+			attr_handle = bt_gatt_attr_get_handle(params->attr);
 		}
 		resource = acs_rmap_resource_by_attr_handle(active_map, attr_handle);
 	}
@@ -341,7 +337,7 @@ static int acs_send_protected_output_lookup(struct bt_conn *conn, const struct b
 	}
 
 	/* The governing ISC is map policy, the same for every peer. */
-	att_opcode = (spec->channel == ACS_REPLY_DON) ? BT_ACS_RMAP_OP_ATT_NOTIFY
+	att_opcode = (channel == ACS_REPLY_DON) ? BT_ACS_RMAP_OP_ATT_NOTIFY
 						      : BT_ACS_RMAP_OP_ATT_INDICATE;
 	isc_id = output_isc_id(resource, att_opcode);
 	if (isc_id == BT_ACS_ISC_ID_NONE) {
@@ -350,12 +346,13 @@ static int acs_send_protected_output_lookup(struct bt_conn *conn, const struct b
 
 	if (conn != NULL) {
 		return acs_send_protected_output_to_conn(acs_conn_lookup(conn), resource, isc_id,
-							 spec);
+							 params, channel);
 	}
 
 	ctx = (struct output_fanout_ctx){
 		.resource = resource,
-		.spec = spec,
+		.params = params,
+		.channel = channel,
 		.isc_id = isc_id,
 		.err = -ENOTCONN,
 	};
@@ -364,55 +361,21 @@ static int acs_send_protected_output_lookup(struct bt_conn *conn, const struct b
 	return ctx.err;
 }
 
-int bt_acs_notify_cb(struct bt_conn *conn, struct bt_acs_notify_params *params)
+int bt_acs_notify(struct bt_conn *conn, const struct bt_acs_output_params *params)
 {
-	if (params == NULL) {
-		LOG_ERR("params is NULL");
-		return -EINVAL;
-	}
+	__ASSERT(params != NULL, "params cannot be NULL");
 
-	const struct acs_output_spec spec = {
-		.data = params->data,
-		.len = params->len,
-		.channel = ACS_REPLY_DON,
-		.func = params->func,
-		.user_data = params->user_data,
-	};
-
-	return acs_send_protected_output_lookup(conn, params->uuid, params->attr, &spec);
+	return acs_send_protected_output(conn, params, ACS_REPLY_DON);
 }
 
-int bt_acs_indicate(struct bt_conn *conn, struct bt_acs_indicate_params *params)
+int bt_acs_indicate(struct bt_conn *conn, const struct bt_acs_output_params *params)
 {
-	if (params == NULL) {
-		LOG_ERR("indication params is NULL");
-		return -EINVAL;
-	}
+	__ASSERT(params != NULL, "params cannot be NULL");
 
-	const struct acs_output_spec spec = {
-		.data = params->data,
-		.len = params->len,
-		.channel = ACS_REPLY_DOI,
-		.func = params->func,
-		.user_data = params->user_data,
-	};
-
-	return acs_send_protected_output_lookup(conn, params->uuid, params->attr, &spec);
-}
-
-int bt_acs_notify_uuid(struct bt_conn *conn, const struct bt_uuid *char_uuid, const void *data,
-		       uint16_t len)
-{
-	const struct acs_output_spec spec = {
-		.data = data,
-		.len = len,
-		.channel = ACS_REPLY_DON,
-	};
-
-	return acs_send_protected_output_lookup(conn, char_uuid, NULL, &spec);
+	return acs_send_protected_output(conn, params, ACS_REPLY_DOI);
 }
 #else
-int bt_acs_notify_cb(struct bt_conn *conn, struct bt_acs_notify_params *params)
+int bt_acs_notify(struct bt_conn *conn, const struct bt_acs_output_params *params)
 {
 	ARG_UNUSED(conn);
 	ARG_UNUSED(params);
@@ -420,21 +383,10 @@ int bt_acs_notify_cb(struct bt_conn *conn, struct bt_acs_notify_params *params)
 	return -ENOTSUP;
 }
 
-int bt_acs_indicate(struct bt_conn *conn, struct bt_acs_indicate_params *params)
+int bt_acs_indicate(struct bt_conn *conn, const struct bt_acs_output_params *params)
 {
 	ARG_UNUSED(conn);
 	ARG_UNUSED(params);
-
-	return -ENOTSUP;
-}
-
-int bt_acs_notify_uuid(struct bt_conn *conn, const struct bt_uuid *char_uuid, const void *data,
-		       uint16_t len)
-{
-	ARG_UNUSED(conn);
-	ARG_UNUSED(char_uuid);
-	ARG_UNUSED(data);
-	ARG_UNUSED(len);
 
 	return -ENOTSUP;
 }

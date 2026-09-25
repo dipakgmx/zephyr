@@ -217,6 +217,10 @@ if(CONFIG_BT_IAS)
   zephyr_iterable_section(NAME bt_ias_cb KVMA RAM_REGION GROUP RODATA_REGION)
 endif()
 
+if(CONFIG_BT_ACS_FEAT_AUTHORIZATION)
+  zephyr_iterable_section(NAME bt_acs_restriction_map KVMA RAM_REGION GROUP RODATA_REGION)
+endif()
+
 if(CONFIG_LOG)
   zephyr_iterable_section(NAME log_link KVMA RAM_REGION GROUP RODATA_REGION)
   zephyr_iterable_section(NAME log_backend KVMA RAM_REGION GROUP RODATA_REGION)

@@ -20,7 +20,7 @@ source "subsys/logging/Kconfig.template.log_config"
 
 menu "ACS Protection Methods"
 
-menuconfig BT_ACS_FEAT_AUTHORIZATION
+config BT_ACS_FEAT_AUTHORIZATION
 	bool "Authorization support (Restriction Maps)"
 	depends on BT_ACS_FEAT_AUTHENTICATION
 	select BT_GATT_AUTHORIZATION_CUSTOM
@@ -34,28 +34,11 @@ menuconfig BT_ACS_FEAT_AUTHORIZATION
 	  claims the GATT authorization callback to enforce them on plain
 	  ATT access (ACS 1.0 Section 3.1).
 
-if BT_ACS_FEAT_AUTHORIZATION
-
-config BT_ACS_ACTIVE_RMAP_ID
-	int "Default active Restriction Map ID"
-	default 2
-	range 1 65535
-	help
-	  Restriction Map made active on every new connection. Must be
-	  registered through BT_ACS_RESTRICTION_MAP_DEFINE() or
-	  bt_acs_init() fails.
-
-	  AC Clients cache map content by ID, so increment this whenever
-	  the protected resource set changes. ID 0 is reserved for direct
-	  access (ACS 1.0 Section 4.4.3.2); every other ID is the
-	  application's to assign.
-
-	  ACS registers no map of its own. An application that wants a
-	  policy in which nothing is protected must declare it, and a build
-	  that declares only protected maps has no way for a client to
-	  downgrade to one.
-
-endif # BT_ACS_FEAT_AUTHORIZATION
+	  ACS registers no restriction map of its own: the application
+	  defines them with BT_ACS_RESTRICTION_MAP_DEFINE() and names the
+	  one active at start with BT_ACS_INITIAL_RESTRICTION_MAP(). AC
+	  Clients cache a map by its ID, so give a map a new ID whenever
+	  its protected resources change.
 
 config BT_ACS_FEAT_AUTHENTICATION
 	bool "Authentication support"
@@ -131,13 +114,17 @@ config BT_ACS_CONFIRMATION_OUTPUT_MAX_VALUE
 
 config BT_ACS_CONFIRMATION_INPUT_MAX_VALUE
 	int
-	prompt "Maximum input numeric value" if BT_ACS_CONFIRMATION_INPUT_NUMERIC
+	prompt "Maximum Input OOB Number" if BT_ACS_CONFIRMATION_INPUT_NUMERIC || \
+					     BT_ACS_CONFIRMATION_INPUT_PUSH
 	default 999999 if BT_ACS_CONFIRMATION_INPUT_NUMERIC
+	default 9 if BT_ACS_CONFIRMATION_INPUT_PUSH
 	default 0
-	range 1 999999999 if BT_ACS_CONFIRMATION_INPUT_NUMERIC
+	range 1 999999999 if BT_ACS_CONFIRMATION_INPUT_NUMERIC || \
+			     BT_ACS_CONFIRMATION_INPUT_PUSH
 	help
-	  Maximum numeric value the AC Server can accept as
-	  confirmation input.
+	  Confirmation_Input_OOB_Number_Maximum_Value (ACS 1.0 4.4.4.27.5):
+	  the user enters a number between 1 and this value, as digits for
+	  Input Numeric and as a count of pushes for Input Push.
 
 menu "Security Management Procedures"
 
@@ -259,19 +246,6 @@ config BT_ACS_ANY_DATA_PROTECTION
 	bool
 	default y if BT_ACS_DATA_PROTECTION_AES_GCM || BT_ACS_DATA_PROTECTION_AES_CCM || \
 		     BT_ACS_DATA_PROTECTION_AES_GMAC || BT_ACS_DATA_PROTECTION_AES_CMAC
-
-config BT_ACS_ISC_MAX_CONTROLS
-	int
-	default 3 if BT_ACS_FEAT_CONFIDENTIALITY || BT_ACS_DATA_PROTECTION_AES_GMAC
-	default 2 if BT_ACS_DATA_PROTECTION_AES_CMAC
-	default 1
-	help
-	  Maximum number of Information Security Controls entries in a
-	  single ISC record, derived from the active protection level:
-	    GCM/CCM     -> 3 (NONCE, MAC, AUTH_ENC)
-	    GMAC        -> 3 (NONCE, MAC, AUTH)
-	    CMAC        -> 2 (MAC, AUTH)
-	    Otherwise   -> 1 (Unencrypted ISCs)
 
 # CMAC carries no nonce, so a CMAC-only build compiles out the nonce-prefix
 # machinery and the Set AC Client Nonce Fixed opcode.

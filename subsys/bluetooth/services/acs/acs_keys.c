@@ -305,16 +305,12 @@ static int ecdh_key_copy(psa_key_id_t src, psa_key_id_t persistent_id, psa_key_i
 void acs_keys_reset(struct bt_acs_conn *acs_conn)
 {
 	struct acs_keys *keys = &acs_conn->keys;
-	size_t i = 0;
 
 	acs_keys_remove(acs_conn, ACS_KEY_ID_ECDH);
 	mbedtls_platform_zeroize(keys, sizeof(*keys));
 
-	STRUCT_SECTION_FOREACH(bt_acs_key_desc_record, rec) {
-		if (acs_key_desc_is_algorithm_record(rec)) {
-			__ASSERT_NO_MSG(i < ARRAY_SIZE(keys->algs));
-			keys->algs[i++].key_desc = rec;
-		}
+	ARRAY_FOR_EACH(keys->algs, i) {
+		keys->algs[i].key_desc = acs_key_desc_alg_record(i);
 	}
 }
 

@@ -24,6 +24,7 @@
 #include "acs_isc.h"
 #include "acs_key_desc.h"
 #include "acs_keys.h"
+#include "acs_key_exchange.h"
 #endif
 #include "acs_rmap.h"
 
@@ -380,28 +381,6 @@ static void acs_att_mtu_updated(struct bt_conn *conn, uint16_t tx, uint16_t rx)
 	}
 }
 
-static int acs_init_authentication(void)
-{
-#if IS_ENABLED(CONFIG_BT_ACS_FEAT_AUTHENTICATION)
-	int ret;
-
-	ret = acs_isc_validate_records();
-	if (ret != 0) {
-		LOG_ERR("ISC record validation failed: %d", ret);
-		return ret;
-	}
-
-	ret = acs_key_desc_validate_records();
-	if (ret != 0) {
-		LOG_ERR("Key descriptor record validation failed: %d", ret);
-		return ret;
-	}
-
-	acs_keys_init();
-#endif
-	return 0;
-}
-
 /* Fail initialization if configured protection cannot be enforced (§3.1). */
 static int acs_init_authorization(void)
 {
@@ -414,12 +393,9 @@ static int acs_init_authorization(void)
 		return ret;
 	}
 
-	ret = acs_rmap_activate_map(CONFIG_BT_ACS_ACTIVE_RMAP_ID);
-	if (ret != 0) {
-		LOG_ERR("Active restriction map 0x%04x is not registered",
-			CONFIG_BT_ACS_ACTIVE_RMAP_ID);
-		return ret;
-	}
+	/* Defined through BT_ACS_RESTRICTION_MAP_DEFINE(), so registered; IDs are unique. */
+	ret = acs_rmap_activate_map(z_bt_acs_initial_rmap->map_id);
+	__ASSERT_NO_MSG(ret == 0);
 
 	ret = acs_policy_register_gatt_auth_cb();
 	if (ret != 0) {
@@ -447,10 +423,9 @@ int bt_acs_init(const struct bt_acs_cb *cb)
 		return ret;
 	}
 
-	ret = acs_init_authentication();
-	if (ret != 0) {
-		return ret;
-	}
+#if IS_ENABLED(CONFIG_BT_ACS_FEAT_AUTHENTICATION)
+	acs_keys_init();
+#endif
 
 	ret = acs_init_authorization();
 	if (ret != 0) {
@@ -470,11 +445,11 @@ int bt_acs_init(const struct bt_acs_cb *cb)
 	return 0;
 }
 
-int bt_acs_set_oob_number(struct bt_conn *conn, const uint8_t *oob, uint16_t len)
+int bt_acs_input_oob_number(struct bt_conn *conn, uint32_t number)
 {
 	struct bt_acs_conn *acs_conn;
 
-	if (conn == NULL || oob == NULL || len == 0U || len > ACS_CONFIRM_VALUE_SIZE) {
+	if (conn == NULL || number == 0U || number > CONFIG_BT_ACS_CONFIRMATION_INPUT_MAX_VALUE) {
 		return -EINVAL;
 	}
 
@@ -493,9 +468,7 @@ int bt_acs_set_oob_number(struct bt_conn *conn, const uint8_t *oob, uint16_t len
 		return -EPERM;
 	}
 
-	memset(acs_conn->kex->auth_value, 0, sizeof(acs_conn->kex->auth_value));
-	memcpy(&acs_conn->kex->auth_value[ACS_CONFIRM_VALUE_SIZE - len], oob, len);
-
+	acs_kex_set_auth_value(acs_conn->kex, number);
 	return 0;
 }
 

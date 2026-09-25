@@ -13,7 +13,6 @@
 #include <zephyr/net_buf.h>
 #include <zephyr/sys/__assert.h>
 #include <zephyr/sys/byteorder.h>
-#include <zephyr/sys/iterable_sections.h>
 
 #include "acs_crypto_config.h"
 
@@ -73,12 +72,12 @@ enum acs_elliptic_curve {
 
 /* Key Derivation Function types (Table 4.44). */
 enum acs_kdf_type {
-	ACS_KDF_SHA256 = 0x00,           /* HMAC-SHA-256 */
-	ACS_KDF_SHA256_WITH_INFO = 0x01, /* HMAC-SHA-256, KDF_Info concatenated */
-	ACS_KDF_SHA384 = 0x02,           /* HMAC-SHA-384 */
-	ACS_KDF_SHA384_WITH_INFO = 0x03, /* HMAC-SHA-384, KDF_Info concatenated */
-	ACS_KDF_SHA512 = 0x04,           /* HMAC-SHA-512 */
-	ACS_KDF_SHA512_WITH_INFO = 0x05, /* HMAC-SHA-512, KDF_Info concatenated */
+	ACS_KDF_SHA256 = 0x00,           /* HKDF SHA-256 128-bit */
+	ACS_KDF_SHA256_WITH_INFO = 0x01, /* HKDF SHA-256 128-bit, extra data added to KDF_Info */
+	ACS_KDF_SHA384 = 0x02,           /* HKDF SHA-384 128-bit */
+	ACS_KDF_SHA384_WITH_INFO = 0x03, /* HKDF SHA-384 128-bit, extra data added to KDF_Info */
+	ACS_KDF_SHA512 = 0x04,           /* HKDF SHA-512 128-bit */
+	ACS_KDF_SHA512_WITH_INFO = 0x05, /* HKDF SHA-512 128-bit, extra data added to KDF_Info */
 	ACS_KDF_RESERVED = 0x06          /* RFU, 0x06-0xFF */
 };
 
@@ -97,7 +96,7 @@ enum acs_nonce_type {
 		0x02 /* Sequence Number Different Fixed Parts (fixed + variable) */
 };
 
-/* Compile-time key descriptor record. */
+/* Key descriptor record (Table 4.36). */
 struct bt_acs_key_desc_record {
 	uint8_t type_id; /* Type_ID (Table 4.36) */
 	uint16_t key_id; /* Type_Value / Key_ID (Table 4.36) */
@@ -126,19 +125,18 @@ struct bt_acs_key_desc_record {
 	};
 };
 
-/* Static key-descriptor record definition. */
-#define BT_ACS_KEY_DESC_DEFINE(_name, ...)                                                         \
-	STRUCT_SECTION_ITERABLE(bt_acs_key_desc_record, _name) = {__VA_ARGS__}
+/*
+ * Add the key descriptor records selected by filter_id to buf. Return Success,
+ * No Records Found, or Procedure Not Completed when a record cannot be written.
+ */
+uint8_t acs_key_desc_build_response(uint16_t filter_id, struct net_buf *buf,
+				    struct bt_acs_conn *acs_conn);
 
-/* Build the Key Descriptor Response records selected by filter_id. */
-int acs_key_desc_build_response(uint16_t filter_id, struct net_buf *buf,
-				struct bt_acs_conn *acs_conn);
-
-/* Find a registered key descriptor by Key_ID, or return NULL. */
+/* Find a key descriptor by Key_ID, or return NULL when this build has none. */
 const struct bt_acs_key_desc_record *acs_key_desc_lookup(uint16_t key_id);
 
-/* Check the key descriptor records and their runtime slots. */
-int acs_key_desc_validate_records(void);
+/* Security algorithm record number index, from 0 to ACS_SEC_ALG_COUNT - 1. */
+const struct bt_acs_key_desc_record *acs_key_desc_alg_record(size_t index);
 
 /* Return true when rec is an algorithm record. */
 bool acs_key_desc_is_algorithm_record(const struct bt_acs_key_desc_record *rec);

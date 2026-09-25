@@ -155,7 +155,7 @@ static bool acs_gatt_notify_authorize(struct bt_conn *conn, const struct bt_gatt
 	}
 
 	LOG_WRN("plain notification on protected handle 0x%04x dropped; send it over Data Out "
-		"with bt_acs_notify_uuid() or bt_acs_notify_cb()",
+		"with bt_acs_notify()",
 		handle);
 	return false;
 }

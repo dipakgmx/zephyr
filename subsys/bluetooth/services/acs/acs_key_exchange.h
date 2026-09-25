@@ -14,6 +14,9 @@
 /* Allocate a key-exchange context, or return NULL if none is available. */
 struct bt_acs_kex_ctx *acs_kex_alloc(struct bt_acs_conn *acs_conn);
 
+/* Set the AuthValue to an OOB number: big-endian in the last octets, zeros before. */
+void acs_kex_set_auth_value(struct bt_acs_kex_ctx *kex, uint32_t number);
+
 /* Append the Key Exchange Response (§4.4.3.10) after the last step's response. */
 int acs_kex_add_result(struct acs_reply *reply);
 

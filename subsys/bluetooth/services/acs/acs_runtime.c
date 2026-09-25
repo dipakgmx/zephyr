@@ -100,7 +100,8 @@ static uint8_t acs_runtime_classify_route(const struct acs_frame *frame,
 
 			opcode = is_write ? BT_ACS_RMAP_OP_ATT_WRITE_REQ
 					  : BT_ACS_RMAP_OP_ATT_READ_REQ;
-			route->kind = is_write ? ACS_ROUTE_PROTECTED_WRITE : ACS_ROUTE_PROTECTED_READ;
+			route->kind = is_write ? ACS_ROUTE_PROTECTED_WRITE
+					       : ACS_ROUTE_PROTECTED_READ;
 			break;
 		}
 		default:
@@ -114,8 +115,8 @@ static uint8_t acs_runtime_classify_route(const struct acs_frame *frame,
 			return BT_ACS_ATT_ERR_INCORRECT_SECURITY_CONFIG;
 		}
 
-		route->value_attr = resource->value_attr;
-		route->value_props = resource->props;
+		route->value_attr = resource->bound.value_attr;
+		route->value_props = resource->bound.props;
 		return BT_ATT_ERR_SUCCESS;
 	}
 #else

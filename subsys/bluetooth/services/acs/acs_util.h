@@ -16,31 +16,6 @@
 extern "C" {
 #endif
 
-/* Map a response-building errno to an ACS Control Point Response Code. */
-static inline enum bt_acs_cp_response_code errno_to_acs_status(int err)
-{
-	switch (err) {
-	case 0:
-		return BT_ACS_CP_RESPONSE_SUCCESS;
-	case -EINVAL:
-		return BT_ACS_CP_RESPONSE_INVALID_OPERAND;
-	case -ENOENT:
-		return BT_ACS_CP_RESPONSE_NO_RECORDS_FOUND;
-	case -ERANGE:
-		return BT_ACS_CP_RESPONSE_PARAMETER_OUT_OF_RANGE;
-	case -EALREADY:
-	case -EAGAIN:
-		return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE;
-	case -ENOTSUP:
-		return BT_ACS_CP_RESPONSE_OPCODE_NOT_SUPPORTED;
-	case -ENOSPC:
-	case -EACCES:
-		return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED;
-	default:
-		return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED;
-	}
-}
-
 /*
  * Add a descriptor record header (Table 4.4) if buf has room for it and for
  * data_size octets of Data, which the caller adds next. Return -ENOMEM and add

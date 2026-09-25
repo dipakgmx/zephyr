@@ -95,9 +95,12 @@ uint32_t acs_rmap_protected_resource_feature_bits(void);
 /* Return the Multiple Restriction Maps Supported state (Table 4.60 bit 2). */
 bool acs_rmap_multiple_supported(void);
 
-/* Append the Restriction Map Descriptor records of map selected by handle_filter. */
-int acs_rmap_build_descriptor_response(const struct bt_acs_restriction_map *map,
-				       uint16_t handle_filter, struct net_buf *buf);
+/*
+ * Add the records of map selected by handle_filter to buf. Return Success, No
+ * Records Found, or Procedure Not Completed when buf is full.
+ */
+uint8_t acs_rmap_build_descriptor_response(const struct bt_acs_restriction_map *map,
+					   uint16_t handle_filter, struct net_buf *buf);
 
 /* Return whether any active descriptor is protected and its common ISC_ID. */
 bool acs_rmap_descriptor_protection(const struct bt_acs_restriction_map *active_map,

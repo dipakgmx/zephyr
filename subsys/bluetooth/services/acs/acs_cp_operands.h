@@ -228,9 +228,9 @@ BUILD_ASSERT(sizeof(struct acs_cp_get_isc_descriptor_req) == 2,
 BUILD_ASSERT(sizeof(struct acs_cp_set_client_nonce_fixed_req) == 2,
 	     "SET_CLIENT_NONCE_FIXED operand header size mismatch");
 BUILD_ASSERT(sizeof(struct acs_cp_ecdh_confirm_code_req) == 2 + ACS_CONFIRM_VALUE_SIZE,
-	     "ECDH_CONFIRM_CODE operand struct size mismatch");
+	     "KEY_EXCHANGE_ECDH_CONFIRMATION_CODE operand struct size mismatch");
 BUILD_ASSERT(sizeof(struct acs_cp_ecdh_confirm_rand_req) == 2 + ACS_CONFIRM_VALUE_SIZE,
-	     "ECDH_CONFIRM_RAND operand struct size mismatch");
+	     "KEY_EXCHANGE_ECDH_CONFIRMATION_RANDOM_NUMBER operand struct size mismatch");
 /* Selected_Confirmation_Method field values (Table 4.50). */
 enum bt_acs_confirmation_method {
 	BT_ACS_CONFIRM_METHOD_NONE = 0x00,       /* AuthValue all zero, not authenticated */
@@ -248,14 +248,7 @@ enum bt_acs_confirmation_action_output {
 	BT_ACS_CONFIRM_ACTION_OUTPUT_NUMERIC = 0x03, /* Server displays a number */
 };
 
-/*
- * Input actions (Table 4.52), for BT_ACS_CONFIRM_METHOD_INPUT_OOB. 0x01,
- * 0x03-0xFE are RFU; 0xFF is Prohibited.
- */
-enum bt_acs_confirmation_action_input {
-	BT_ACS_CONFIRM_ACTION_INPUT_PUSH = 0x00,    /* User pushes a control */
-	BT_ACS_CONFIRM_ACTION_INPUT_NUMERIC = 0x02, /* User types a number */
-};
+/* Input actions (Table 4.52) are enum bt_acs_input_oob_action in the public header. */
 
 /*
  * Confirmation action for the non-OOB methods, NONE and STATIC_OOB, which

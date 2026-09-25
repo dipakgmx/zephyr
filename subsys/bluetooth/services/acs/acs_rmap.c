@@ -85,7 +85,7 @@ const struct bt_acs_rmap_resource *
 acs_rmap_resource_by_handle(const struct bt_acs_restriction_map *map, uint16_t resource_handle)
 {
 	STRUCT_SECTION_FOREACH(bt_acs_rmap_resource, res) {
-		if (res->map_id == map->map_id && res->resource_handle == resource_handle) {
+		if (res->map == map && res->bound.resource_handle == resource_handle) {
 			return res;
 		}
 	}
@@ -97,7 +97,7 @@ const struct bt_acs_rmap_resource *
 acs_rmap_resource_by_attr_handle(const struct bt_acs_restriction_map *map, uint16_t attr_handle)
 {
 	STRUCT_SECTION_FOREACH(bt_acs_rmap_resource, res) {
-		if (res->map_id == map->map_id && res->attr_handle == attr_handle) {
+		if (res->map == map && res->bound.attr_handle == attr_handle) {
 			return res;
 		}
 	}
@@ -109,7 +109,7 @@ const struct bt_acs_rmap_resource *
 acs_rmap_resource_by_uuid(const struct bt_acs_restriction_map *map, const struct bt_uuid *uuid)
 {
 	STRUCT_SECTION_FOREACH(bt_acs_rmap_resource, res) {
-		if (res->map_id == map->map_id && res->kind == BT_ACS_RMAP_RESOURCE_CHAR &&
+		if (res->map == map && res->kind == BT_ACS_RMAP_RESOURCE_CHAR &&
 		    bt_uuid_cmp(res->char_uuid, uuid) == 0) {
 			return res;
 		}
@@ -317,8 +317,9 @@ int acs_rmap_activate_map(uint16_t map_id)
 
 	LOG_INF("Active restriction map 0x%04x: map_isc=0x%04x, descriptors %s", map->map_id,
 		map->map_isc_id,
-		acs_rmap_descriptor_protection(map, &descriptor_isc) ? "protected (Data In)"
-								      : "unprotected (plain ACS CP)");
+		acs_rmap_descriptor_protection(map, &descriptor_isc)
+			? "protected (Data In)"
+			: "unprotected (plain ACS CP)");
 
 	return 0;
 }
@@ -351,7 +352,7 @@ static int rmap_append_resource_record(struct net_buf *buf,
 				  ? ACS_RMAP_TYPE_PROTECTED_CP
 				  : ACS_RMAP_TYPE_PROTECTED_CHAR;
 
-	return rmap_append_protected_record(buf, type_id, resource->resource_handle,
+	return rmap_append_protected_record(buf, type_id, resource->bound.resource_handle,
 					    resource->ops, resource->num_ops);
 }
 
@@ -402,7 +403,7 @@ static int rmap_append_whole_map(const struct bt_acs_restriction_map *map, struc
 	}
 
 	STRUCT_SECTION_FOREACH(bt_acs_rmap_resource, res) {
-		if (res->map_id != map->map_id) {
+		if (res->map != map) {
 			continue;
 		}
 
@@ -436,14 +437,18 @@ static int rmap_append_one_resource(const struct bt_acs_restriction_map *map,
 	return rmap_append_default_record(buf, &characteristic, map->default_isc_id);
 }
 
-int acs_rmap_build_descriptor_response(const struct bt_acs_restriction_map *map,
-				       uint16_t handle_filter, struct net_buf *buf)
+uint8_t acs_rmap_build_descriptor_response(const struct bt_acs_restriction_map *map,
+					   uint16_t handle_filter, struct net_buf *buf)
 {
-	if (handle_filter == ACS_RMAP_FILTER_ALL) {
-		return rmap_append_whole_map(map, buf);
+	int err = (handle_filter == ACS_RMAP_FILTER_ALL)
+			  ? rmap_append_whole_map(map, buf)
+			  : rmap_append_one_resource(map, handle_filter, buf);
+
+	if (err == -ENOENT) {
+		return BT_ACS_CP_RESPONSE_NO_RECORDS_FOUND;
 	}
 
-	return rmap_append_one_resource(map, handle_filter, buf);
+	return (err == 0) ? BT_ACS_CP_RESPONSE_SUCCESS : BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED;
 }
 
 /* Append every registered Restriction_Map_ID with its ISC (Table 4.22). */
@@ -471,11 +476,8 @@ uint8_t acs_cp_handle_get_restriction_map_id_list(struct acs_reply *reply,
 	ARG_UNUSED(payload);
 
 	err = rmap_build_id_list_response(reply->response);
-	if (err) {
-		return errno_to_acs_status(err);
-	}
 
-	return BT_ACS_CP_RESPONSE_SUCCESS;
+	return (err == 0) ? BT_ACS_CP_RESPONSE_SUCCESS : BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED;
 }
 
 uint8_t acs_cp_handle_get_restriction_map_descriptor(struct acs_reply *reply,
@@ -484,18 +486,12 @@ uint8_t acs_cp_handle_get_restriction_map_descriptor(struct acs_reply *reply,
 	uint16_t map_id = net_buf_simple_pull_le16(buf);
 	uint16_t handle_filter = net_buf_simple_pull_le16(buf);
 	const struct bt_acs_restriction_map *map = acs_rmap_lookup(map_id);
-	int err;
 
 	if (map == NULL) {
 		return BT_ACS_CP_RESPONSE_PARAMETER_OUT_OF_RANGE;
 	}
 
-	err = acs_rmap_build_descriptor_response(map, handle_filter, reply->response);
-	if (err) {
-		return errno_to_acs_status(err);
-	}
-
-	return BT_ACS_CP_RESPONSE_SUCCESS;
+	return acs_rmap_build_descriptor_response(map, handle_filter, reply->response);
 }
 
 uint8_t acs_cp_handle_activate_restriction_map(struct acs_reply *reply, struct net_buf_simple *buf)
@@ -549,37 +545,30 @@ static int rmap_check_maps(void)
 }
 
 /*
- * Each resource names a registered map, and a characteristic record lists only
- * opcodes the access policy can enforce. Clear the GATT binding for rmap_bind().
+ * A characteristic record lists only opcodes the access policy can enforce.
+ * Clear the GATT binding for rmap_bind().
  */
 static int rmap_check_resources(void)
 {
 	STRUCT_SECTION_FOREACH(bt_acs_rmap_resource, res) {
 		enum acs_direction direction;
 
-		if (res->char_uuid == NULL || (res->num_ops > 0U && res->ops == NULL)) {
+		if (res->map == NULL || res->char_uuid == NULL ||
+		    (res->num_ops > 0U && res->ops == NULL)) {
 			LOG_ERR("invalid protected-resource registration");
 			return -EINVAL;
-		}
-
-		if (acs_rmap_lookup(res->map_id) == NULL) {
-			LOG_ERR("protected resource references unknown map 0x%04x", res->map_id);
-			return -ENOENT;
 		}
 
 		for (uint8_t i = 0; i < res->num_ops; i++) {
 			if (res->kind == BT_ACS_RMAP_RESOURCE_CHAR &&
 			    !rmap_att_op_direction(res->ops[i].opcode, &direction)) {
 				LOG_ERR("map 0x%04x: ATT opcode 0x%04x cannot be protected",
-					res->map_id, res->ops[i].opcode);
+					res->map->map_id, res->ops[i].opcode);
 				return -EINVAL;
 			}
 		}
 
-		res->resource_handle = 0U;
-		res->attr_handle = 0U;
-		res->value_attr = NULL;
-		res->props = 0U;
+		res->bound = (struct bt_acs_rmap_binding){0};
 	}
 
 	return 0;
@@ -602,15 +591,17 @@ static uint8_t rmap_bind_characteristic(const struct acs_rhandle_resource *chara
 		if (bt_uuid_cmp(res->char_uuid, characteristic->uuid) != 0) {
 			continue;
 		}
-		if (res->attr_handle != 0U) {
+		if (res->bound.attr_handle != 0U) {
 			*ambiguous = res;
 			return BT_GATT_ITER_STOP;
 		}
 
-		res->resource_handle = characteristic->resource_handle;
-		res->attr_handle = characteristic->attr_handle;
-		res->value_attr = characteristic->attr;
-		res->props = characteristic->props;
+		res->bound = (struct bt_acs_rmap_binding){
+			.resource_handle = characteristic->resource_handle,
+			.attr_handle = characteristic->attr_handle,
+			.value_attr = characteristic->attr,
+			.props = characteristic->props,
+		};
 	}
 
 	return BT_GATT_ITER_CONTINUE;
@@ -634,7 +625,7 @@ static int rmap_bind(void)
 	}
 
 	STRUCT_SECTION_FOREACH(bt_acs_rmap_resource, res) {
-		if (res->attr_handle != 0U) {
+		if (res->bound.attr_handle != 0U) {
 			continue;
 		}
 
@@ -651,11 +642,9 @@ static int rmap_bind(void)
 static int rmap_check_listed_once(void)
 {
 	STRUCT_SECTION_FOREACH(bt_acs_rmap_resource, res) {
-		const struct bt_acs_restriction_map *map = acs_rmap_lookup(res->map_id);
-
-		if (acs_rmap_resource_by_handle(map, res->resource_handle) != res) {
-			LOG_ERR("map 0x%04x lists resource 0x%04x more than once", res->map_id,
-				res->resource_handle);
+		if (acs_rmap_resource_by_handle(res->map, res->bound.resource_handle) != res) {
+			LOG_ERR("map 0x%04x lists resource 0x%04x more than once", res->map->map_id,
+				res->bound.resource_handle);
 			return -EEXIST;
 		}
 	}
@@ -667,8 +656,8 @@ static int rmap_check_listed_once(void)
 
 /*
  * An ACS CP record lists no procedure a client must reach before it holds a
- * key. BT_ACS_RMAP_DECLARE_ACS_CP_OPS() asserts this at build time; this check
- * covers BT_ACS_RMAP_DECLARE_CP_OPS() naming the ACS CP UUID.
+ * key. BT_ACS_RMAP_ACS_CP_DEFINE() asserts this at build time; this check
+ * covers BT_ACS_RMAP_CP_DEFINE() naming the ACS CP UUID.
  */
 static int rmap_check_acs_cp_opcodes(void)
 {
@@ -676,15 +665,15 @@ static int rmap_check_acs_cp_opcodes(void)
 		Z_BT_ACS_CP_UNPROTECTABLE_OPCODES(_, RMAP_OPCODE_ENTRY)};
 
 	STRUCT_SECTION_FOREACH(bt_acs_rmap_resource, res) {
-		if (res->attr_handle != acs_cp_attr_handle()) {
+		if (res->bound.attr_handle != acs_cp_attr_handle()) {
 			continue;
 		}
 
 		for (uint8_t i = 0; i < res->num_ops; i++) {
 			for (size_t j = 0; j < ARRAY_SIZE(unprotectable); j++) {
 				if (res->ops[i].opcode == unprotectable[j]) {
-					LOG_ERR("map 0x%04x: ACS CP opcode 0x%02x cannot be protected",
-						res->map_id, res->ops[i].opcode);
+					LOG_ERR("map 0x%04x: ACS CP opcode 0x%02x is unprotectable",
+						res->map->map_id, res->ops[i].opcode);
 					return -EINVAL;
 				}
 			}
@@ -700,7 +689,8 @@ static uint32_t rmap_build_feature_bits(void)
 
 	STRUCT_SECTION_FOREACH(bt_acs_rmap_resource, res) {
 		if (res->kind == BT_ACS_RMAP_RESOURCE_CP) {
-			if (!acs_handle_is_own(res->attr_handle) && rmap_has_protected_opcode(res)) {
+			if (!acs_handle_is_own(res->bound.attr_handle) &&
+			    rmap_has_protected_opcode(res)) {
 				bits |= BT_ACS_FEATURE_PROTECTED_RESOURCE_USES_WRITE_REQUEST |
 					BT_ACS_FEATURE_PROTECTED_RESOURCE_USES_INDICATION;
 			}
@@ -733,14 +723,14 @@ static void rmap_log_maps(void)
 			map->map_isc_id, map->default_isc_id);
 
 		STRUCT_SECTION_FOREACH(bt_acs_rmap_resource, res) {
-			if (res->map_id != map->map_id) {
+			if (res->map != map) {
 				continue;
 			}
 
 			bt_uuid_to_str(res->char_uuid, uuid_str, sizeof(uuid_str));
 			LOG_DBG("  %s resource=0x%04x att=0x%04x uuid=%s",
 				res->kind == BT_ACS_RMAP_RESOURCE_CP ? "CP" : "char",
-				res->resource_handle, res->attr_handle, uuid_str);
+				res->bound.resource_handle, res->bound.attr_handle, uuid_str);
 			for (uint8_t i = 0; i < res->num_ops; i++) {
 				LOG_DBG("    op=0x%04x -> isc=0x%04x", res->ops[i].opcode,
 					res->ops[i].isc_id);

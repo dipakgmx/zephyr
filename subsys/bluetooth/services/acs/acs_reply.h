@@ -14,6 +14,7 @@
 #include <zephyr/bluetooth/gatt.h>
 #include <zephyr/net_buf.h>
 
+#include "acs_seg.h"
 #include "acs_types.h"
 
 #ifdef __cplusplus
@@ -40,6 +41,15 @@ void acs_reply_response_sent(void *user_data);
 
 /* Stop the active procedure and send the Abort Response Code. */
 void acs_abort_request(struct bt_acs_conn *conn);
+
+/*
+ * Largest response operand one message carries on any channel. A Data Out
+ * message gives up ISC_ID and Nonce_Var, the segment header, the
+ * Protected_Resource_Handle, the response opcode and the tag.
+ */
+#define ACS_MESSAGE_MAX_OPERAND                                                                    \
+	(ACS_BUF_SIZE - ACS_CRYPTO_HEADROOM - ACS_SEG_HDR_SIZE - sizeof(uint16_t) - 1U -          \
+	 ACS_MAX_AUTH_TAG_SIZE)
 
 /*
  * Append a message to reply and return its buffer, prepared for the reply's

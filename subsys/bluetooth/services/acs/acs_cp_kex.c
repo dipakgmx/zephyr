@@ -48,19 +48,19 @@ uint8_t acs_cp_kex_exchange_kdf(struct acs_reply *reply, struct net_buf_simple *
 
 	standalone = (net_buf_simple_pull_le16(buf) == ACS_KEY_ID_KDF);
 
-	/* Standalone KDF requires an established parent key. */
 	err = standalone ? acs_key_exchange_kdf(acs_conn, reply->response)
 			 : acs_key_exchange_ecdh_kdf(acs_conn, reply->response);
-	if (err) {
-		if (err != -EAGAIN) {
-			LOG_ERR("%s KDF key exchange: internal error (err %d)",
-				standalone ? "standalone" : "ECDH", err);
-		}
-		return errno_to_acs_status(err);
+	if (err == -EAGAIN) {
+		/* Standalone KDF needs an established ECDH key. */
+		return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE;
+	} else if (err) {
+		LOG_ERR("%s KDF key exchange: internal error (err %d)",
+			standalone ? "standalone" : "ECDH", err);
+		return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED;
 	}
 
 	if (!standalone) {
-		acs_conn->kex->next_opcode = BT_ACS_CP_OPCODE_ECDH_CONFIRM_CODE;
+		acs_conn->kex->next_opcode = BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH_CONFIRMATION_CODE;
 		return BT_ACS_CP_RESPONSE_SUCCESS;
 	}
 
@@ -82,9 +82,9 @@ static bool confirmation_supported(uint8_t method, uint8_t action)
 		       IS_ENABLED(CONFIG_BT_ACS_CONFIRMATION_OUTPUT_NUMERIC);
 	case BT_ACS_CONFIRM_METHOD_INPUT_OOB:
 		/* Table 4.52 */
-		return (action == BT_ACS_CONFIRM_ACTION_INPUT_PUSH &&
+		return (action == BT_ACS_INPUT_OOB_PUSH &&
 			IS_ENABLED(CONFIG_BT_ACS_CONFIRMATION_INPUT_PUSH)) ||
-		       (action == BT_ACS_CONFIRM_ACTION_INPUT_NUMERIC &&
+		       (action == BT_ACS_INPUT_OOB_NUMERIC &&
 			IS_ENABLED(CONFIG_BT_ACS_CONFIRMATION_INPUT_NUMERIC));
 	default:
 		/* Static OOB (0x03) is not implemented; 0x04-0xFF are RFU. */
@@ -97,7 +97,7 @@ static bool confirmation_supported(uint8_t method, uint8_t action)
  * Pick the Output OOB number between 1 and the advertised maximum (§4.4.4.27.8),
  * store it as the AuthValue and hand it to the application.
  */
-static uint8_t output_oob_start(struct bt_acs_conn *acs_conn, uint8_t action)
+static uint8_t output_oob_start(struct bt_acs_conn *acs_conn)
 {
 	const struct bt_acs_cb *cb = acs_cb_get();
 	uint32_t number;
@@ -110,10 +110,10 @@ static uint8_t output_oob_start(struct bt_acs_conn *acs_conn, uint8_t action)
 	}
 
 	number = (number % CONFIG_BT_ACS_CONFIRMATION_OUTPUT_MAX_VALUE) + 1U;
-	sys_put_be32(number, &acs_conn->kex->auth_value[ACS_CONFIRM_VALUE_SIZE - sizeof(number)]);
+	acs_kex_set_auth_value(acs_conn->kex, number);
 
 	if (cb != NULL && cb->output_oob_number != NULL) {
-		cb->output_oob_number(acs_conn->conn, action, number);
+		cb->output_oob_number(acs_conn->conn, number);
 	}
 
 	return BT_ACS_CP_RESPONSE_SUCCESS;
@@ -157,16 +157,17 @@ uint8_t acs_cp_kex_start(struct acs_reply *reply, struct net_buf_simple *buf)
 
 	if (key_id != ACS_KEY_ID_KDF) {
 		err = acs_key_exchange_ecdh_start(acs_conn, key_id);
-		if (err != 0) {
-			return errno_to_acs_status(err);
+		if (err == -EALREADY) {
+			/* Key_ID names no key exchange this server offers. */
+			return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_APPLICABLE;
+		} else if (err) {
+			return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED;
 		}
 	}
 
-	memset(acs_conn->kex->auth_value, 0, sizeof(acs_conn->kex->auth_value));
-
 #if IS_ENABLED(CONFIG_BT_ACS_CONFIRMATION_OUTPUT_NUMERIC)
 	if (req.confirmation_method == BT_ACS_CONFIRM_METHOD_OUTPUT_OOB) {
-		uint8_t rc = output_oob_start(acs_conn, req.confirmation_action);
+		uint8_t rc = output_oob_start(acs_conn);
 
 		if (rc != BT_ACS_CP_RESPONSE_SUCCESS) {
 			return rc;
@@ -179,8 +180,9 @@ uint8_t acs_cp_kex_start(struct acs_reply *reply, struct net_buf_simple *buf)
 		cb->input_oob_request(acs_conn->conn, req.confirmation_action);
 	}
 
-	acs_conn->kex->next_opcode = (key_id == ACS_KEY_ID_KDF) ? BT_ACS_CP_OPCODE_KEY_EXCHANGE_KDF
-								: BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH;
+	acs_conn->kex->next_opcode = (key_id == ACS_KEY_ID_KDF)
+					     ? BT_ACS_CP_OPCODE_KEY_EXCHANGE_KDF
+					     : BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH;
 
 	return BT_ACS_CP_RESPONSE_SUCCESS;
 }
@@ -231,10 +233,8 @@ uint8_t acs_cp_kex_exchange_ecdh(struct acs_reply *reply, struct net_buf_simple 
 		LOG_ERR("ECDH pubkey: invalid client public key (err %d)", err);
 		return BT_ACS_CP_RESPONSE_INVALID_PUBLIC_KEY;
 	} else if (err) {
-		if (err != -EAGAIN) {
-			LOG_ERR("ECDH pubkey: internal error (err %d)", err);
-		}
-		return errno_to_acs_status(err);
+		LOG_ERR("ECDH pubkey: internal error (err %d)", err);
+		return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED;
 	}
 
 	acs_conn->kex->next_opcode = BT_ACS_CP_OPCODE_KEY_EXCHANGE_KDF;
@@ -252,10 +252,10 @@ uint8_t acs_cp_kex_ecdh_confirm_code(struct acs_reply *reply, struct net_buf_sim
 
 	err = acs_key_exchange_ecdh_confirm_code(acs_conn, reply->response);
 	if (err) {
-		return errno_to_acs_status(err);
+		return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED;
 	}
 
-	acs_conn->kex->next_opcode = BT_ACS_CP_OPCODE_ECDH_CONFIRM_RAND;
+	acs_conn->kex->next_opcode = BT_ACS_CP_OPCODE_KEY_EXCHANGE_ECDH_CONFIRMATION_RANDOM_NUMBER;
 	return BT_ACS_CP_RESPONSE_SUCCESS;
 }
 
