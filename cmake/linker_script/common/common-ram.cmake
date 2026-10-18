@@ -156,3 +156,7 @@ endif()
 if(CONFIG_FIDO2)
   zephyr_iterable_section(NAME fido2_transport GROUP DATA_REGION ${XIP_ALIGN_WITH_INPUT})
 endif()
+
+if(CONFIG_BT_ACS_FEAT_AUTHORIZATION)
+  zephyr_iterable_section(NAME bt_acs_rmap_resource GROUP DATA_REGION ${XIP_ALIGN_WITH_INPUT})
+endif()
