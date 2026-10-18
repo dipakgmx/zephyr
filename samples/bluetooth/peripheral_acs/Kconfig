@@ -1,0 +1,36 @@
+# Copyright (c) 2025 Dipak Shetty
+# SPDX-License-Identifier: Apache-2.0
+
+mainmenu "Bluetooth: Peripheral ACS sample"
+
+choice SAMPLE_ACS_ISC
+	prompt "ISC protecting the sample's resources"
+	default SAMPLE_ACS_ISC_GCM if BT_ACS_DATA_PROTECTION_AES_GCM
+	default SAMPLE_ACS_ISC_GMAC if BT_ACS_DATA_PROTECTION_AES_GMAC
+	default SAMPLE_ACS_ISC_CMAC
+	help
+	  Every restriction map operation entry names a single ISC, so one
+	  algorithm governs the sample's protected resources.
+
+	  Defaults follow the protection level: GCM with confidentiality, GMAC
+	  with integrity, CMAC otherwise. Select CCM explicitly.
+
+config SAMPLE_ACS_ISC_GCM
+	bool "AES-128-GCM (high security)"
+	depends on BT_ACS_DATA_PROTECTION_AES_GCM
+
+config SAMPLE_ACS_ISC_CCM
+	bool "AES-128-CCM (high security)"
+	depends on BT_ACS_DATA_PROTECTION_AES_CCM
+
+config SAMPLE_ACS_ISC_GMAC
+	bool "AES-128-GMAC (integrity)"
+	depends on BT_ACS_DATA_PROTECTION_AES_GMAC
+
+config SAMPLE_ACS_ISC_CMAC
+	bool "AES-128-CMAC (MAC only)"
+	depends on BT_ACS_DATA_PROTECTION_AES_CMAC
+
+endchoice
+
+source "Kconfig.zephyr"
