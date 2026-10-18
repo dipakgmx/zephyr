@@ -2598,6 +2598,9 @@ static int gatt_notify_mult(struct bt_conn *conn, uint16_t handle,
 #endif /* CONFIG_BT_GATT_NOTIFY_MULTIPLE_FLUSH_MS != 0 */
 #endif /* CONFIG_BT_GATT_NOTIFY_MULTIPLE */
 
+/* Module registered with CONFIG_BT_GATT_TX_ROUTER */
+static const struct bt_gatt_tx_router *tx_router;
+
 static int gatt_notify(struct bt_conn *conn, uint16_t handle,
 		       struct bt_gatt_notify_params *params)
 {
@@ -3063,6 +3066,14 @@ int bt_gatt_notify_cb(struct bt_conn *conn,
 		return -EINVAL;
 	}
 
+	if (IS_ENABLED(CONFIG_BT_GATT_TX_ROUTER) && tx_router != NULL) {
+		int route = tx_router->notify(conn, params);
+
+		if (route != BT_GATT_TX_ROUTE_CONTINUE) {
+			return (route == BT_GATT_TX_ROUTE_CONSUMED) ? 0 : route;
+		}
+	}
+
 	if (conn) {
 		return gatt_notify(conn, data.handle, params);
 	}
@@ -3133,6 +3144,7 @@ static int gatt_notify_multiple_verify_params(struct bt_conn *conn,
 					     uint16_t num_params, size_t *total_len)
 {
 	const struct bt_gatt_attr *attr = NULL;
+	bool routed = false;
 
 	for (uint16_t i = 0; i < num_params; i++) {
 		/* Compute the total PDU length: each value is preceded by its
@@ -3153,6 +3165,11 @@ static int gatt_notify_multiple_verify_params(struct bt_conn *conn,
 		attr = bt_gatt_attr_resolve_value(params[i].attr);
 		if (attr == NULL) {
 			return -EINVAL;
+		}
+
+		if (IS_ENABLED(CONFIG_BT_GATT_TX_ROUTER) && tx_router != NULL &&
+		    tx_router->owns(attr, BT_GATT_CHRC_NOTIFY)) {
+			routed = true;
 		}
 
 		/* Confirm that the connection has the correct level of security. */
@@ -3191,6 +3208,12 @@ static int gatt_notify_multiple_verify_params(struct bt_conn *conn,
 	/* Check there is a bearer with a high enough MTU. */
 	if (bt_att_get_mtu(conn) < (sizeof(struct bt_att_hdr) + *total_len)) {
 		return -ERANGE;
+	}
+
+	/* A routed value cannot travel in the single PDU this API promises. */
+	if (routed) {
+		LOG_DBG("Batch contains a routed notification");
+		return -EACCES;
 	}
 
 	return 0;
@@ -3304,6 +3327,14 @@ int bt_gatt_indicate(struct bt_conn *conn,
 	params->attr = bt_gatt_attr_resolve_value(data.attr);
 	if (params->attr == NULL) {
 		return -EINVAL;
+	}
+
+	if (IS_ENABLED(CONFIG_BT_GATT_TX_ROUTER) && tx_router != NULL) {
+		int route = tx_router->indicate(conn, params);
+
+		if (route != BT_GATT_TX_ROUTE_CONTINUE) {
+			return (route == BT_GATT_TX_ROUTE_CONSUMED) ? 0 : route;
+		}
 	}
 
 	if (conn) {
@@ -6900,6 +6931,25 @@ bool bt_gatt_attr_write_authorize(struct bt_conn *conn, const struct bt_gatt_att
 	}
 
 	return authorization_cb->write_authorize(conn, attr);
+}
+
+int bt_gatt_tx_router_register(const struct bt_gatt_tx_router *router)
+{
+	if (!IS_ENABLED(CONFIG_BT_GATT_TX_ROUTER)) {
+		return -ENOSYS;
+	}
+
+	if (router == NULL) {
+		return -EINVAL;
+	}
+
+	if (tx_router != NULL) {
+		return -EALREADY;
+	}
+
+	tx_router = router;
+
+	return 0;
 }
 
 int bt_gatt_authorization_cb_register(const struct bt_gatt_authorization_cb *cb)

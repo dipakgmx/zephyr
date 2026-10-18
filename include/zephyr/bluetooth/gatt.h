@@ -1649,7 +1649,7 @@ struct bt_gatt_indicate_params {
 	const void *data;
 	/** Indicate Value length*/
 	uint16_t len;
-	/** Private reference counter */
+	/** Reference counter, private to the host or to a TX router that consumed the indication */
 	uint8_t _ref;
 #if defined(CONFIG_BT_EATT) || defined(__DOXYGEN__)
 	/** Att channel options. */
@@ -1688,6 +1688,72 @@ struct bt_gatt_indicate_params {
  */
 int bt_gatt_indicate(struct bt_conn *conn,
 		     struct bt_gatt_indicate_params *params);
+
+/** Result of a TX router callback: deliver the value over ordinary GATT. */
+#define BT_GATT_TX_ROUTE_CONTINUE 0
+
+/** Result of a TX router callback: the router took the value and no ATT PDU is sent. */
+#define BT_GATT_TX_ROUTE_CONSUMED 1
+
+/** @brief GATT notification and indication router.
+ *
+ *  Lets one module take values passed to @ref bt_gatt_notify_cb and
+ *  @ref bt_gatt_indicate and send them over its own transport, to recipients
+ *  it selects. Each callback returns @ref BT_GATT_TX_ROUTE_CONTINUE,
+ *  @ref BT_GATT_TX_ROUTE_CONSUMED or a negative error code for the call.
+ *
+ *  @note @ref bt_gatt_is_subscribed still reports only the characteristic's
+ *  own CCC.
+ */
+struct bt_gatt_tx_router {
+	/** @brief Check whether the router takes an operation on an attribute.
+	 *
+	 *  Used by @ref bt_gatt_notify_multiple, which fails with @c -EACCES
+	 *  when this returns true for any entry. Must not send anything.
+	 *
+	 *  @param attr      Characteristic value attribute.
+	 *  @param operation @ref BT_GATT_CHRC_NOTIFY or @ref BT_GATT_CHRC_INDICATE.
+	 *
+	 *  @retval true  The router takes the operation.
+	 *  @retval false The operation goes over ordinary GATT.
+	 */
+	bool (*owns)(const struct bt_gatt_attr *attr, uint8_t operation);
+
+	/** @brief Route a notification.
+	 *
+	 *  After consuming, the router calls @p params->func for each peer the
+	 *  value was sent to; a peer the value never reached gets no call, as
+	 *  with an ordinary notification.
+	 */
+	int (*notify)(struct bt_conn *conn, const struct bt_gatt_notify_params *params);
+
+	/** @brief Route an indication.
+	 *
+	 *  After consuming, the router owns @p params, including its reference
+	 *  counter: it calls @p params->func once per accepted peer with that
+	 *  peer's result, then @p params->destroy, if set, once. When the router
+	 *  returns an error, neither callback runs.
+	 */
+	int (*indicate)(struct bt_conn *conn, struct bt_gatt_indicate_params *params);
+};
+
+/** @brief Register the GATT TX router.
+ *
+ *  Registration is permanent: only one router can be registered, and it
+ *  cannot be unregistered or replaced. The router structure must remain
+ *  valid while the Bluetooth subsystem is active.
+ *
+ *  The @kconfig{CONFIG_BT_GATT_TX_ROUTER} Kconfig must be enabled to make this
+ *  API functional.
+ *
+ *  @param router Router callbacks.
+ *
+ *  @retval 0         Success.
+ *  @retval -EINVAL   @p router is NULL.
+ *  @retval -EALREADY A router is already registered.
+ *  @retval -ENOSYS   @kconfig{CONFIG_BT_GATT_TX_ROUTER} is disabled.
+ */
+int bt_gatt_tx_router_register(const struct bt_gatt_tx_router *router);
 
 /** @brief Check if connection have subscribed to attribute
  *
