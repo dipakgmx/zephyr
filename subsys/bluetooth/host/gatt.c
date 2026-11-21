@@ -2598,8 +2598,8 @@ static int gatt_notify_mult(struct bt_conn *conn, uint16_t handle,
 #endif /* CONFIG_BT_GATT_NOTIFY_MULTIPLE_FLUSH_MS != 0 */
 #endif /* CONFIG_BT_GATT_NOTIFY_MULTIPLE */
 
-/* Module registered with CONFIG_BT_GATT_TX_ROUTER */
-static const struct bt_gatt_tx_router *tx_router;
+/* Module registered with CONFIG_BT_GATT_TX_INTERCEPT */
+static const struct bt_gatt_tx_intercept *tx_intercept;
 
 static int gatt_notify(struct bt_conn *conn, uint16_t handle,
 		       struct bt_gatt_notify_params *params)
@@ -3066,11 +3066,11 @@ int bt_gatt_notify_cb(struct bt_conn *conn,
 		return -EINVAL;
 	}
 
-	if (IS_ENABLED(CONFIG_BT_GATT_TX_ROUTER) && tx_router != NULL) {
-		int route = tx_router->notify(conn, params);
+	if (IS_ENABLED(CONFIG_BT_GATT_TX_INTERCEPT) && tx_intercept != NULL) {
+		int ret = tx_intercept->notify(conn, params);
 
-		if (route != BT_GATT_TX_ROUTE_CONTINUE) {
-			return (route == BT_GATT_TX_ROUTE_CONSUMED) ? 0 : route;
+		if (ret != BT_GATT_TX_INTERCEPT_CONTINUE) {
+			return (ret == BT_GATT_TX_INTERCEPT_CONSUMED) ? 0 : ret;
 		}
 	}
 
@@ -3144,7 +3144,7 @@ static int gatt_notify_multiple_verify_params(struct bt_conn *conn,
 					     uint16_t num_params, size_t *total_len)
 {
 	const struct bt_gatt_attr *attr = NULL;
-	bool routed = false;
+	bool intercepted = false;
 
 	for (uint16_t i = 0; i < num_params; i++) {
 		/* Compute the total PDU length: each value is preceded by its
@@ -3167,9 +3167,9 @@ static int gatt_notify_multiple_verify_params(struct bt_conn *conn,
 			return -EINVAL;
 		}
 
-		if (IS_ENABLED(CONFIG_BT_GATT_TX_ROUTER) && tx_router != NULL &&
-		    tx_router->owns(attr, BT_GATT_CHRC_NOTIFY)) {
-			routed = true;
+		if (IS_ENABLED(CONFIG_BT_GATT_TX_INTERCEPT) && tx_intercept != NULL &&
+		    tx_intercept->owns(attr, BT_GATT_CHRC_NOTIFY)) {
+			intercepted = true;
 		}
 
 		/* Confirm that the connection has the correct level of security. */
@@ -3210,9 +3210,9 @@ static int gatt_notify_multiple_verify_params(struct bt_conn *conn,
 		return -ERANGE;
 	}
 
-	/* A routed value cannot travel in the single PDU this API promises. */
-	if (routed) {
-		LOG_DBG("Batch contains a routed notification");
+	/* An intercepted value cannot travel in the single PDU this API promises. */
+	if (intercepted) {
+		LOG_DBG("Batch contains an intercepted notification");
 		return -EACCES;
 	}
 
@@ -3329,11 +3329,11 @@ int bt_gatt_indicate(struct bt_conn *conn,
 		return -EINVAL;
 	}
 
-	if (IS_ENABLED(CONFIG_BT_GATT_TX_ROUTER) && tx_router != NULL) {
-		int route = tx_router->indicate(conn, params);
+	if (IS_ENABLED(CONFIG_BT_GATT_TX_INTERCEPT) && tx_intercept != NULL) {
+		int ret = tx_intercept->indicate(conn, params);
 
-		if (route != BT_GATT_TX_ROUTE_CONTINUE) {
-			return (route == BT_GATT_TX_ROUTE_CONSUMED) ? 0 : route;
+		if (ret != BT_GATT_TX_INTERCEPT_CONTINUE) {
+			return (ret == BT_GATT_TX_INTERCEPT_CONSUMED) ? 0 : ret;
 		}
 	}
 
@@ -6933,21 +6933,21 @@ bool bt_gatt_attr_write_authorize(struct bt_conn *conn, const struct bt_gatt_att
 	return authorization_cb->write_authorize(conn, attr);
 }
 
-int bt_gatt_tx_router_register(const struct bt_gatt_tx_router *router)
+int bt_gatt_tx_intercept_register(const struct bt_gatt_tx_intercept *intercept)
 {
-	if (!IS_ENABLED(CONFIG_BT_GATT_TX_ROUTER)) {
+	if (!IS_ENABLED(CONFIG_BT_GATT_TX_INTERCEPT)) {
 		return -ENOSYS;
 	}
 
-	if (router == NULL) {
+	if (intercept == NULL) {
 		return -EINVAL;
 	}
 
-	if (tx_router != NULL) {
+	if (tx_intercept != NULL) {
 		return -EALREADY;
 	}
 
-	tx_router = router;
+	tx_intercept = intercept;
 
 	return 0;
 }
