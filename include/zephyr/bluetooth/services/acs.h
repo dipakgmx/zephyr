@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2024
+ * SPDX-FileCopyrightText: Copyright The Zephyr Project Contributors
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -27,21 +27,13 @@
 extern "C" {
 #endif
 
-/** @brief ACS Status characteristic Status_Flags field bits (Table 4.7). */
-enum bt_acs_status_flag {
-	/** Security controls are enabled on this server */
-	BT_ACS_STATUS_SECURITY_CONTROLS_ENABLED = BIT(0),
-	/** Security has been established for this connection */
-	BT_ACS_STATUS_SECURITY_ESTABLISHED = BIT(1),
-};
-
 /**
  * @brief ACS Control Point opcodes, requests and responses (Table 4.14).
  */
 enum bt_acs_cp_opcode {
-	/** General response from the ACS CP to state procedure errors or success. */
+	/** Reports the result of a procedure. */
 	BT_ACS_CP_OPCODE_RESPONSE_CODE = 0x00,
-	/** Triggers reporting of all active ACS descriptors in a single request. */
+	/** Requests every active ACS descriptor in one response. */
 	BT_ACS_CP_OPCODE_GET_ALL_ACTIVE_DESCRIPTORS = 0x01,
 	/** Gets the restriction map based on restriction map ID and filter criterion. */
 	BT_ACS_CP_OPCODE_GET_RESTRICTION_MAP_DESCRIPTOR = 0x02,
@@ -111,7 +103,7 @@ enum bt_acs_cp_opcode {
 	BT_ACS_CP_OPCODE_KEY_EXCHANGE_KDF_RESPONSE = 0x22,
 	/** Sets the fixed part of the AC Client nonce. */
 	BT_ACS_CP_OPCODE_SET_CLIENT_NONCE_FIXED = 0x23,
-	/** Requests the negotiated ATT_MTU size for communication optimization. */
+	/** Requests the negotiated ATT_MTU. */
 	BT_ACS_CP_OPCODE_ATT_MTU = 0xDD,
 	/** Used by the AC Server to provide the negotiated ATT_MTU. */
 	BT_ACS_CP_OPCODE_ATT_MTU_RESPONSE = 0xDE,
@@ -123,8 +115,9 @@ enum bt_acs_cp_opcode {
 
 /** @cond INTERNAL_HIDDEN */
 /*
- * Most procedures one Protected Control Point record can list: its Data_Size is
- * one octet (Table 4.4) and each procedure takes four (Table 4.20).
+ * Most procedures one Protected Control Point record can list. Data_Size is one
+ * octet (§4.1.2), and each procedure is one Data entry of four octets: Opcode
+ * and ISC_ID, two octets each (Table 4.20). 255 / 4 = 63.
  */
 #define Z_BT_ACS_RMAP_MAX_PROCEDURES (UINT8_MAX / 4U)
 
@@ -132,7 +125,7 @@ enum bt_acs_cp_opcode {
 #define Z_BT_ACS_RMAP_CHAR_OPERATIONS                                                              \
 	(BT_GATT_CHRC_READ | BT_GATT_CHRC_WRITE | BT_GATT_CHRC_NOTIFY | BT_GATT_CHRC_INDICATE)
 
-/* Protected resource kind selecting the record Type_ID (0x02 char, 0x03 CP). */
+/* Protected resource kind: record Type_ID 0x02 or 0x03 (Table 4.19). */
 enum bt_acs_rmap_resource_kind {
 	BT_ACS_RMAP_RESOURCE_CHAR,
 	BT_ACS_RMAP_RESOURCE_CP,
@@ -142,7 +135,7 @@ enum bt_acs_rmap_resource_kind {
 struct bt_acs_rmap_binding {
 	uint16_t resource_handle;              /* ACS Resource Handle */
 	const struct bt_gatt_attr *value_attr; /* GATT value attribute */
-	uint8_t props;                         /* GATT characteristic properties */
+	uint8_t props;                         /* Properties of the characteristic declaration */
 };
 
 struct bt_acs_restriction_map;
@@ -154,9 +147,9 @@ struct bt_acs_rmap_resource {
 	const struct bt_uuid *char_uuid;          /* UUID of the characteristic backing it */
 	uint16_t isc_id;                          /* ISC of every protected operation */
 	uint8_t operations;                       /* characteristic: BT_GATT_CHRC_* protected */
-	const uint16_t *procedures;               /* Control Point: protected procedure opcodes */
-	uint8_t num_procedures;                   /* entries in procedures */
-	struct bt_acs_rmap_binding bound;         /* set by bt_acs_init(), not the application */
+	uint8_t num_procedures;                   /* Control Point: number of procedures */
+	const uint16_t *procedures;               /* Control Point: Opcodes (Table 4.20) */
+	struct bt_acs_rmap_binding bound;         /* Resource Handle, value attribute, properties */
 };
 
 /** @endcond */
@@ -164,9 +157,10 @@ struct bt_acs_rmap_resource {
 /**
  * @name Information Security Configuration IDs
  *
- * ISC IDs other than 0x0000 and 0xFFFF are assigned by the AC Server (§4.4.3.7).
- * These are this implementation's. Each ISC record is compiled in only when its
- * algorithm is enabled, and naming one that is not fails the build.
+ * ISC IDs other than 0x0000 and 0xFFFF are assigned by the AC Server (§4.4.3.7);
+ * this implementation assigns the IDs below. An ID is usable only when its
+ * algorithm is enabled: naming another one in a restriction map or protected
+ * resource fails the build.
  *
  * @{
  */
@@ -199,7 +193,10 @@ struct bt_acs_rmap_resource {
 	BUILD_ASSERT(Z_BT_ACS_ISC_ENABLED(_isc),                                                   \
 		     "ISC must be BT_ACS_ISC_ID_NONE or one whose algorithm is enabled")
 
-/* Decimal digits of a map ID, 0 when it does not fit 16 bits. */
+/*
+ * Decimal digits of a map ID, 0 when it does not fit 16 bits. A constant
+ * expression, so BUILD_ASSERT() can use it.
+ */
 #define Z_BT_ACS_RMAP_ID_DIGITS(_id)                                                               \
 	(((_id) < 10)            ? 1U                                                              \
 	 : ((_id) < 100)         ? 2U                                                              \
@@ -209,8 +206,11 @@ struct bt_acs_rmap_resource {
 				 : 0U)
 
 /*
- * A map's section is keyed by its ID and sorted numerically, which needs the ID
- * spelled in decimal: then its text is exactly as long as its value has digits.
+ * The Restriction Map ID List must be in ascending map ID order. Maps sit in an
+ * iterable section whose name ends in the ID as written, and the linker sorts it
+ * by name length, then as text (ITERABLE_SECTION_ROM_NUMERIC). That is numeric
+ * order only for IDs written in decimal without leading zeroes or a suffix,
+ * which is when the text is as long as the value has digits.
  */
 #define Z_BT_ACS_ASSERT_RMAP_ID(_id)                                                               \
 	BUILD_ASSERT(sizeof(STRINGIFY(_id)) - 1U == Z_BT_ACS_RMAP_ID_DIGITS(_id),                  \
@@ -286,18 +286,20 @@ struct bt_acs_restriction_map {
 #define BT_ACS_RESTRICTION_MAP_EXTERN(_name) extern const struct bt_acs_restriction_map _name
 
 /** @cond INTERNAL_HIDDEN */
+/* Defined by BT_ACS_INITIAL_RESTRICTION_MAP(); bt_acs_init() activates it. */
 extern const struct bt_acs_restriction_map *const z_bt_acs_initial_rmap;
 /** @endcond */
 
 /**
- * @brief Select the restriction map active when ACS starts.
+ * @brief Name the restriction map bt_acs_init() activates.
  *
- * Exactly one per application: leaving it out fails the link, as does a second
- * one. The active map is AC Server state shared by every connection (§4.4.3.4);
- * an AC Client may switch it with Activate Restriction Map. A client without
- * keys starts from Get Restriction Map ID List and Get Information Security
- * Configuration Descriptor, so the initial map should leave the latter
- * unprotected; its own descriptor may be protected.
+ * Use exactly once in the application: a missing or second use fails at link
+ * time. The active map applies to every connection, and an AC Client can switch
+ * it with Activate Restriction Map (§4.4.3.4).
+ *
+ * A client without keys needs Get Restriction Map ID List and Get Information
+ * Security Configuration Descriptor to set up security, so leave the latter
+ * unprotected in this map. The map's own descriptor may be protected.
  *
  * @param _name Symbol given to BT_ACS_RESTRICTION_MAP_DEFINE()
  */
@@ -329,7 +331,8 @@ extern const struct bt_acs_restriction_map *const z_bt_acs_initial_rmap;
  * it, and the restriction map descriptor lists the ATT opcodes the
  * characteristic's properties offer for it (ACS 1.0 Section 3.1).
  *
- * @param _name       C identifier of the record
+ * @param _name       Unique C identifier of the record. bt_acs_init() finds the record
+ *                    in its iterable section, so no code names it.
  * @param _map        Restriction map symbol (BT_ACS_RESTRICTION_MAP_DEFINE())
  * @param _char_uuid  Pointer to the characteristic UUID
  * @param _isc_id     ISC bound to every protected operation
@@ -379,7 +382,8 @@ extern const struct bt_acs_restriction_map *const z_bt_acs_initial_rmap;
  * Point is protected as a whole, with BT_ACS_PROTECTED_CHARACTERISTIC_DEFINE()
  * and BT_GATT_CHRC_WRITE.
  *
- * @param _name   C identifier of the record
+ * @param _name   Unique C identifier of the record. bt_acs_init() finds the record in
+ *                its iterable section, so no code names it.
  * @param _map    Restriction map symbol (BT_ACS_RESTRICTION_MAP_DEFINE())
  * @param _isc_id ISC bound to every listed procedure
  * @param ...     One or more BT_ACS_CP_OPCODE_* values
@@ -420,25 +424,33 @@ enum bt_acs_input_oob_action {
 	BT_ACS_INPUT_OOB_NUMERIC = 0x02,
 };
 
-/** @brief ACS application callbacks */
+/**
+ * @brief ACS application callbacks
+ *
+ * The callbacks run on the ACS workqueue, except security_invalidated() when
+ * bt_acs_invalidate_security() causes it: then it runs in the caller's thread.
+ * Keep them short; procedures on every connection wait for them.
+ */
 struct bt_acs_cb {
 	/**
 	 * @brief Security has been established for a connection.
 	 *
-	 * Called when a key exchange completes, by either method: ECDH, or a
-	 * standalone KDF exchange deriving fresh session keys from a restored
-	 * parent key.
+	 * Called when the Key Exchange Response of a key exchange is sent, by
+	 * either method: ECDH, or a standalone KDF exchange deriving fresh keys
+	 * from a restored ECDH key.
 	 *
 	 * @param conn Connection object.
 	 */
 	void (*security_established)(struct bt_conn *conn);
 
 	/**
-	 * @brief Security has been invalidated for a connection.
+	 * @brief Established security has ended for a connection.
 	 *
-	 * Called on disconnect, on an Invalidate procedure from the client, and
-	 * on bt_acs_invalidate_security(). A new key exchange is required before
-	 * protected resources are reachable again.
+	 * Called once per security_established(), when security ends: on
+	 * disconnect, on Invalidate Key or Invalidate All Established Security
+	 * (which ends it on every connection), when a nonce counter runs out,
+	 * and on bt_acs_invalidate_security(). A new key exchange is required
+	 * before protected resources are reachable again.
 	 *
 	 * @param conn Connection object.
 	 */
@@ -510,50 +522,41 @@ int bt_acs_input_oob_number(struct bt_conn *conn, uint32_t number);
  * @note Start advertising only after this function returns successfully. Connections established
  * before ACS creates their per-connection state cannot use protected resources and must reconnect.
  *
- * @param cb Application callbacks.
+ * @param cb Application callbacks, not NULL.
  *
  * @retval 0 Success.
- * @retval -EALREADY ACS has already been initialized.
+ * @retval -EALREADY ACS has already been initialized, or another module has
+ *         registered the GATT authorization callbacks or the GATT TX intercept.
  * @retval -EINVAL A restriction map or protected resource is malformed, or names
  *         an operation the server cannot enforce.
  * @retval -ENOENT A protected characteristic could not be resolved to a GATT
  *         handle.
  * @retval -EEXIST Two restriction maps share an ID, a protected UUID names more
  *         than one characteristic value, or a map lists a resource twice.
+ * @retval -EMSGSIZE A Restriction Map Descriptor, Restriction Map ID List or
+ *         Resource Handle UUID Map response exceeds
+ *         @kconfig{CONFIG_BT_ACS_MAX_MESSAGE_SIZE}.
  */
 int bt_acs_init(const struct bt_acs_cb *cb);
 
 /**
- * @brief Invalidate the established ACS security session for a connection.
+ * @brief Invalidate all ACS security of a connection.
  *
- * Clears the session key and crypto state, resets the security status flag,
- * and erases any persisted session from flash (if @kconfig{CONFIG_BT_SETTINGS}
- * is enabled). The application is notified via the @c security_invalidated
- * callback and the client is informed via an ACS Status indication.
+ * Ends established security, aborts a running key exchange, removes every key
+ * of the connection and deletes the peer's stored ECDH key and nonces. The
+ * security_invalidated callback runs in the calling thread when security was
+ * established, and the client gets an ACS Status indication.
  *
- * After this call the client must perform a new key exchange before accessing
- * protected resources.
+ * The client must run a new ECDH key exchange before it can reach protected
+ * resources again.
  *
- * @param conn Connection whose security session should be invalidated.
+ * @param conn Connection object.
  *
- * @return 0 on success.
- * @return -EINVAL if @p conn is NULL or ACS is not initialized.
- * @return -ENOTCONN if no ACS context exists for @p conn.
+ * @retval 0 Success.
+ * @retval -EINVAL @p conn is NULL or ACS is not initialized.
+ * @retval -ENOTCONN No ACS connection found for @p conn.
  */
 int bt_acs_invalidate_security(struct bt_conn *conn);
-
-/**
- * @brief Get current ACS status flags for a connection.
- *
- * Never fails: a NULL @p conn, or one with no ACS context, reports the
- * server-wide security controls switch with the per-connection
- * @ref BT_ACS_STATUS_SECURITY_ESTABLISHED bit clear.
- *
- * @param conn Connection to query, or NULL for the server-wide flags.
- *
- * @return Status flags bitmask (@ref bt_acs_status_flag).
- */
-uint8_t bt_acs_status_get(struct bt_conn *conn);
 
 #ifdef __cplusplus
 }

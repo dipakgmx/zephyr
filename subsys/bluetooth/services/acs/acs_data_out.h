@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2026 Dipak Shetty
+ * SPDX-FileCopyrightText: Copyright The Zephyr Project Contributors
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -28,7 +28,7 @@ void acs_data_out_init_conn(struct bt_acs_conn *acs_conn);
 void acs_data_out_complete(struct acs_reply *reply, int err);
 
 /* Send notifications and indications of protected resources on ACS Data Out (§4.3.2). */
-int acs_data_out_router_register(void);
+int acs_data_out_intercept_register(void);
 
 #ifdef __cplusplus
 }

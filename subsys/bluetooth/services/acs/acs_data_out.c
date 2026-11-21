@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2026 Dipak Shetty
+ * SPDX-FileCopyrightText: Copyright The Zephyr Project Contributors
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -413,7 +413,7 @@ static int data_out_send(struct bt_conn *conn, struct data_out_params *out)
 	return err;
 }
 
-/* Send out on ACS Data Out when the active map protects it; returns as bt_gatt_tx_router. */
+/* Send out on ACS Data Out when the active map protects it; returns as bt_gatt_tx_intercept. */
 static int data_out_intercept(struct bt_conn *conn, struct data_out_params *out,
 			      enum bt_att_chan_opt chan_opt)
 {
@@ -423,7 +423,7 @@ static int data_out_intercept(struct bt_conn *conn, struct data_out_params *out,
 
 	out->isc_id = data_out_isc(out->attr, operation, &out->resource_handle);
 	if (out->isc_id == BT_ACS_ISC_ID_NONE) {
-		return BT_GATT_TX_ROUTE_CONTINUE;
+		return BT_GATT_TX_INTERCEPT_CONTINUE;
 	}
 
 	/* Data Out picks its own ATT bearer. */
@@ -437,7 +437,7 @@ static int data_out_intercept(struct bt_conn *conn, struct data_out_params *out,
 
 	if (out->ind == NULL) {
 		err = data_out_send(conn, out);
-		return (err == 0) ? BT_GATT_TX_ROUTE_CONSUMED : err;
+		return (err == 0) ? BT_GATT_TX_INTERCEPT_CONSUMED : err;
 	}
 
 	/*
@@ -449,7 +449,7 @@ static int data_out_intercept(struct bt_conn *conn, struct data_out_params *out,
 	err = data_out_send(conn, out);
 	if (err == 0) {
 		ind_params_unref(out->ind);
-		return BT_GATT_TX_ROUTE_CONSUMED;
+		return BT_GATT_TX_INTERCEPT_CONSUMED;
 	}
 
 	/* No conn took it, so nothing else holds params; the call fails without destroy. */
@@ -489,14 +489,14 @@ static int acs_gatt_tx_indicate(struct bt_conn *conn, struct bt_gatt_indicate_pa
 	return data_out_intercept(conn, &out, PARAMS_CHAN_OPT(params));
 }
 
-int acs_data_out_router_register(void)
+int acs_data_out_intercept_register(void)
 {
-	static const struct bt_gatt_tx_router acs_tx_router = {
+	static const struct bt_gatt_tx_intercept acs_tx_intercept = {
 		.owns = acs_gatt_tx_owns,
 		.notify = acs_gatt_tx_notify,
 		.indicate = acs_gatt_tx_indicate,
 	};
 
-	return bt_gatt_tx_router_register(&acs_tx_router);
+	return bt_gatt_tx_intercept_register(&acs_tx_intercept);
 }
 #endif /* CONFIG_BT_ACS_FEAT_AUTHORIZATION */

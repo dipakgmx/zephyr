@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Dipak Shetty
+ * SPDX-FileCopyrightText: Copyright The Zephyr Project Contributors
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -9,6 +9,7 @@
 
 #include <stdint.h>
 #include <zephyr/toolchain.h>
+#include <zephyr/sys/util_macro.h>
 #include <zephyr/bluetooth/att.h>
 
 #include "acs_crypto_config.h"
@@ -17,6 +18,12 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/* ACS Status characteristic Status_Flags field bits (Table 4.7). */
+enum bt_acs_status_flag {
+	BT_ACS_STATUS_SECURITY_CONTROLS_ENABLED = BIT(0), /* Security controls switch on */
+	BT_ACS_STATUS_SECURITY_ESTABLISHED = BIT(1),      /* Security established on this link */
+};
 
 /* Descriptor general schema (Table 4.4). */
 struct acs_desc_rec_hdr {

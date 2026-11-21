@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Dipak Shetty
+ * SPDX-FileCopyrightText: Copyright The Zephyr Project Contributors
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -17,63 +17,66 @@
 extern "C" {
 #endif
 
-/* Allocate an ACS buffer from the shared pool, or return NULL when exhausted. */
+/* Allocate a buffer from the shared ACS pool, or return NULL when none frees within timeout. */
 struct net_buf *acs_buf_alloc(k_timeout_t timeout);
 
-/* ACS Control Point value attribute. */
+/* Return the ACS Control Point value attribute, cached by bt_acs_init(). */
 const struct bt_gatt_attr *acs_attr_cp(void);
 
-/* Cached Resource Handle of the ACS Control Point (resolved at init). */
+/* Return the Resource Handle of the ACS Control Point, cached by bt_acs_init(). */
 uint16_t acs_cp_resource_handle(void);
 
-/* Return true when attr is one of the ACS service's own GATT attributes. */
+/* Return true when attr belongs to the ACS service itself. */
 bool acs_attr_is_own(const struct bt_gatt_attr *attr);
 
 #if IS_ENABLED(CONFIG_BT_ACS_FEAT_AUTHENTICATION)
-/* ACS Data Out Notify value attribute. */
+/* Return the ACS Data Out Notify value attribute, cached by bt_acs_init(). */
 const struct bt_gatt_attr *acs_attr_don(void);
 
-/* ACS Data Out Indicate value attribute. */
+/* Return the ACS Data Out Indicate value attribute, cached by bt_acs_init(). */
 const struct bt_gatt_attr *acs_attr_doi(void);
 
-/* Check whether Data Out Notify notifications are enabled. */
+/* Return 0 when conn has enabled ACS Data Out Notify notifications, else -EINVAL. */
 int acs_don_ccc_check(struct bt_conn *conn);
 
-/* Check whether Data Out Indicate indications are enabled. */
+/* Return 0 when conn has enabled ACS Data Out Indicate indications, else -EINVAL. */
 int acs_doi_ccc_check(struct bt_conn *conn);
 #endif
 
-/* Check whether ACS Control Point indications are enabled. */
+/* Return 0 when conn has enabled ACS Control Point indications, else -EINVAL. */
 int acs_cp_ccc_check(struct bt_conn *conn);
 
-/* Mark Status pending and schedule its indication, unless the link is gone. */
+/* Schedule a Status indication to acs_conn, unless its link is gone. */
 void acs_status_schedule(struct bt_acs_conn *acs_conn);
 
-/* Schedule a Status indication for every connected peer. */
+/* Schedule a Status indication to every connection with ACS state. */
 void acs_status_schedule_all(void);
 
-/* Initialize the per-connection Status indication work item. */
+/* Initialize the Status indication work of acs_conn. */
 void acs_status_work_init(struct bt_acs_conn *acs_conn);
 
-/* Return true after the ACS service has initialized successfully. */
+/* Return true once bt_acs_init() has succeeded. */
 bool acs_is_initialized(void);
 
-/* Return the server-wide security-controls switch state. */
+/* Return true when the security controls switch is on. */
 bool acs_security_switch_get(void);
 
-/* Set the security-controls switch and indicate the new Status to every peer. */
+/* Set the security controls switch; a change schedules a Status indication to every peer. */
 void acs_security_switch_set(bool enabled);
 
-/* Return the registered application callbacks, or NULL. */
+/* Return the callbacks given to bt_acs_init(), or NULL. */
 const struct bt_acs_cb *acs_cb_get(void);
 
-/* Return the dedicated ACS workqueue. */
+/* Return the ACS workqueue. */
 struct k_work_q *acs_get_wq(void);
 
-/* Per-connection state at pool index, which must be below CONFIG_BT_MAX_CONN. */
+/* Return the slot at index, active or not; index must be below CONFIG_BT_MAX_CONN. */
 struct bt_acs_conn *acs_conn_by_index(uint8_t index);
 
-/* Find the ACS state for conn, or return NULL when its slot is inactive. */
+/*
+ * Return the ACS state of conn, or NULL when its slot is inactive, held by another
+ * connection or marked disconnected.
+ */
 struct bt_acs_conn *acs_conn_lookup(struct bt_conn *conn);
 
 /*
@@ -99,7 +102,7 @@ void acs_security_end(struct bt_acs_conn *acs_conn);
  */
 void acs_security_invalidate(struct bt_acs_conn *acs_conn);
 
-/* Register the ACS GATT authorization callback. */
+/* Register the ACS GATT authorization callbacks for reads and writes. */
 int acs_policy_register_gatt_auth_cb(void);
 
 #ifdef __cplusplus

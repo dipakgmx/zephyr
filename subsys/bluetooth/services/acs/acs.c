@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Dipak Shetty
+ * SPDX-FileCopyrightText: Copyright The Zephyr Project Contributors
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -374,10 +374,10 @@ static int acs_init_authorization(void)
 		return ret;
 	}
 
-	/* The initial map is active, so the router can classify every value it sees. */
-	ret = acs_data_out_router_register();
+	/* The initial map is active, so the intercept can classify every value it sees. */
+	ret = acs_data_out_intercept_register();
 	if (ret != 0) {
-		LOG_ERR("Failed to register GATT TX router: %d", ret);
+		LOG_ERR("Failed to register GATT TX intercept: %d", ret);
 		return ret;
 	}
 
@@ -491,9 +491,4 @@ void acs_security_switch_set(bool enabled)
 	}
 
 	acs_status_schedule_all();
-}
-
-uint8_t bt_acs_status_get(struct bt_conn *conn)
-{
-	return acs_status_flags(conn != NULL ? acs_conn_lookup(conn) : NULL);
 }

@@ -3,12 +3,13 @@
 config BT_ACS
 	bool "GATT Authorization Control Service"
 	depends on BT_CONN
-	depends on MBEDTLS_PSA_CRYPTO_C
+	depends on PSA_CRYPTO
+	depends on MBEDTLS
 	depends on !BT_GATT_DYNAMIC_DB
 	select EXPERIMENTAL
 	help
 	  Enable GATT Authorization Control Service (UUID 0x183D).
-	  This service provides application-level security for BLE resources,
+	  This service provides application-level security for Bluetooth LE resources,
 	  requiring an Authorization Control (AC) Client to successfully authenticate
 	  to access specific, protected GATT resources of an AC Server.
 
@@ -24,41 +25,45 @@ config BT_ACS_FEAT_AUTHORIZATION
 	bool "Authorization support (Restriction Maps)"
 	depends on BT_ACS_FEAT_AUTHENTICATION
 	select BT_GATT_AUTHORIZATION_CUSTOM
-	select BT_GATT_TX_ROUTER
+	select BT_GATT_TX_INTERCEPT
 	default y
 	help
 	  Support authorization information security controls
-	  (ACS 1.0 Table 4.61).
+	  (ACS 1.0 Table 4.61): restriction maps and the Get Restriction
+	  Map Descriptor (0x02) and Get Restriction Map ID List (0x04)
+	  procedures.
 
-	  Adds Restriction Maps and the Get Restriction Map Descriptor
-	  (0x02) and Get Restriction Map ID List (0x04) procedures. ACS
-	  claims the GATT authorization callback to enforce them on plain
-	  ATT reads and writes (ACS 1.0 Section 3.1), and the GATT TX router
-	  to send notifications and indications of protected resources on
-	  ACS Data Out Notify and ACS Data Out Indicate (Section 4.3.2).
-
-	  ACS registers no restriction map of its own: the application
-	  defines them with BT_ACS_RESTRICTION_MAP_DEFINE() and names the
-	  one active at start with BT_ACS_INITIAL_RESTRICTION_MAP(). AC
-	  Clients cache a map by its ID, so give a map a new ID whenever
-	  its protected resources change.
+	  The application defines the maps with
+	  BT_ACS_RESTRICTION_MAP_DEFINE() and names the one active at start
+	  with BT_ACS_INITIAL_RESTRICTION_MAP(). AC Clients cache a map by
+	  its ID (ACS 1.0 Section 3.5.3), so give a map a new ID whenever
+	  its content changes.
 
 config BT_ACS_FEAT_AUTHENTICATION
 	bool "Authentication support"
-	depends on PSA_WANT_ALG_ECDH
-	depends on PSA_WANT_ALG_HKDF
-	depends on PSA_WANT_ALG_SHA_256
-	depends on PSA_WANT_KEY_TYPE_DERIVE
-	depends on PSA_WANT_ECC_SECP_R1_256
 	depends on BT_SETTINGS
+	select PSA_WANT_ALG_ECDH
+	select PSA_WANT_ALG_HKDF
+	select PSA_WANT_ALG_HMAC
+	select PSA_WANT_ALG_SHA_256
+	select PSA_WANT_KEY_TYPE_DERIVE
+	select PSA_WANT_KEY_TYPE_HMAC
+	select PSA_WANT_KEY_TYPE_ECC_KEY_PAIR_IMPORT
+	select PSA_WANT_KEY_TYPE_ECC_KEY_PAIR_GENERATE
+	select PSA_WANT_KEY_TYPE_ECC_KEY_PAIR_EXPORT
+	select PSA_WANT_ECC_SECP_R1_256
 	default y
 	help
 	  Support authentication information security controls
 	  (ACS 1.0 Table 4.61).
-
 	  Adds both key-exchange methods and the protected Data In/Out
 	  channel, using Curve P-256 with HKDF SHA-256 128-bit (ACP 1.0
-	  Section 4.1.1.1). When disabled, the server is discovery-only.
+	  Section 4.1.1.1). Integrity, confidentiality and authorization
+	  depend on it.
+
+	  Each bonded peer's ECDH key is kept as a persistent PSA key, so
+	  the PSA Crypto provider needs key storage (CONFIG_SECURE_STORAGE
+	  with Mbed TLS).
 
 config BT_ACS_FEAT_INTEGRITY
 	bool "Integrity support"
@@ -101,18 +106,17 @@ config BT_ACS_CONFIRMATION_INPUT_PUSH
 
 endmenu # Confirmation Capabilities
 
-# Reported in every Feature Response, so these stay outside the menu above:
-# they must exist even when confirmation is unavailable, where the zero
-# default applies.
+# Outside the menu above: the ACS Feature Response reports them, as 0 when
+# unused.
 
 config BT_ACS_CONFIRMATION_OUTPUT_MAX_VALUE
 	int
-	prompt "Maximum output numeric value" if BT_ACS_CONFIRMATION_OUTPUT_NUMERIC
+	prompt "Maximum Output OOB Number" if BT_ACS_CONFIRMATION_OUTPUT_NUMERIC
 	default 999999 if BT_ACS_CONFIRMATION_OUTPUT_NUMERIC
 	default 0
 	range 1 999999999 if BT_ACS_CONFIRMATION_OUTPUT_NUMERIC
 	help
-	  Confirmation_Output_OOB_Number_Maximum_Value (ACS 1.0 4.4.4.27.7):
+	  Confirmation_Output_OOB_Number_Maximum_Value (ACS 1.0 Section 4.4.4.27.7):
 	  the Output OOB Number is picked between 1 and this value.
 
 config BT_ACS_CONFIRMATION_INPUT_MAX_VALUE
@@ -125,7 +129,7 @@ config BT_ACS_CONFIRMATION_INPUT_MAX_VALUE
 	range 1 999999999 if BT_ACS_CONFIRMATION_INPUT_NUMERIC || \
 		BT_ACS_CONFIRMATION_INPUT_PUSH
 	help
-	  Confirmation_Input_OOB_Number_Maximum_Value (ACS 1.0 4.4.4.27.5):
+	  Confirmation_Input_OOB_Number_Maximum_Value (ACS 1.0 Section 4.4.4.27.5):
 	  the user enters a number between 1 and this value, as digits for
 	  Input Numeric and as a count of pushes for Input Push.
 
@@ -133,19 +137,14 @@ config BT_ACS_ATT_MTU
 	bool "Get ATT_MTU procedure"
 	default y
 	help
-	  Report the negotiated ATT_MTU to an AC Client
+	  Support the Get ATT_MTU procedure (ACS 1.0 Section 4.4.3.19) and
+	  indicate the new ATT_MTU to an AC Client when it changes.
 
 menu "Security Management Procedures"
-
-# This implementation advertises Invalidate All Established Security / Invalidate
-# Key whenever authentication (and thus key exchange) is offered - a product
-# policy, not a Table 4.13 equivalence. Setting the feature bit is what makes the
-# procedures mandatory (Table 4.13 C.5/C.6). Abort is unconditional.
 
 config BT_ACS_SET_SECURITY_CONTROLS_SWITCH
 	bool "Set Security Controls Switch procedure"
 	depends on BT_ACS_FEAT_AUTHENTICATION
-	default n
 	help
 	  Let an AC Client change the state of the security controls
 	  switch (ACS 1.0 Section 4.4.3.14).
@@ -157,7 +156,6 @@ config BT_ACS_INITIATE_PAIRING
 	bool "Initiate Pairing procedure"
 	depends on BT_ACS_FEAT_AUTHENTICATION
 	depends on BT_SMP
-	default n
 	help
 	  Let an AC Client request that the AC Server start LE pairing
 	  (ACS 1.0 Section 4.4.3.20), and set the Initiation of Pairing
@@ -168,8 +166,8 @@ endmenu # Security Management Procedures
 menu "Data protection algorithms"
 	depends on BT_ACS_FEAT_AUTHENTICATION
 
-# Not user-selectable: a confidentiality-capable server shall support GCM
-# (ACP 1.0 Section 4.1.1.2).
+# No prompt: ACP 1.0 Section 4.1.1.2 requires GCM when confidentiality is
+# supported.
 config BT_ACS_DATA_PROTECTION_AES_GCM
 	bool
 	depends on BT_ACS_FEAT_CONFIDENTIALITY
@@ -191,8 +189,9 @@ config BT_ACS_DATA_PROTECTION_AES_CCM
 	select PSA_WANT_KEY_TYPE_AES
 	help
 	  Authenticated encryption with associated data (ACS 1.0
-	  Section 3.6.6.1), with a truncatable MAC size.
+	  Section 3.6.6.1), with a MAC of BT_ACS_CCM_MAC_SIZE octets.
 
+	  ACP 1.0 sets no nonce format for CCM. This implementation uses a
 	  13-octet nonce: 5-octet fixed part and 8-octet counter part, in
 	  Sequence Number Different Fixed Parts format (ACS 1.0
 	  Section 4.4.4.15.1.4.4.6).
@@ -203,37 +202,36 @@ config BT_ACS_CCM_MAC_SIZE
 	range 4 16
 	default 8
 	help
-	  Size, in bytes, of the AES-128-CCM authentication tag, reported
-	  in the MAC_Size field of the ACS key descriptor. Must be even;
-	  a BUILD_ASSERT enforces it.
+	  Size, in bytes, of the AES-128-CCM authentication tag this server
+	  uses, reported in the MAC_Size field of its key descriptor. Must
+	  be even; a BUILD_ASSERT enforces it.
 
 	  ACS 1.0 Section 3.6.6.1 allows 4, 6, 8, 10, 12, 14 or 16, but
 	  recommends at least a 64-bit MAC against guessing attacks, so
 	  values below 8 weaken the configuration.
 
+# No prompt: ACP 1.0 Section 4.1.1.2 requires GMAC when integrity is
+# supported without confidentiality.
 config BT_ACS_DATA_PROTECTION_AES_GMAC
-	bool "AES-128-GMAC (integrity)"
+	bool
 	depends on BT_ACS_FEAT_INTEGRITY
 	depends on !BT_ACS_FEAT_CONFIDENTIALITY
 	select PSA_WANT_ALG_GCM
 	select PSA_WANT_KEY_TYPE_AES
-	# Mandatory when authentication and integrity are supported without
-	# confidentiality (ACP 1.0 Section 4.1.1.2).
-	default y if BT_ACS_FEAT_INTEGRITY && !BT_ACS_FEAT_CONFIDENTIALITY
+	default y
 	help
 	  The zero-length-plaintext variant of AES-128-GCM (ACS 1.0
 	  Section 3.6.6.3): authentication and integrity with no
 	  encryption. Same 12-octet IV structure and 16-octet MAC.
 
+# No prompt: the only algorithm without integrity. ACP 1.0 names none for
+# this level.
 config BT_ACS_DATA_PROTECTION_AES_CMAC
-	bool "AES-128-CMAC (authentication)"
+	bool
 	depends on !BT_ACS_FEAT_INTEGRITY
-	depends on !BT_ACS_FEAT_CONFIDENTIALITY
 	select PSA_WANT_ALG_CMAC
 	select PSA_WANT_KEY_TYPE_AES
-	# No ACP mandate for this tier; defaulted so a build always has one
-	# data-protection algorithm.
-	default y if !BT_ACS_FEAT_INTEGRITY
+	default y
 	help
 	  Message authentication over an unencrypted payload (ACS 1.0
 	  Section 3.6.5.1), with a 16-octet MAC. Carries no nonce, so no
@@ -241,29 +239,17 @@ config BT_ACS_DATA_PROTECTION_AES_CMAC
 
 endmenu # Data protection algorithms
 
-config BT_ACS_KEX_CTX_COUNT
-	int "Concurrent key-exchange contexts"
-	depends on BT_ACS_FEAT_AUTHENTICATION
-	range 1 BT_MAX_CONN
-	default 1
-	help
-	  Number of key exchanges that can run concurrently across all
-	  connections. A context is pool-allocated when Start Key Exchange
-	  is accepted and released when the exchange completes or aborts.
-
 config BT_ACS_STORE_DELAY_MS
 	int "Delay before storing changed nonce fixed parts, in milliseconds"
 	depends on BT_ACS_FEAT_AUTHENTICATION
 	range 0 60000
 	default 1000
 	help
-	  The nonce fixed parts stored with a peer's ECDH key change during
-	  key exchanges and the procedures around them. They change in RAM
-	  at once and are written to settings this long after the last
-	  change, so the changes of one exchange take one flash write and no
-	  ACS Control Point procedure waits for flash, as
-	  BT_SETTINGS_DELAYED_STORE_MS does for GATT. A reset within the
-	  delay loses the latest values. A new ECDH key is stored at once.
+	  Each bonded peer's ECDH key is a persistent PSA key; settings
+	  hold its PSA key ID and the nonce fixed parts. Changed nonce fixed
+	  parts are written this long after the last change, so one key
+	  exchange takes one flash write. A reset within the delay loses
+	  the latest values. A new ECDH key is stored at once.
 
 config BT_ACS_ANY_DATA_PROTECTION
 	bool
@@ -279,33 +265,24 @@ config BT_ACS_HAS_NONCE_FIXED
 
 config BT_ACS_MAX_MESSAGE_SIZE
 	int "Maximum ACS application message size"
+	range 69 483 if BT_ACS_HAS_NONCE_FIXED
+	range 69 491 if BT_ACS_FEAT_AUTHENTICATION
 	range 69 511
 	default 483
 	help
 	  Largest application message ACS sends or accepts: an ACS Control
 	  Point opcode with its operands, or a protected characteristic
-	  value. It is the same for the plain ACS Control Point and for
-	  Data In and Data Out. ATT_MTU does not limit it; a message longer
-	  than one ATT PDU is segmented.
+	  value. Segmentation and protection fields are not counted, and
+	  ATT_MTU does not limit it: a longer message is segmented.
 
-	  Segmentation_Header, ISC_ID, Nonce_Var, Protected_Resource_Handle
-	  and MAC are not counted. ACS adds them to size its buffers, at most
-	  29 octets, and the result must stay within the 512-octet attribute
-	  value limit. The default gives 512-octet buffers with AES-GCM,
-	  AES-CCM or AES-GMAC; AES-CMAC carries no Nonce_Var and needs 8
-	  octets less.
+	  The minimum fits every fixed-size message. bt_acs_init() fails
+	  when a restriction map, the Restriction Map ID List or the
+	  Resource Handle UUID Map response does not fit.
 
-	  Buffers are shared by RX and TX, and their number does not depend
-	  on this size: 6 per connection. RAM for the pool is
-	  6 x CONFIG_BT_MAX_CONN x (this size + overhead) octets.
-
-	  Size for the largest protocol message, or the largest chunk of a
-	  transfer split above ACS, not for a whole file. The minimum fits
-	  every fixed-size message; the largest, Key Exchange ECDH and Key
-	  Exchange KDF Response, are 69 octets. Responses that grow with
-	  the application's registrations are checked by bt_acs_init(),
-	  which fails when a restriction map, the Restriction Map ID List
-	  or the Resource Handle UUID Map response does not fit.
+	  Each connection takes 6 buffers of this size plus at most 29
+	  octets, which must stay within the 512-octet attribute value
+	  limit: at most 483 with AES-GCM, AES-CCM or AES-GMAC, 491 with
+	  AES-CMAC and 511 without authentication.
 
 config BT_ACS_WORKQUEUE_STACK_SIZE
 	int "ACS workqueue stack size"
@@ -314,7 +291,8 @@ config BT_ACS_WORKQUEUE_STACK_SIZE
 	help
 	  Stack size, in bytes, of the ACS workqueue. Sized for
 	  ACS CP procedure execution, which includes the ECDH key
-	  exchange.
+	  exchange. The PSA Crypto provider runs on this stack, so check
+	  its use (CONFIG_THREAD_ANALYZER) when changing the provider.
 
 config BT_ACS_WORKQUEUE_THREAD_PRIO
 	int "ACS workqueue thread priority"

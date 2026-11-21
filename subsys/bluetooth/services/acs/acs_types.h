@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Dipak Shetty
+ * SPDX-FileCopyrightText: Copyright The Zephyr Project Contributors
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -9,7 +9,6 @@
 
 #include <zephyr/kernel.h>
 #include <zephyr/sys/atomic.h>
-#include <zephyr/sys/math_extras.h>
 #include <zephyr/sys/slist.h>
 #include <zephyr/net_buf.h>
 #include <zephyr/bluetooth/gatt.h>
@@ -28,25 +27,25 @@ extern "C" {
 struct acs_reply;
 struct bt_acs_conn;
 
-/* Inbound request and routing information. */
+/* An ACS Data In message after decryption: the plaintext and what protected it. */
 struct acs_frame {
-	struct acs_sec_alg *alg;  /* Security algorithm, NULL for plain CP */
-	const uint8_t *payload;   /* Payload in the RX buffer */
-	uint16_t payload_len;     /* Payload length */
-	uint16_t resource_handle; /* Resource Handle, 0 for plain CP */
-	uint16_t isc_id;          /* ISC_ID, 0 for plain CP */
+	struct acs_sec_alg *alg;  /* Algorithm the ISC_ID selects */
+	const uint8_t *payload;   /* Plaintext request, in the RX buffer */
+	uint16_t payload_len;     /* Plaintext length */
+	uint16_t resource_handle; /* Protected_Resource_Handle */
+	uint16_t isc_id;          /* ISC_ID */
 };
 
 /* Output channel of an ACS response. */
 enum acs_reply_channel {
 	ACS_REPLY_CP = 0,  /* ACS Control Point, plaintext indication */
-	ACS_REPLY_DON = 1, /* Data Out Notify, encrypted notification */
-	ACS_REPLY_DOI = 2, /* Data Out Indicate, encrypted indication */
+	ACS_REPLY_DON = 1, /* Data Out Notify, protected notification */
+	ACS_REPLY_DOI = 2, /* Data Out Indicate, protected indication */
 };
 
 /*
- * Per-connection state of a security algorithm record (Table 4.45): the parent
- * key under this algorithm's PSA policy, and the algorithm's nonce state.
+ * Per-connection state of a security algorithm record (Table 4.45): the key the
+ * KDF exchange derived for this algorithm, and the algorithm's nonce state.
  */
 struct acs_sec_alg {
 	uint64_t tx_nonce_counter;                             /* Next TX sequence number */
@@ -56,9 +55,9 @@ struct acs_sec_alg {
 	psa_algorithm_t psa_alg;                               /* PSA algorithm of the key */
 	uint8_t server_nonce_fixed[ACS_MAX_NONCE_PREFIX_SIZE]; /* Server prefix, MSO order */
 	uint8_t client_nonce_fixed[ACS_MAX_NONCE_PREFIX_SIZE]; /* Client prefix, MSO order */
-	bool server_nonce_set;                                 /* Server prefix available */
-	bool client_nonce_set;                                 /* Client prefix available */
-	bool client_nonce_restored;                            /* Client prefix from storage */
+	bool server_nonce_set: 1;                              /* Server prefix available */
+	bool client_nonce_set: 1;                              /* Client prefix available */
+	bool client_nonce_restored: 1;                         /* Client prefix from storage */
 };
 
 /* Key_ID of the security algorithm record. */
@@ -67,7 +66,7 @@ static inline uint16_t acs_sec_alg_id(const struct acs_sec_alg *alg)
 	return alg->key_desc->key_id;
 }
 
-/* Return true when alg is present and holds key material. */
+/* Return true when alg is not NULL and its PSA key is installed. */
 static inline bool acs_sec_alg_ready(const struct acs_sec_alg *alg)
 {
 	return alg != NULL && alg->psa_key_id != PSA_KEY_ID_NULL;
@@ -90,7 +89,7 @@ static inline bool acs_sec_alg_ready(const struct acs_sec_alg *alg)
  */
 struct acs_keys {
 	psa_key_id_t ecdh;                          /* ECDH exchange key, 0 if absent */
-	bool kdf;                                   /* KDF exchange completed */
+	bool kdf;                                   /* Key_ID 0x0002 installed; no PSA key */
 	struct acs_sec_alg algs[ACS_SEC_ALG_COUNT]; /* Security algorithms */
 };
 
@@ -114,34 +113,34 @@ struct bt_acs_kdf_params {
 	uint8_t info[ACS_KDF_INFO_SIZE]; /* KDF_Info */
 };
 
-/* next_opcode of a key exchange whose last step succeeded; an AC Client never sends it. */
-#define ACS_KEX_COMPLETE BT_ACS_CP_OPCODE_RESPONSE_CODE
-
 /*
  * In-progress key exchange (§4.4.3.17). The AC Client sends these requests in
  * order, and next_opcode is the one it must send next:
  *   ECDH: Start Key Exchange -> Key Exchange ECDH -> Key Exchange KDF
  *         -> ECDH Confirmation Code -> ECDH Confirmation Random Number
  *   KDF:  Start Key Exchange -> Key Exchange KDF
- * After the last step next_opcode is ACS_KEX_COMPLETE, and the Key Exchange
- * Response goes out after that step's response.
+ * After the last step next_opcode is BT_ACS_CP_OPCODE_RESPONSE_CODE, which an AC
+ * Client never sends, and the Key Exchange Response goes out after that step's
+ * response.
  */
 struct bt_acs_kex_ctx {
 	uint8_t next_opcode;                        /* Request the AC Client sends next */
 	uint8_t confirmation_method;                /* Selected_Confirmation_Method (Table 4.50) */
 	uint16_t key_id;                            /* Key_ID of the Start Key Exchange */
 	uint8_t auth_value[ACS_CONFIRM_VALUE_SIZE]; /* Authentication value */
-#if IS_ENABLED(CONFIG_BT_ACS_FEAT_AUTHENTICATION)
 	struct acs_ecdh_pubkey server_pubkey;           /* Server ephemeral public key */
 	struct acs_ecdh_pubkey client_pubkey;           /* Client public key */
 	psa_key_id_t ecdh_key_id;                       /* Server ephemeral private-key ID */
 	psa_key_id_t derived_key_id;                    /* ECDH shared-secret key ID */
 	uint8_t server_random[ACS_CONFIRM_VALUE_SIZE];  /* Server random nonce */
 	uint8_t client_confirm[ACS_CONFIRM_VALUE_SIZE]; /* Client confirmation code */
-#endif
 };
 
-/* Outbound response released by acs_reply_free(). */
+/*
+ * One ACS response, or a message the server sends on its own: the request it
+ * answers, the messages to send and the channel and ISC to send them with. Taken
+ * from bt_acs_conn::replies by acs_reply_alloc() and returned by acs_reply_free().
+ */
 struct acs_reply {
 	sys_snode_t node;                      /* Queue linkage */
 	struct bt_acs_conn *acs_conn;          /* Owning connection */
@@ -151,9 +150,9 @@ struct acs_reply {
 	enum acs_reply_channel channel;        /* Characteristic the reply goes out on */
 	bool aborted;                          /* Procedure aborted mid-transfer */
 	bool holds_cp_lock;                    /* Reply holds the CP lock */
+	uint8_t value_props;                   /* Cached characteristic properties */
 	uint16_t resource_handle;              /* Resource Handle, 0 for plain CP */
 	const struct bt_gatt_attr *value_attr; /* Resolved GATT value attribute */
-	uint8_t value_props;                   /* Cached characteristic properties */
 	uint16_t isc_id;                       /* ISC_ID, selects the algorithm; 0 for plain CP */
 	uint16_t invalidate_key_id;            /* Key_ID to remove once delivered */
 	struct bt_gatt_indicate_params *ind;   /* Protected indication, else NULL */
@@ -163,9 +162,9 @@ struct acs_reply {
 
 #if IS_ENABLED(CONFIG_BT_ACS_FEAT_AUTHENTICATION)
 /*
- * Data Out Notify or Data Out Indicate transmission channel.
- *
- * active is accessed only on the ACS workqueue.
+ * Send queue of ACS Data Out Notify or ACS Data Out Indicate for one connection:
+ * replies wait in fifo and drain_work sends them one at a time, segmented by tx.
+ * active is the reply being sent; only the ACS workqueue touches it.
  */
 struct acs_tx_channel {
 	struct k_fifo fifo;       /* Replies awaiting transmission */
@@ -191,7 +190,11 @@ enum acs_conn_state_bit {
 	ACS_STATE_DISCONNECTED,             /* Link gone, teardown work queued */
 };
 
-/* ACS runtime state for one connection. */
+/*
+ * ACS state of one connection, in a static slot indexed by bt_conn_index(). The
+ * slot is active from the connected callback until the disconnect teardown drops
+ * conn; acs_conn_lookup() finds it only until the disconnect callback.
+ */
 struct bt_acs_conn {
 	struct bt_conn *conn;       /* Referenced connection of this slot, NULL when inactive */
 	atomic_t state;             /* Connection-state bits */
@@ -206,16 +209,16 @@ struct bt_acs_conn {
 	struct acs_reply replies[ACS_BUF_PER_CONN];    /* Reply pool */
 	ATOMIC_DEFINE(reply_in_use, ACS_BUF_PER_CONN); /* Allocated reply slots */
 	struct acs_seg_tx_ctx cp_tx;                   /* Plain Control Point TX state */
+	struct acs_reply *cp_pending;                  /* Response awaiting ACS Control Point TX */
 	struct acs_seg_rx_ctx cp_rx;                   /* Control Point RX state */
 	struct acs_seg_rx_ctx data_rx;                 /* Data In RX state */
 	struct k_fifo cp_exec_fifo;                    /* Queued ACS Control Point procedures */
 	struct k_work cp_exec_work;                    /* ACS Control Point execution work */
-	struct acs_reply *cp_pending;                  /* Response awaiting ACS Control Point TX */
 #if IS_ENABLED(CONFIG_BT_ACS_FEAT_AUTHENTICATION)
 	struct k_fifo request_fifo;         /* Queued protected requests */
 	struct k_work request_work;         /* Protected request execution work */
 	struct k_work invalidate_work;      /* Key removal work */
-	uint16_t remove_after_reply_key_id; /* Key_ID to remove after the response */
+	uint16_t remove_after_reply_key_id; /* invalidate_key_id of the delivered reply */
 	struct acs_tx_channel doi;          /* Data Out Indicate TX channel */
 	struct acs_tx_channel don;          /* Data Out Notify TX channel */
 #endif

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Dipak Shetty
+ * SPDX-FileCopyrightText: Copyright The Zephyr Project Contributors
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -64,7 +64,7 @@ uint8_t acs_cp_kex_exchange_kdf(struct acs_reply *reply, struct net_buf_simple *
 		return BT_ACS_CP_RESPONSE_SUCCESS;
 	}
 
-	acs_conn->kex->next_opcode = ACS_KEX_COMPLETE;
+	acs_conn->kex->next_opcode = BT_ACS_CP_OPCODE_RESPONSE_CODE;
 	return (acs_key_exchange_add_result(reply) == 0)
 		       ? BT_ACS_CP_RESPONSE_SUCCESS
 		       : BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED;
@@ -278,7 +278,7 @@ uint8_t acs_cp_kex_ecdh_confirm_rand(struct acs_reply *reply, struct net_buf_sim
 		return BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED;
 	}
 
-	acs_conn->kex->next_opcode = ACS_KEX_COMPLETE;
+	acs_conn->kex->next_opcode = BT_ACS_CP_OPCODE_RESPONSE_CODE;
 	return (acs_key_exchange_add_result(reply) == 0)
 		       ? BT_ACS_CP_RESPONSE_SUCCESS
 		       : BT_ACS_CP_RESPONSE_PROCEDURE_NOT_COMPLETED;

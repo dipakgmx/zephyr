@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Dipak Shetty
+ * SPDX-FileCopyrightText: Copyright The Zephyr Project Contributors
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -42,7 +42,8 @@ BUILD_ASSERT(sizeof(struct acs_ecdh_pubkey) <= ACS_MESSAGE_MAX_OPERAND &&
 			     ACS_MESSAGE_MAX_OPERAND,
 	     "Key Exchange ECDH or KDF Response exceeds CONFIG_BT_ACS_MAX_MESSAGE_SIZE");
 
-K_MEM_SLAB_DEFINE_STATIC(acs_kex_slab, sizeof(struct bt_acs_kex_ctx), CONFIG_BT_ACS_KEX_CTX_COUNT,
+/* One context per connection, so every connection can run a key exchange at once. */
+K_MEM_SLAB_DEFINE_STATIC(acs_kex_slab, sizeof(struct bt_acs_kex_ctx), CONFIG_BT_MAX_CONN,
 			 __alignof__(struct bt_acs_kex_ctx));
 
 struct bt_acs_kex_ctx *acs_key_exchange_alloc(struct bt_acs_conn *acs_conn)
@@ -217,7 +218,7 @@ void acs_key_exchange_complete(struct bt_acs_conn *acs_conn)
 
 	__ASSERT_NO_MSG(acs_kex_in_progress(acs_conn));
 
-	if (acs_conn->kex->next_opcode != ACS_KEX_COMPLETE) {
+	if (acs_conn->kex->next_opcode != BT_ACS_CP_OPCODE_RESPONSE_CODE) {
 		return;
 	}
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Dipak Shetty
+ * SPDX-FileCopyrightText: Copyright The Zephyr Project Contributors
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -416,7 +416,7 @@ uint8_t acs_keys_list(struct bt_acs_conn *acs_conn, uint16_t key_ids[ACS_KEY_COU
 struct acs_sec_alg *acs_keys_alg(struct bt_acs_conn *acs_conn, uint16_t key_id)
 {
 	ARRAY_FOR_EACH_PTR(acs_conn->keys.algs, alg) {
-		if (alg->key_desc->key_id == key_id) {
+		if (acs_sec_alg_id(alg) == key_id) {
 			return alg;
 		}
 	}
