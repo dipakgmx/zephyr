@@ -1,4 +1,4 @@
-# Copyright (c) 2025 Dipak Shetty
+# SPDX-FileCopyrightText: Copyright The Zephyr Project Contributors
 # SPDX-License-Identifier: Apache-2.0
 
 mainmenu "Bluetooth: Peripheral ACS sample"
@@ -9,8 +9,9 @@ choice SAMPLE_ACS_ISC
 	default SAMPLE_ACS_ISC_GMAC if BT_ACS_DATA_PROTECTION_AES_GMAC
 	default SAMPLE_ACS_ISC_CMAC
 	help
-	  Every restriction map operation entry names a single ISC, so one
-	  algorithm governs the sample's protected resources.
+	  The ISC that every protected resource of the sample names. ACS lets
+	  each restriction map entry name its own ISC; one keeps the sample
+	  simple.
 
 	  Defaults follow the protection level: GCM with confidentiality, GMAC
 	  with integrity, CMAC otherwise. Select CCM explicitly.
@@ -32,5 +33,14 @@ config SAMPLE_ACS_ISC_CMAC
 	depends on BT_ACS_DATA_PROTECTION_AES_CMAC
 
 endchoice
+
+config SAMPLE_ACS_PTS
+	bool "Restriction map layout for the ACS PTS test cases"
+	help
+	  Register a second restriction map, protecting Current Time read and
+	  write, Invalidate All Established Security and Set Security Controls
+	  Switch, with the sample's ISC as its map ISC. The first map then
+	  leaves both procedures on the plain ACS CP, so any client can turn
+	  the security controls off. For testing only.
 
 source "Kconfig.zephyr"

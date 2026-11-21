@@ -1,14 +1,10 @@
 /*
- * Copyright (c) 2025 Dipak Shetty
+ * SPDX-FileCopyrightText: Copyright The Zephyr Project Contributors
  *
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include <stddef.h>
-#include <string.h>
-#include <errno.h>
 #include <zephyr/sys/printk.h>
-#include <zephyr/sys/byteorder.h>
 #include <zephyr/kernel.h>
 #include <zephyr/settings/settings.h>
 
@@ -16,7 +12,6 @@
 #include <zephyr/bluetooth/hci.h>
 #include <zephyr/bluetooth/conn.h>
 #include <zephyr/bluetooth/uuid.h>
-#include <zephyr/bluetooth/gatt.h>
 #include <zephyr/bluetooth/services/acs.h>
 #include <zephyr/bluetooth/services/cts.h>
 
@@ -24,45 +19,61 @@
 #include "sample_cts.h"
 #include "sample_hrs.h"
 
-/* Locked map, active at start: every CTS and HRS resource needs ACS Data In.
- * It is mapped to ISC 0 in the Restriction Map ID List, so its descriptor is
- * read on the plain ACS CP and a client without keys can learn what is
- * protected and which ISC it needs.
+/* Map 1, active at start: protects CTS Current Time, every HRS characteristic and, without
+ * CONFIG_SAMPLE_ACS_PTS, the two ACS CP procedures below. Its map ISC is 0, so a client
+ * without keys reads its descriptor on the plain ACS CP.
  */
 BT_ACS_RESTRICTION_MAP_DEFINE(locked_map, SAMPLE_ACS_RMAP_LOCKED_ID,
 			      BT_ACS_ISC_ID_NONE,  /* map descriptor */
 			      BT_ACS_ISC_ID_NONE); /* resources not listed */
 BT_ACS_INITIAL_RESTRICTION_MAP(locked_map);
 
-/* Relaxed map: of the CTS and HRS resources, only reading and writing the
- * current time need ACS Data In. Get Restriction Map Descriptor and Activate
- * Restriction Map for it, and Get All Active Descriptors while it is active,
- * need ACS Data In (ACS 1.0 Sections 4.4.3.1, 4.4.3.3).
+/* Both procedures act on every client: one ends all established security, the other
+ * can turn all protection off (ACS 1.0 Section 4.4.3.14), so only clients with
+ * established security may run them. No map protects the procedures a client without
+ * keys needs to establish security.
+ */
+#if IS_ENABLED(CONFIG_SAMPLE_ACS_PTS)
+/* PTS layout: map 1 leaves both procedures on the plain ACS CP, and map 2 protects them
+ * and Current Time read and write. Requests about map 2 need ACS Data In (ACS 1.0
+ * Sections 4.4.3.1, 4.4.3.3).
  */
 BT_ACS_RESTRICTION_MAP_DEFINE(relaxed_map, SAMPLE_ACS_RMAP_RELAXED_ID,
 			      SAMPLE_ACS_ISC_ID,   /* map descriptor */
 			      BT_ACS_ISC_ID_NONE); /* resources not listed */
-
-/* Invalidate All Established Security and Set Security Controls Switch need ACS
- * Data In under the relaxed map only. The locked map lists no ACS CP
- * procedure, so its default ISC leaves both on the plain ACS CP.
- *
- * Neither map lists Get ISC Descriptor, Get Key Descriptor, the key exchange
- * or Invalidate Key, so a client without keys can always establish security
- * and discard keys it can no longer use.
- */
 BT_ACS_PROTECTED_CONTROL_POINT_DEFINE(acs_cp_relaxed, relaxed_map, SAMPLE_ACS_ISC_ID,
 				      BT_ACS_CP_OPCODE_INVALIDATE_ALL_ESTABLISHED_SECURITY,
 				      BT_ACS_CP_OPCODE_SET_SECURITY_CONTROLS_SWITCH);
+#else
+BT_ACS_PROTECTED_CONTROL_POINT_DEFINE(acs_cp_locked, locked_map, SAMPLE_ACS_ISC_ID,
+				      BT_ACS_CP_OPCODE_INVALIDATE_ALL_ESTABLISHED_SECURITY,
+				      BT_ACS_CP_OPCODE_SET_SECURITY_CONTROLS_SWITCH);
+#endif
+
+/* Connections with ACS security established, by bt_conn_index(). */
+static ATOMIC_DEFINE(secured_conns, CONFIG_BT_MAX_CONN);
+
+static bool any_conn_secured(void)
+{
+	for (size_t i = 0; i < ARRAY_SIZE(secured_conns); i++) {
+		if (atomic_get(&secured_conns[i]) != 0) {
+			return true;
+		}
+	}
+
+	return false;
+}
 
 static void acs_security_established(struct bt_conn *conn)
 {
 	printk("ACS security established with %s\n", bt_conn_dst_str(conn));
+	atomic_set_bit(secured_conns, bt_conn_index(conn));
 }
 
 static void acs_security_invalidated(struct bt_conn *conn)
 {
 	printk("ACS security invalidated for %s\n", bt_conn_dst_str(conn));
+	atomic_clear_bit(secured_conns, bt_conn_index(conn));
 }
 
 static void acs_output_oob_number(struct bt_conn *conn, uint32_t number)
@@ -71,8 +82,6 @@ static void acs_output_oob_number(struct bt_conn *conn, uint32_t number)
 	       number);
 }
 
-#if IS_ENABLED(CONFIG_BT_ACS_CONFIRMATION_INPUT_NUMERIC) ||                                        \
-	IS_ENABLED(CONFIG_BT_ACS_CONFIRMATION_INPUT_PUSH)
 /* No input device, so the tester enters this fixed number on the AC Client. */
 #define SAMPLE_ACS_INPUT_OOB_NUMBER 1U
 
@@ -81,7 +90,7 @@ static void acs_input_oob_request(struct bt_conn *conn, enum bt_acs_input_oob_ac
 	int err;
 
 	err = bt_acs_input_oob_number(conn, SAMPLE_ACS_INPUT_OOB_NUMBER);
-	if (err) {
+	if (err != 0) {
 		printk("ACS confirmation input for %s failed: %d\n", bt_conn_dst_str(conn), err);
 		return;
 	}
@@ -89,16 +98,13 @@ static void acs_input_oob_request(struct bt_conn *conn, enum bt_acs_input_oob_ac
 	printk("ACS confirmation input for %s (%s): answered %u\n", bt_conn_dst_str(conn),
 	       action == BT_ACS_INPUT_OOB_PUSH ? "push" : "numeric", SAMPLE_ACS_INPUT_OOB_NUMBER);
 }
-#endif
 
+/* ACS calls the confirmation callbacks only for the methods enabled in Kconfig. */
 static const struct bt_acs_cb acs_cb = {
 	.security_established = acs_security_established,
 	.security_invalidated = acs_security_invalidated,
 	.output_oob_number = acs_output_oob_number,
-#if IS_ENABLED(CONFIG_BT_ACS_CONFIRMATION_INPUT_NUMERIC) ||                                        \
-	IS_ENABLED(CONFIG_BT_ACS_CONFIRMATION_INPUT_PUSH)
 	.input_oob_request = acs_input_oob_request,
-#endif
 };
 
 static const struct bt_data ad[] = {
@@ -112,13 +118,6 @@ static const struct bt_data sd[] = {
 	BT_DATA(BT_DATA_NAME_COMPLETE, CONFIG_BT_DEVICE_NAME, sizeof(CONFIG_BT_DEVICE_NAME) - 1),
 };
 
-static bool has_bond;
-
-static void bond_check_cb(const struct bt_bond_info *info, void *user_data)
-{
-	has_bond = true;
-}
-
 static int start_advertising(void)
 {
 	return bt_le_adv_start(BT_LE_ADV_CONN_FAST_1, ad, ARRAY_SIZE(ad), sd, ARRAY_SIZE(sd));
@@ -126,17 +125,19 @@ static int start_advertising(void)
 
 static void recycled_cb(void)
 {
-	printk("Connection object recycled. Restarting advertising.\n");
-	int err = start_advertising();
+	int err;
 
-	if (err) {
+	printk("Connection object recycled. Restarting advertising.\n");
+
+	err = start_advertising();
+	if (err != 0) {
 		printk("Re-advertising failed (err %d)\n", err);
 	}
 }
 
 static void connected(struct bt_conn *conn, uint8_t err)
 {
-	if (err) {
+	if (err != BT_HCI_ERR_SUCCESS) {
 		printk("Connection failed, err 0x%02x %s\n", err, bt_hci_err_to_str(err));
 		return;
 	}
@@ -155,23 +156,6 @@ BT_CONN_CB_DEFINE(conn_callbacks) = {
 	.disconnected = disconnected,
 	.recycled = recycled_cb,
 };
-
-#if IS_ENABLED(CONFIG_BT_SMP_APP_PAIRING_ACCEPT)
-static enum bt_security_err pairing_accept(struct bt_conn *conn,
-					   const struct bt_conn_pairing_feat *const feat)
-{
-	has_bond = false;
-	bt_foreach_bond(BT_ID_DEFAULT, bond_check_cb, NULL);
-
-	if (has_bond) {
-		printk("Pairing rejected: already bonded\n");
-		return BT_SECURITY_ERR_PAIR_NOT_ALLOWED;
-	}
-
-	printk("Pairing accepted\n");
-	return BT_SECURITY_ERR_SUCCESS;
-}
-#endif
 
 static void auth_passkey_display(struct bt_conn *conn, unsigned int passkey)
 {
@@ -194,9 +178,6 @@ static void auth_pairing_failed(struct bt_conn *conn, enum bt_security_err reaso
 }
 
 static struct bt_conn_auth_cb auth_cb_display = {
-#if IS_ENABLED(CONFIG_BT_SMP_APP_PAIRING_ACCEPT)
-	.pairing_accept = pairing_accept,
-#endif
 	.passkey_display = auth_passkey_display,
 	.cancel = auth_cancel,
 };
@@ -213,52 +194,76 @@ int main(void)
 	printk("ACS + CTS + HRS Peripheral Sample\n");
 
 	err = sample_cts_init();
-	if (err) {
+	if (err != 0) {
 		printk("CTS init failed (err %d)\n", err);
 		return 0;
 	}
 
 	err = sample_hrs_init();
-	if (err) {
+	if (err != 0) {
 		printk("HRS init failed (err %d)\n", err);
 		return 0;
 	}
 
 	err = bt_enable(NULL);
-	if (err) {
+	if (err != 0) {
 		printk("Bluetooth init failed (err %d)\n", err);
 		return 0;
 	}
 
 	printk("Bluetooth initialized\n");
 
-	settings_load();
+	err = settings_load();
+	if (err != 0) {
+		printk("Settings load failed (err %d)\n", err);
+		return 0;
+	}
 
 	err = bt_acs_init(&acs_cb);
-	if (err) {
+	if (err != 0) {
 		printk("ACS init failed (err %d)\n", err);
 		return 0;
 	}
 
-	bt_conn_auth_cb_register(&auth_cb_display);
-	bt_conn_auth_info_cb_register(&auth_info_cb);
+	err = bt_conn_auth_cb_register(&auth_cb_display);
+	if (err != 0) {
+		printk("Auth callback registration failed (err %d)\n", err);
+		return 0;
+	}
+
+	err = bt_conn_auth_info_cb_register(&auth_info_cb);
+	if (err != 0) {
+		printk("Auth info callback registration failed (err %d)\n", err);
+		return 0;
+	}
 
 	err = start_advertising();
-	if (err) {
+	if (err != 0) {
 		printk("Advertising failed to start (err %d)\n", err);
 		return 0;
 	}
 
-	printk("ACS map 0x%04x (locked, active) protects CTS and HRS; map 0x%04x (relaxed) "
-	       "protects only Current Time read and write\n",
-	       SAMPLE_ACS_RMAP_LOCKED_ID, SAMPLE_ACS_RMAP_RELAXED_ID);
-	printk("Clients must complete key exchange before accessing either service\n");
+	printk("ACS map %u active: CTS Current Time and HRS need ACS security\n",
+	       SAMPLE_ACS_RMAP_LOCKED_ID);
 
-	/* HR every 2 s, CTS every 10 s, both as encrypted Data Out. */
-	uint8_t cts_tick = 0;
+	/* HR every 2 s, CTS every 10 s, while a client has ACS security. ACS sends each value
+	 * on Data Out while the active map protects it, as a plain notification otherwise.
+	 */
+	bool sending = false;
+	uint8_t cts_tick = 0U;
 
-	while (1) {
+	while (true) {
 		k_sleep(K_SECONDS(2));
+
+		if (any_conn_secured() != sending) {
+			sending = !sending;
+			printk("%s heart rate and current time\n",
+			       sending ? "Sending" : "Stopped sending");
+		}
+
+		if (!sending) {
+			continue;
+		}
 
 		uint16_t hr = 60 + (uint16_t)((k_uptime_get_32() / 2000) % 40);
 

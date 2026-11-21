@@ -2,7 +2,7 @@ sample:
   name: Bluetooth Peripheral ACS
   description: >
     Demonstrates ACS protecting the Current Time Service (CTS) and Heart
-    Rate Service (HRS).  See Testing.md for PTS execution order.
+    Rate Service (HRS).
     prj.conf is the base configuration: GCM confidentiality with ECDH and
     the standalone KDF key-exchange method. Cipher overlays select the
     data-protection algorithm governing the protected resources.
@@ -44,3 +44,7 @@ tests:
       - cipher
     extra_args:
       - EXTRA_CONF_FILE=overlay-cipher-gmac.conf
+  # Restriction map layout for the ACS PTS test cases
+  sample.bluetooth.peripheral_acs.pts:
+    extra_args:
+      - EXTRA_CONF_FILE=overlay-pts.conf

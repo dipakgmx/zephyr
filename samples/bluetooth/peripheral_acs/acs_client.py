@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) 2025 Dipak Shetty
+# SPDX-FileCopyrightText: Copyright The Zephyr Project Contributors
 # SPDX-License-Identifier: Apache-2.0
 """Minimal AC Client for the peripheral_acs sample.
 
@@ -339,9 +339,9 @@ async def main():
         value = await acs.protected_access(handles[UUID_BODY_SENSOR_LOCATION])
         print(f"Body Sensor Location: {value.hex()}")
 
-        # Plain ACS CP while the locked map (ID 1) is active.
-        await acs.cp(0x13)
-        print("Invalidated all established security")
+        # Invalidate Key, Key_ID 0xFFFF: every key of this client.
+        await acs.cp(0x14, le16(0xFFFF))
+        print("Invalidated all keys")
 
         # The server drops the keys after the Success response; check before leaving.
         keys = await acs.cp(0x0F, expect=0x10)

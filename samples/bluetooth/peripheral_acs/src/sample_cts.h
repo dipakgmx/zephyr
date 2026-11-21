@@ -1,11 +1,13 @@
 /*
- * Copyright (c) 2025 Dipak Shetty
+ * SPDX-FileCopyrightText: Copyright The Zephyr Project Contributors
  *
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #ifndef SAMPLE_CTS_H_
 #define SAMPLE_CTS_H_
+
+#include <stdint.h>
 
 int sample_cts_init(void);
 void sample_cts_notify(uint8_t reason);

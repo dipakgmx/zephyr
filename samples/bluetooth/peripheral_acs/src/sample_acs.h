@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Dipak Shetty
+ * SPDX-FileCopyrightText: Copyright The Zephyr Project Contributors
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -25,9 +25,10 @@
 #error "peripheral_acs requires one of CONFIG_SAMPLE_ACS_ISC_{GCM,CCM,GMAC,CMAC}"
 #endif
 
-/* The sample's two restriction maps, defined in main.c. The locked map protects
- * every CTS and HRS resource, the relaxed map only Current Time read and write.
- * Only ID 0 is reserved (ACS 1.0 Section 4.4.3.2).
+/* The sample's restriction maps, defined in main.c. The locked map protects CTS
+ * Current Time and every HRS characteristic. The relaxed map, registered only
+ * with CONFIG_SAMPLE_ACS_PTS, protects Current Time read and write. Only ID 0
+ * is reserved (ACS 1.0 Section 4.4.3.2).
  */
 #define SAMPLE_ACS_RMAP_LOCKED_ID  1
 #define SAMPLE_ACS_RMAP_RELAXED_ID 2
